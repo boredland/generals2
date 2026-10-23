@@ -54,7 +54,6 @@ impl World {
         for p in &self.players {
             h.u64(p.faction as u64);
             h.i64(p.credits);
-            h.i64(p.oil);
             h.i64(p.power_supply as i64);
             h.i64(p.power_drain as i64);
             h.u64(p.defeated as u64);

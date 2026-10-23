@@ -187,11 +187,10 @@ fn print_economy(world: &World) {
             world.entities().filter(|e| e.owner == me && pred(world.rules.def(e.def))).count()
         };
         println!(
-            "  P{i} {:<22} {:<11} credits {:>6}  oil {:>5}  power {:>3}/{:<3}  buildings {:>2}  collectors {:>2}{}",
+            "  P{i} {:<22} {:<11} credits {:>6}  power {:>3}/{:<3}  buildings {:>2}  collectors {:>2}{}",
             p.faction.name(),
             p.general.map_or("", |g| world.rules.general(g).name),
             p.credits,
-            p.oil,
             p.power_drain,
             p.power_supply,
             count(&|d| d.is_building()),

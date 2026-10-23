@@ -62,7 +62,7 @@ const fn per_sec(units: i64) -> Fx {
 }
 
 const fn credits(c: i64) -> Cost {
-    Cost { credits: c, oil: 0 }
+    Cost { credits: c }
 }
 
 const NONE: &[DefId] = &[];
@@ -180,7 +180,7 @@ const RIFLES: Weapon = weapon(13, [2, 0, 0, 0], 25, 9);
 const TANK_GUN: Weapon = weapon(40, [0, 30, 0, 0], 35, 15);
 
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
-const DERRICK: BuildingRole = BuildingRole::OilDerrick { oil_per_second: 5 };
+const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
 static DEFS: [Def; 30] = [
     Def {

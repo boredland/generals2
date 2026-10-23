@@ -34,7 +34,6 @@ enum Field {
     Clock,
     Power,
     Money,
-    Oil,
     Status,
     SelName,
     SelInfo,
@@ -185,7 +184,6 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
         })
         .with_children(|s| {
             s.spawn((text("PWR 0/0", 12.0, XP), Field::Power));
-            s.spawn((text("OIL 0", 12.0, TEXT), Field::Oil));
             s.spawn((text("$0", 13.0, MONEY), Field::Money));
         });
         p.spawn((
@@ -319,7 +317,6 @@ fn update_fields(
                 }
             }
             Field::Money => t.0 = format!("${}", me.credits),
-            Field::Oil => t.0 = format!("OIL {}", me.oil),
             Field::Status => {
                 t.0 = match (world.winner(), sim.speed, placing.0) {
                     (Some(w), _, _) if w == LOCAL => "VICTORY".into(),

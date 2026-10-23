@@ -180,11 +180,16 @@ fn ai_builds_an_economy() {
     for f in Faction::ALL {
         let s = setup(5, [true, false], [f, Faction::Eu]);
         let (w, _) = record(World::new(&s, rules()), &s, 30 * 300, |_| {});
-        let p = w.player(PlayerId(0));
         let collectors =
             w.entities().filter(|e| e.owner == Some(PlayerId(0)) && rules().def(e.def).collector().is_some()).count();
         assert!(collectors >= 2, "{f:?}: {collectors} collectors after 5 min");
-        assert!(p.oil > 0, "{f:?}: no oil derrick income after 5 min");
+        let start = |pos| s.map.oil_wells.iter().find(|&&(p, _)| p == pos).map_or(0, |&(_, r)| r);
+        let pumping = w.entities().any(|e| {
+            e.owner == Some(PlayerId(0))
+                && e.is_complete()
+                && e.on_well.and_then(|wl| w.entity(wl)).is_some_and(|wl| wl.resource < start(wl.pos))
+        });
+        assert!(pumping, "{f:?}: no derrick has drawn on its well after 5 min");
     }
 }
 

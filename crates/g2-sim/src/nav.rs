@@ -169,6 +169,16 @@ impl Grid {
         Some(self.smooth(start, (b % self.w, b / self.w), &parent, None))
     }
 
+    /// The centre of the nearest free cell to `p`, or `p` itself when its own cell is free (or
+    /// nothing free is near). Move destinations are snapped with this, so a route can end there.
+    pub fn free_point(&self, p: Vec2) -> Vec2 {
+        let c = self.cell(p);
+        match self.nearest_free(c) {
+            Some(f) if f != c => Self::centre(f.0, f.1),
+            _ => p,
+        }
+    }
+
     /// Nearest free cell to `c` (ring search), for starts inside a grown obstacle.
     fn nearest_free(&self, c: (i32, i32)) -> Option<(i32, i32)> {
         if !self.blocked(c.0, c.1) {

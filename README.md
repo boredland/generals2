@@ -12,7 +12,7 @@ What works:
 - **Generals 2 economy**, from the archived sources:
   - Credits from supply piles, carried by collectors to a supply center.
   - Collector cap per supply center: **EU 3, APA 5, GLA 8**.
-  - Oil from derricks, which can only sit on oil wells and pay out until the well is dry.
+  - Oil derricks, which can only sit on oil wells and pay credits until the well is dry. The archived sources say oil was first meant to be a second resource, but the August 2013 patch made derricks "provide additional funds"; this follows the patch, so credits are the only currency.
   - Local power: plants power consumers within a radius. Unpowered production runs at half speed. The GLA has no grid.
   - Constructors place foundations that must be worked on, production queues with full refunds on cancel, and surrender/defeat.
 - **Three factions** (`crates/g2-rules`): EU, APA and GLA. Command center, constructor, supply center, collector, power plant, oil derrick, barracks and war factory each, plus one infantry squad and one tank (EU Recon Squad and Aegis, APA Red Guard and Warlord, GLA Rabble Squad and Scorpion). Sourced numbers are tagged `// src:`, everything else is a placeholder.
@@ -38,8 +38,7 @@ Not yet:
 - Fog of war, projectiles, splash damage, veterancy, upgrades, aircraft, garrisons. Units still push through each other (except collectors, which pass through); there is no local avoidance, so a wave bunches up into a column.
 - Generals' unique units, player powers and the per-general perk progression (rank, perk slots; archived patch preview #2). Only cost/time modifiers exist.
 - The Onslaught PvE mode, networking, real art, audio.
-- **Balance is unexamined and lopsided.** In 72 AI-vs-AI matches on Crater Ridge (all 9 pairings, seeds 1–8; the AI uses no randomness, so the seed changes nothing) the second start won 48 and the first 24; the APA and EU won 32 each, the GLA 8. Every match ended, after 5 to 10 minutes. The two AIs now build mirror-image bases (a test checks it) and their units leave the side of each building facing the map centre, yet mirror matches still drift apart after about two minutes and the seat still decides more than the faction. The cause is in per-tick processing, not the layout: the AI of the first start thinks one tick earlier, and movement, separation and pathfinding work on a fixed grid and in entity order, which a 180° rotation does not preserve. Nothing here says anything about faction strength. The unit numbers come from two sourced weapons stretched over six units.
-- **Oil is earned but never spent.** No unit or building costs oil yet.
+- **Balance is unexamined and lopsided.** In 72 AI-vs-AI matches on Crater Ridge (all 9 pairings, seeds 1–8; the AI uses no randomness, so the seed changes nothing) the first start won 40 and the second 32; the EU won 40, the APA 24 and the GLA 8. Every match ended, after 5 to 6 minutes. The two AIs now build mirror-image bases (a test checks it) and their units leave the side of each building facing the map centre, yet mirror matches still drift apart after about two minutes, and the split moves with every AI change. The cause is in per-tick processing, not the layout: the AI of the first start thinks one tick earlier, and movement, separation and pathfinding work on a fixed grid and in entity order, which a 180° rotation does not preserve. Nothing here says anything about faction strength. The unit numbers come from two sourced weapons stretched over six units.
 - The AI rebuilds a lost constructor but does not protect it, and keeps no reserve, so an AI under pressure can lose several in a row.
 - The **"base proxy" rule**: Wikipedia says a faction "must have 'captured' a resource stash before letting its harvesters in". The archived sources don't say how capture works, so for now any player can gather from any pile.
 - Rules are const Rust tables, not data files.
@@ -47,11 +46,11 @@ Not yet:
 
 ![EU base at 3 minutes, in-game camera](docs/img/m1-eu-base-3min.png)
 
-![EU wave attacking the GLA base at 4:48, in-game camera](docs/img/m3-eu-attacks-gla.png)
+![EU wave attacking the GLA command center at 4:32, in-game camera](docs/img/m3-eu-attacks-gla.png)
 
 ![APA vs GLA after 5 minutes, whole-map view](docs/img/m1-apa-vs-gla-5min.png)
 
-*Above: an EU base at 3:00 (EU vs GLA AI, `--view base`); the EU's first wave of Recon squads and Aegis tanks attacking the GLA barracks and war factory at 4:48 (`--view battle --ticks 8649`); and APA (red) vs GLA (sand) after 5 minutes of AI vs AI (`--view map`). All rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150).*
+*Above: an EU base at 3:00 (EU vs GLA AI, `--view base`); the EU's wave of Recon squads and Aegis tanks attacking the GLA command center at 4:32, with a Scorpion tank defending (`--view battle --ticks 8184`); and APA (red) vs GLA (sand) after 5 minutes of AI vs AI (`--view map`). All rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150).*
 
 ![Zero Hour's Tournament Desert, EU base at 3 minutes](docs/img/m2-zh-tournament-desert-base.png)
 
@@ -61,7 +60,7 @@ Not yet:
 
 **Verification status.**
 
-- The three frames above were rendered on this host, and the mirror check passed for each (47/47, 50/50 and 50/50 entities, none misplaced). The HUD totals match `g2-tools record --seed 1` for the same matches: EU at 5,400 ticks shows `$1080`, oil 460, power 60/210; APA at 9,000 ticks shows `$50`, oil 1130, power 70/210.
+- The three frames above were rendered on this host, and the mirror check passed for each (51/51, 53/53 and 49/49 entities, none misplaced). The HUD totals match `g2-tools record --seed 1` for the same matches: EU at 5,400 ticks shows `$2150`, power 60/210; APA at 9,000 ticks shows `$35`, power 80/210.
 - A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
 - Imported maps: all 174 official maps parse in a test; a recorded AI match on `zh:Tournament Desert` round-trips through a replay and verifies to the same hash, and a moved resource is caught as a changed map; terrain tests check that starts sit on the battlefield level, original scenery stays off bases and water, the ridge past the edge has no steps, and water surfaces stay inside the map; a test aims camera rays at 361 points on Defcon6's terraces and checks each lands within 0.5 units. Tournament Desert, Alpine Assault, Golden Oasis, Defcon6 and Winding River were rendered headless with the mirror check passing (models on terrain, none misplaced): Tournament Desert 37/37, Winding River 27/27 for the frames above.
 - The **interactive** window (mouse, keyboard, camera) has not been exercised; the build host has no display. That includes the attack and Ctrl attack-move orders, mixed selections (armed units attack, the rest walk to the spot), clicking onto hills (the ray march itself is unit-tested) and the camera easing up and down terrain while panning. The "+credits" pop-ups and moving tracers have only been seen frozen in screenshots; a test checks that every delivery reaches the pop-up queue at ×8.

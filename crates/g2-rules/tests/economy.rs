@@ -153,8 +153,8 @@ fn collectors_route_between_tightly_packed_buildings() {
     }
 }
 
-/// A move into a spot enclosed by terrain stops at the closest reachable point and stays
-/// there: the partial route is kept (not replanned into a wander) while the target stands.
+/// A move into a spot enclosed by terrain (blocked within 10 units, ring search reach) ends on
+/// the free cell nearest the clicked point, and the unit stays there; no route keeps searching.
 #[test]
 fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
     let mut setup = MatchSetup {
@@ -177,10 +177,12 @@ fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
     run(&mut w, 30 * 30);
     let stop = w.entity(dozer).unwrap().pos;
     let (x, y) = (stop.x.to_f32(), stop.y.to_f32());
-    assert!((134.0..=144.0).contains(&x) && (130.0..=150.0).contains(&y), "stops on the near shore, at {stop:?}");
+    // The lake spans x 140..180, y 120..160; the nearest free cells to (150,140) are on its
+    // west edge, just outside x = 140.
+    assert!((134.0..=140.0).contains(&x) && (120.0..=160.0).contains(&y), "stops on the near shore, at {stop:?}");
+    assert_eq!(w.entity(dozer).unwrap().order, Order::Idle, "arrived");
     run(&mut w, 30 * 10);
     assert_eq!(w.entity(dozer).unwrap().pos, stop, "waits there instead of wandering");
-    assert!(matches!(w.entity(dozer).unwrap().order, Order::Move { .. }), "the order stands");
 }
 
 #[test]
@@ -246,6 +248,8 @@ fn piles_deplete_and_vanish() {
     }
 }
 
+/// Derricks pay credits (the 2013 patch's "additional funds"), exactly as much as the well
+/// holds, then stop.
 #[test]
 fn derricks_only_go_on_free_wells_and_stop_when_dry() {
     let mut map = crater_ridge();
@@ -269,8 +273,9 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
     let worker = first(&w, P0, GLA_WORKER).unwrap();
     let taken = order(&mut w, CommandKind::Build { builder: worker, def: GLA_DERRICK, pos: Vec2::from_int(60, 150) });
     assert_eq!(taken, vec![Reject::InvalidPlacement], "a well holds one derrick");
+    let before = w.player(P0).credits;
     run(&mut w, 30 * 10);
-    assert_eq!(w.player(P0).oil, 12, "income stops at the well's reserve");
+    assert_eq!(w.player(P0).credits - before, 12, "income stops at the well's reserve");
 }
 
 #[test]

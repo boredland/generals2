@@ -75,7 +75,7 @@ pub struct Entity {
     /// Supply center the collector is bound to (counts against that center's cap).
     pub home: Option<EntityId>,
     pub powered: bool,
-    /// Fractional oil income accumulator (ticks into the current second).
+    /// Oil derrick: ticks into the current second of income.
     pub income_ticks: u32,
     /// Armed units: ticks until the weapon can fire again.
     pub cooldown: u32,

@@ -27,10 +27,11 @@ impl Faction {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct DefId(pub u16);
 
+/// What a unit or building costs. Credits only: the 2013 game dropped oil as a second
+/// currency (its derricks paid credits, Fandom `Oil_derrick_(Generals_2)`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Cost {
     pub credits: i64,
-    pub oil: i64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -96,9 +97,9 @@ pub enum BuildingRole {
         collector_cap: u32,
     },
     PowerPlant,
-    /// Must be placed on a free oil well; yields `oil_per_second` until the well runs dry.
+    /// Must be placed on a free oil well; pays `credits_per_second` until the well runs dry.
     OilDerrick {
-        oil_per_second: i64,
+        credits_per_second: i64,
     },
     /// Trains combat units (barracks, war factory).
     Factory,
@@ -179,7 +180,7 @@ pub struct General {
 /// A per-def change, in whole percent; several for one def multiply.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Modifier {
-    /// `cost_percent` of the normal credit and oil cost.
+    /// `percent` of the normal cost.
     Cost { def: DefId, percent: i64 },
     /// `percent` of the normal build time.
     BuildTime { def: DefId, percent: u32 },
@@ -214,7 +215,7 @@ impl Rules {
             Modifier::Cost { def: d, percent } if d == def => p * percent / 100,
             _ => p,
         });
-        Cost { credits: base.credits * percent / 100, oil: base.oil * percent / 100 }
+        Cost { credits: base.credits * percent / 100 }
     }
 
     /// Build time of `def` in ticks for a player with `general`; at least one tick.

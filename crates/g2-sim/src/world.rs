@@ -25,7 +25,6 @@ pub struct Player {
     /// Chosen general; its modifiers apply to every cost and build time this player pays.
     pub general: Option<crate::defs::GeneralId>,
     pub credits: i64,
-    pub oil: i64,
     pub power_supply: i32,
     pub power_drain: i32,
     pub defeated: bool,
@@ -122,7 +121,6 @@ impl World {
                 faction: p.faction,
                 general: p.general,
                 credits: p.starting_credits,
-                oil: 0,
                 power_supply: 0,
                 power_drain: 0,
                 defeated: false,
@@ -329,7 +327,7 @@ impl World {
         }
         self.resolve_shots();
         self.separate_units();
-        self.update_oil();
+        self.update_derricks();
         // Defeat first, so an eliminated player's remaining units go in the same tick.
         self.update_defeat();
         self.cleanup();
@@ -390,7 +388,7 @@ impl World {
     fn afford(&self, player: PlayerId, def: DefId) -> Result<(), Reject> {
         let cost = self.cost_for(player, def);
         let p = self.player(player);
-        if p.credits < cost.credits || p.oil < cost.oil {
+        if p.credits < cost.credits {
             return Err(Reject::InsufficientFunds);
         }
         Ok(())
@@ -400,7 +398,6 @@ impl World {
         let cost = self.cost_for(player, def);
         let p = &mut self.players[player.0 as usize];
         p.credits -= sign * cost.credits;
-        p.oil -= sign * cost.oil;
     }
 
     fn apply(&mut self, cmd: &Command) -> Result<(), Reject> {
@@ -535,7 +532,9 @@ impl World {
     }
 
     /// One destination per unit around `target`: a square, row-major in selection order,
-    /// spaced by the widest unit.
+    /// spaced by the widest unit. A slot inside a building or on blocked terrain moves to the
+    /// nearest free cell; otherwise the unit could never arrive, and every attempt to route
+    /// there would search the whole reachable map.
     fn formation(&self, units: &[EntityId], target: Vec2) -> Vec<(EntityId, Vec2)> {
         let target = self.map.clamp(target);
         let spacing = units.iter().map(|&u| self.radius_of(u)).max().unwrap_or(SLACK) * Fx::from_int(2) + SLACK;
@@ -549,7 +548,7 @@ impl World {
                     spacing * Fx::from_int(col) - spacing * Fx::from_ratio(side - 1, 2),
                     spacing * Fx::from_int(row) - spacing * Fx::from_ratio(side - 1, 2),
                 );
-                (u, self.map.clamp(target + offset))
+                (u, self.nav.free_point(self.map.clamp(target + offset)))
             })
             .collect()
     }
@@ -1057,10 +1056,12 @@ impl World {
         }
     }
 
-    fn update_oil(&mut self) {
+    /// Derricks pay credits from their well every second until it runs dry. The 2013 patch
+    /// made oil derricks "provide additional funds" instead of a second resource.
+    fn update_derricks(&mut self) {
         for id in self.entities.ids() {
             let e = self.entities.get(id).unwrap();
-            let Some(BuildingRole::OilDerrick { oil_per_second }) = self.rules.def(e.def).role() else { continue };
+            let Some(BuildingRole::OilDerrick { credits_per_second }) = self.rules.def(e.def).role() else { continue };
             let (Some(well), Some(owner), true) = (e.on_well, e.owner, e.is_complete()) else { continue };
             let e = self.entities.get_mut(id).unwrap();
             e.income_ticks += 1;
@@ -1069,9 +1070,9 @@ impl World {
             }
             e.income_ticks = 0;
             let Some(w) = self.entities.get_mut(well) else { continue };
-            let amount = oil_per_second.min(w.resource);
+            let amount = credits_per_second.min(w.resource);
             w.resource -= amount;
-            self.players[owner.0 as usize].oil += amount;
+            self.players[owner.0 as usize].credits += amount;
         }
     }
 
