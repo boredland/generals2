@@ -25,16 +25,24 @@ struct Body;
 #[derive(Component)]
 struct Scaffold;
 
+/// A deployable unit's stabiliser legs: they slide out while it sets up (scaled across by the
+/// deploy progress) and are hidden while it is packed.
+#[derive(Component)]
+struct Outriggers;
+
 #[derive(Component)]
 struct Rotor;
 
-/// A short-lived combat effect: a tracer from shooter to target or the flash of a kill.
+/// A short-lived combat effect: a tracer from shooter to target, the flash of a kill or a
+/// blast, or a shell in the air.
 #[derive(Component)]
 struct Effect {
     age: f32,
     life: f32,
     /// Grows from 1 to this many times its spawn scale over its life (kill flashes).
     grow: f32,
+    /// A shell: it flies from `.0` to `.1` on an arc this high at its peak, over `life`.
+    arc: Option<(Vec3, Vec3, f32)>,
 }
 
 /// Seconds a tracer stays visible; kill flashes last three times as long.
@@ -182,6 +190,11 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
             c.spawn((Scaffold, Transform::default(), Visibility::Hidden))
                 .with_children(|s| spawn_parts(s, assets, faction, &scaffold));
         }
+        if def.deploy.is_some() {
+            let legs = models::outriggers(def.radius.to_f32());
+            c.spawn((Outriggers, Transform::default(), Visibility::Hidden))
+                .with_children(|s| spawn_parts(s, assets, faction, &legs));
+        }
     });
     root.id()
 }
@@ -193,9 +206,13 @@ fn sync_entities(
     assets: Res<Assets3d>,
     sim: Res<Sim>,
     roots: Query<&Children, With<SimRef>>,
-    mut bodies: Query<&mut Transform, (With<Body>, Without<SimRef>, Without<Scaffold>)>,
-    mut scaffolds: Query<&mut Visibility, (With<Scaffold>, Without<SimRef>)>,
-    mut root_tf: Query<(&mut Transform, &mut Visibility), (With<SimRef>, Without<Body>, Without<Scaffold>)>,
+    mut bodies: Query<&mut Transform, (With<Body>, Without<SimRef>, Without<Scaffold>, Without<Outriggers>)>,
+    mut scaffolds: Query<&mut Visibility, (With<Scaffold>, Without<SimRef>, Without<Outriggers>)>,
+    mut legs: Query<(&mut Transform, &mut Visibility), (With<Outriggers>, Without<SimRef>, Without<Body>)>,
+    mut root_tf: Query<
+        (&mut Transform, &mut Visibility),
+        (With<SimRef>, Without<Body>, Without<Scaffold>, Without<Outriggers>),
+    >,
 ) {
     let world = &sim.world;
     // A model goes when its entity does, except a remembered building destroyed out of sight:
@@ -227,12 +244,23 @@ fn sync_entities(
             (Class::SupplyPile, _, _) => (e.resource as f32 / 6000.0).clamp(0.3, 1.4),
             _ => 1.0,
         };
+        // Outriggers: 0 packed, 1 deployed, in between while setting up or packing up.
+        let out = match (e.deploy, def.deploy) {
+            (g2_sim::entity::DeployState::Deployed, _) => 1.0,
+            (g2_sim::entity::DeployState::Deploying(t), Some(d)) => 1.0 - t as f32 / d.ticks.max(1) as f32,
+            (g2_sim::entity::DeployState::Packing(t), Some(d)) => t as f32 / d.ticks.max(1) as f32,
+            _ => 0.0,
+        };
         for &child in children {
             if let Ok(mut tf) = bodies.get_mut(child) {
                 tf.scale = Vec3::new(1.0, rise, 1.0);
             }
             if let Ok(mut v) = scaffolds.get_mut(child) {
                 *v = if e.construction.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+            }
+            if let Ok((mut tf, mut v)) = legs.get_mut(child) {
+                tf.scale = Vec3::new(0.4 + 0.6 * out, 1.0, 1.0);
+                v.set_if_neq(if out > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
             }
         }
     }
@@ -267,34 +295,67 @@ fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
     }
 }
 
-/// A tracer for every hit (a thin glowing bar from muzzle height at the shooter to the
-/// target), plus an expanding fireball where a hit destroyed its target. Under fog, only hits
-/// with an end the local player sees.
+/// A tracer for every direct hit (a thin glowing bar from muzzle height at the shooter to the
+/// target), an expanding fireball where a hit destroyed its target, a shell flying on an arc
+/// for its flight time, and a blast the size of its radius where it lands. Under fog, only
+/// what has an end the local player sees.
 fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, mut hits: ResMut<crate::sim::Hits>) {
+    use crate::sim::Shot;
     let vision = sim.world.vision(crate::sim::LOCAL);
-    for (from, to, killed) in hits.0.drain(..) {
-        if sim.fog && !vision.is_visible(from) && !vision.is_visible(to) {
-            continue;
-        }
-        let (a, b) = (sim.to_world(from) + Vec3::Y * 1.5, sim.to_world(to) + Vec3::Y * 1.5);
-        let len = a.distance(b);
-        if len > 0.1 {
-            commands.spawn((
-                Mesh3d(assets.cube.clone()),
-                MeshMaterial3d(assets.tracer.clone()),
-                Transform::from_translation((a + b) / 2.0)
-                    .looking_at(b, Vec3::Y)
-                    .with_scale(Vec3::new(0.25, 0.25, len)),
-                Effect { age: 0.0, life: TRACER_SECS, grow: 1.0 },
-            ));
-        }
-        if killed {
-            commands.spawn((
-                Mesh3d(assets.sphere.clone()),
-                MeshMaterial3d(assets.blast.clone()),
-                Transform::from_translation(b).with_scale(Vec3::splat(2.5)),
-                Effect { age: 0.0, life: TRACER_SECS * 3.0, grow: 3.0 },
-            ));
+    let seen = |p: g2_sim::Vec2| !sim.fog || vision.is_visible(p);
+    let tick_secs = 1.0 / g2_sim::TICKS_PER_SECOND as f32;
+    for shot in hits.0.drain(..) {
+        match shot {
+            Shot::Hit { from, at, killed, tracer } => {
+                if !seen(from) && !seen(at) {
+                    continue;
+                }
+                let (a, b) = (sim.to_world(from) + Vec3::Y * 1.5, sim.to_world(at) + Vec3::Y * 1.5);
+                let len = a.distance(b);
+                if tracer && len > 0.1 {
+                    commands.spawn((
+                        Mesh3d(assets.cube.clone()),
+                        MeshMaterial3d(assets.tracer.clone()),
+                        Transform::from_translation((a + b) / 2.0)
+                            .looking_at(b, Vec3::Y)
+                            .with_scale(Vec3::new(0.25, 0.25, len)),
+                        Effect { age: 0.0, life: TRACER_SECS, grow: 1.0, arc: None },
+                    ));
+                }
+                if killed {
+                    commands.spawn((
+                        Mesh3d(assets.sphere.clone()),
+                        MeshMaterial3d(assets.blast.clone()),
+                        Transform::from_translation(b).with_scale(Vec3::splat(2.5)),
+                        Effect { age: 0.0, life: TRACER_SECS * 3.0, grow: 3.0, arc: None },
+                    ));
+                }
+            }
+            Shot::Shell { from, at, flight } => {
+                if !seen(from) && !seen(at) {
+                    continue;
+                }
+                let (a, b) = (sim.to_world(from) + Vec3::Y * 2.5, sim.to_world(at) + Vec3::Y * 0.5);
+                let peak = (a.distance(b) * 0.35).max(4.0);
+                commands.spawn((
+                    Mesh3d(assets.sphere.clone()),
+                    MeshMaterial3d(assets.tracer.clone()),
+                    Transform::from_translation(a).with_scale(Vec3::splat(0.9)),
+                    Effect { age: 0.0, life: flight as f32 * tick_secs, grow: 1.0, arc: Some((a, b, peak)) },
+                ));
+            }
+            Shot::Blast { at, radius } => {
+                if !seen(at) {
+                    continue;
+                }
+                let r = radius.to_f32();
+                commands.spawn((
+                    Mesh3d(assets.sphere.clone()),
+                    MeshMaterial3d(assets.blast.clone()),
+                    Transform::from_translation(sim.to_world(at) + Vec3::Y * 0.5).with_scale(Vec3::new(r, r * 0.5, r)),
+                    Effect { age: 0.0, life: TRACER_SECS * 4.0, grow: 1.4, arc: None },
+                ));
+            }
         }
     }
 }
@@ -315,7 +376,11 @@ fn age_effects(
             commands.entity(id).despawn();
             continue;
         }
-        let now = 1.0 + (fx.grow - 1.0) * (fx.age / fx.life);
+        let t = fx.age / fx.life;
+        if let Some((a, b, peak)) = fx.arc {
+            tf.translation = a.lerp(b, t) + Vec3::Y * peak * 4.0 * t * (1.0 - t);
+        }
+        let now = 1.0 + (fx.grow - 1.0) * t;
         tf.scale *= now / before;
     }
 }

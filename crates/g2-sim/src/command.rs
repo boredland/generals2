@@ -54,6 +54,12 @@ pub enum CommandKind {
         units: Vec<EntityId>,
         target: Vec2,
     },
+    /// Deployable units set up for their main gun (`deployed: true`) or pack up to move. Any
+    /// order that moves a deployed unit packs it up first, so packing is rarely needed.
+    Deploy {
+        units: Vec<EntityId>,
+        deployed: bool,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.
@@ -72,4 +78,6 @@ pub enum Reject {
     /// Every reachable supply center is at its faction's collector cap.
     DepotFull,
     QueueFull,
+    /// None of the units can deploy.
+    CannotDeploy,
 }

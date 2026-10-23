@@ -1,7 +1,7 @@
 use crate::ai::Ai;
 use crate::command::{Command, CommandKind, Reject};
 use crate::defs::{BuildingRole, Class, DefId, Faction, Rules};
-use crate::entity::{Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Production, Route};
+use crate::entity::{DeployState, Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Production, Route};
 use crate::fixed::{Fx, Vec2};
 use crate::map::{MapDef, MatchSetup};
 use crate::rng::Pcg32;
@@ -44,14 +44,43 @@ pub enum Event {
         credits: i64,
     },
     /// `shooter` hit `target` (standing at `at`) for `damage`; `killed` when that destroyed
-    /// it. Output only, like `Delivered`.
+    /// it; `splash` when the damage came from a shell's blast rather than direct fire. Output
+    /// only, like `Delivered`.
     Hit {
         shooter: EntityId,
         target: EntityId,
         at: Vec2,
         damage: i32,
         killed: bool,
+        splash: bool,
     },
+    /// An artillery shell left `shooter` at `from`; it lands at `at` on tick `lands`. Output
+    /// only, for drawing the flight.
+    Fired {
+        shooter: EntityId,
+        from: Vec2,
+        at: Vec2,
+        lands: u32,
+    },
+    /// A shell landed at `at` with blast `radius`; each unit it damaged is a `Hit`. Output only.
+    Landed {
+        at: Vec2,
+        radius: Fx,
+    },
+}
+
+/// An artillery shell in flight. Part of the state hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShellInFlight {
+    pub shooter: EntityId,
+    pub owner: PlayerId,
+    pub from: Vec2,
+    pub at: Vec2,
+    /// Tick on which it lands.
+    pub lands: u32,
+    pub damage: i32,
+    pub bonus: [i32; 4],
+    pub radius: Fx,
 }
 
 pub struct World {
@@ -74,9 +103,11 @@ pub struct World {
     nav: crate::nav::Grid,
     /// Hash of the statics the grid was built from; when it changes, every unit replans.
     nav_key: u64,
-    /// `(shooter, target, damage)` fired this tick, applied together by `resolve_shots`.
-    /// Empty between ticks, so it needs no hash.
-    shots: Vec<(EntityId, EntityId, i32)>,
+    /// `(shooter, target, damage, splash)` fired this tick, applied together by
+    /// `resolve_shots`. Empty between ticks, so it needs no hash.
+    shots: Vec<(EntityId, EntityId, i32, bool)>,
+    /// Shells in flight, in firing order.
+    pub(crate) shells: Vec<ShellInFlight>,
     /// What each player sees and has explored (index = player). Updated every tick before
     /// units act, so targeting only ever uses what is visible at the start of the tick.
     pub(crate) visions: Vec<crate::fog::Vision>,
@@ -110,6 +141,7 @@ impl World {
             nav: crate::nav::Grid::default(),
             nav_key: u64::MAX,
             shots: Vec::new(),
+            shells: Vec::new(),
             visions: setup.players.iter().map(|_| crate::fog::Vision::new(setup.map.width, setup.map.height)).collect(),
             checkpoints: Vec::new(),
         };
@@ -161,6 +193,7 @@ impl World {
             powered: false,
             income_ticks: 0,
             cooldown: 0,
+            deploy: DeployState::Packed,
             route: Route::default(),
         }
     }
@@ -330,6 +363,9 @@ impl World {
                 self.update_unit(id);
             }
         }
+        // Shells fired on earlier ticks land before this tick's shots are applied, so their
+        // damage joins the same simultaneous resolution.
+        self.land_shells();
         self.resolve_shots();
         self.separate_units();
         self.update_derricks();
@@ -543,6 +579,27 @@ impl World {
                     let e = self.entities.get_mut(u).unwrap();
                     e.order = Order::AttackMove { dest, pace, engaged: None };
                     e.home = None;
+                }
+                Ok(())
+            }
+            CommandKind::Deploy { units, deployed } => {
+                let units = self.own_units(player, units, |d| d.deploy.is_some()).map_err(|_| Reject::CannotDeploy)?;
+                for u in units {
+                    let (state, def) = {
+                        let e = self.entities.get(u).unwrap();
+                        (e.deploy, e.def)
+                    };
+                    let ticks = self.rules.def(def).deploy.map_or(0, |d| d.ticks);
+                    match (deployed, state) {
+                        (true, DeployState::Packed) => {
+                            let e = self.entities.get_mut(u).unwrap();
+                            e.order = Order::Idle;
+                            e.home = None;
+                            self.start_deploy(u, ticks);
+                        }
+                        (false, DeployState::Deployed) => self.pack(u),
+                        _ => {}
+                    }
                 }
                 Ok(())
             }
@@ -849,17 +906,62 @@ impl World {
         let e = self.entities.get(id).unwrap();
         let d = self.rules.def(e.def);
         let (pos, speed, radius, owner, order) = (e.pos, d.speed(), d.radius, e.owner.unwrap(), e.order);
-        let weapon = d.weapon();
-        if weapon.is_some() {
+        let deploy = d.deploy;
+        let state = e.deploy;
+        if d.weapon().is_some() {
             let e = self.entities.get_mut(id).unwrap();
             e.cooldown = e.cooldown.saturating_sub(1);
         }
+        // Setting up and packing up take time, during which the unit neither moves nor fires.
+        match state {
+            DeployState::Deploying(t) | DeployState::Packing(t) if t > 1 => {
+                let e = self.entities.get_mut(id).unwrap();
+                e.deploy = if matches!(state, DeployState::Deploying(_)) {
+                    DeployState::Deploying(t - 1)
+                } else {
+                    DeployState::Packing(t - 1)
+                };
+                return;
+            }
+            DeployState::Deploying(_) => {
+                self.entities.get_mut(id).unwrap().deploy = DeployState::Deployed;
+                return;
+            }
+            DeployState::Packing(_) => {
+                self.entities.get_mut(id).unwrap().deploy = DeployState::Packed;
+                return;
+            }
+            DeployState::Packed | DeployState::Deployed => {}
+        }
+        let deployed = state == DeployState::Deployed;
+        let weapon = d.weapon_for(deployed);
+        // A deployed unit given anything that moves it packs up first; the order waits. On an
+        // attack-move it stays set up while its howitzer has a target, and moves on after.
+        let moves = match order {
+            Order::Idle | Order::Attack { .. } => false,
+            Order::AttackMove { dest, .. } if dest == pos => false,
+            Order::AttackMove { .. } => weapon.is_none_or(|w| self.enemy_in_band(owner, pos, w, Fx::ZERO).is_none()),
+            _ => true,
+        };
+        if deployed && moves {
+            self.pack(id);
+            return;
+        }
         let (new_pos, new_order) = match order {
-            Order::Idle => match weapon.and_then(|w| self.enemy_near(owner, pos, w.range + ACQUIRE)) {
-                // Guard: an idle armed unit engages what comes close and then walks back.
-                Some(t) => (pos, Order::AttackMove { dest: pos, pace: speed, engaged: Some(t) }),
-                None => (pos, Order::Idle),
-            },
+            Order::Idle => {
+                // Guard: an idle armed unit engages what comes close and then walks back. A
+                // deployable one first sets up if an enemy is within its main gun's reach.
+                if let Some(dep) = deploy.filter(|_| !deployed)
+                    && self.enemy_in_band(owner, pos, dep.weapon, ACQUIRE).is_some()
+                {
+                    self.start_deploy(id, dep.ticks);
+                    return;
+                }
+                match weapon.and_then(|w| self.enemy_in_band(owner, pos, w, ACQUIRE)) {
+                    Some(t) => (pos, Order::AttackMove { dest: pos, pace: speed, engaged: Some(t) }),
+                    None => (pos, Order::Idle),
+                }
+            }
             Order::Move { target, pace } => {
                 let (p, arrived) = self.approach(id, target, Fx::ZERO, pace.min(speed));
                 (p, if arrived { Order::Idle } else { order })
@@ -873,8 +975,24 @@ impl World {
                 }
             },
             Order::Gather { pile, phase } => self.gather_step(id, pile, phase, pos, speed, radius, owner),
-            Order::Attack { target } => match (weapon, self.live_enemy(owner, target)) {
-                (Some(w), Some(_)) => (self.engage(id, target, w, speed), order),
+            Order::Attack { target } => match (weapon, self.live_enemy(owner, target).map(|t| (t.pos, t.def))) {
+                (Some(w), Some((tpos, tdef))) => {
+                    let gap = tpos.distance(pos) - self.rules.def(tdef).radius;
+                    match deploy {
+                        // Packed, with the target beyond the cannon but within the howitzer's
+                        // reach: stop and set up rather than drive closer.
+                        Some(dep) if !deployed && gap > w.range && gap <= dep.weapon.range => {
+                            self.start_deploy(id, dep.ticks);
+                            return;
+                        }
+                        // Deployed but the target left the howitzer's band: pack up to follow.
+                        Some(_) if deployed && !in_band(w, gap) => {
+                            self.pack(id);
+                            return;
+                        }
+                        _ => (self.engage(id, target, w, speed), order),
+                    }
+                }
                 _ => (pos, Order::Idle),
             },
             Order::AttackMove { dest, pace, engaged } => match weapon {
@@ -883,18 +1001,37 @@ impl World {
                     // Keep the current target while it lives, stays visible and within
                     // acquisition range (a leash: a guard isn't dragged across the map, nor
                     // into the fog); else look around.
-                    let reach = w.range + ACQUIRE;
                     let vision = &self.visions[owner.0 as usize];
                     let target = engaged
                         .filter(|&t| {
                             self.live_enemy(owner, t).is_some_and(|e| {
-                                vision.is_visible(e.pos) && e.pos.distance(pos) - self.rules.def(e.def).radius <= reach
+                                vision.is_visible(e.pos)
+                                    && e.pos.distance(pos) - self.rules.def(e.def).radius <= w.range + ACQUIRE
                             })
                         })
-                        .or_else(|| self.enemy_near(owner, pos, reach));
+                        .or_else(|| self.enemy_in_band(owner, pos, w, ACQUIRE));
                     match target {
+                        // A deployed unit can't chase: it fires at what is in its band, else
+                        // waits for the guard check (Idle) to pick another target.
+                        Some(t) if deployed => {
+                            let gap = self.entities.get(t).map(|e| e.pos.distance(pos) - self.rules.def(e.def).radius);
+                            if gap.is_some_and(|g| in_band(w, g)) {
+                                (self.engage(id, t, w, speed), Order::AttackMove { dest, pace, engaged: Some(t) })
+                            } else {
+                                (pos, Order::Idle)
+                            }
+                        }
                         Some(t) => (self.engage(id, t, w, speed), Order::AttackMove { dest, pace, engaged: Some(t) }),
+                        None if deployed => (pos, Order::Idle),
                         None => {
+                            // Nothing for the cannon, but something in the howitzer's band: stop
+                            // and set up. The order stays, so it moves on once packed again.
+                            if let Some(dep) = deploy
+                                && self.enemy_in_band(owner, pos, dep.weapon, Fx::ZERO).is_some()
+                            {
+                                self.start_deploy(id, dep.ticks);
+                                return;
+                            }
                             let (p, arrived) = self.approach(id, dest, Fx::ZERO, pace.min(speed));
                             (p, if arrived { Order::Idle } else { Order::AttackMove { dest, pace, engaged: None } })
                         }
@@ -914,6 +1051,18 @@ impl World {
         }
     }
 
+    fn start_deploy(&mut self, id: EntityId, ticks: u32) {
+        let e = self.entities.get_mut(id).unwrap();
+        e.deploy = if ticks == 0 { DeployState::Deployed } else { DeployState::Deploying(ticks) };
+        e.route = Route::default();
+    }
+
+    fn pack(&mut self, id: EntityId) {
+        let ticks = self.rules.def(self.entities.get(id).unwrap().def).deploy.map_or(0, |d| d.ticks);
+        let e = self.entities.get_mut(id).unwrap();
+        e.deploy = if ticks == 0 { DeployState::Packed } else { DeployState::Packing(ticks) };
+    }
+
     /// `target` if it is a live entity owned by an opponent of `owner` that can be shot (units
     /// and buildings, not neutral resources). Fog is not checked: an attack order, once given,
     /// chases its target through fog while it lives. Whether it may be given is `attackable`.
@@ -928,9 +1077,12 @@ impl World {
         self.live_enemy(owner, target).is_some_and(|t| vision.is_visible(t.pos) || vision.memory.contains_key(&target))
     }
 
-    /// The visible enemy whose edge is nearest `pos`, within `reach`. Units come before
-    /// buildings, so a squad fights the army before the walls; ties go to the lower entity id.
-    fn enemy_near(&self, owner: PlayerId, pos: Vec2, reach: Fx) -> Option<EntityId> {
+    /// The visible enemy whose edge is nearest `pos`, in the band weapon `w` can fire at: no
+    /// closer than its shell's minimum range and no further than its range plus `extra` (the
+    /// acquisition margin). Units come before buildings, so a squad fights the army before the
+    /// walls; ties go to the lower entity id.
+    fn enemy_in_band(&self, owner: PlayerId, pos: Vec2, w: crate::defs::Weapon, extra: Fx) -> Option<EntityId> {
+        let (near, reach) = (w.shell.map_or(Fx::ZERO, |s| s.min_range), w.range + extra);
         let vision = &self.visions[owner.0 as usize];
         let mut best: Option<(bool, Fx, EntityId)> = None;
         for e in self.entities.iter() {
@@ -944,7 +1096,7 @@ impl World {
                 continue;
             }
             let gap = (e.pos.distance(pos) - d.radius).max(Fx::ZERO);
-            if gap > reach || !vision.is_visible(e.pos) {
+            if gap > reach || gap < near || !vision.is_visible(e.pos) {
                 continue;
             }
             let key = (!d.is_unit(), gap, e.id);
@@ -956,36 +1108,84 @@ impl World {
     }
 
     /// Moves unit `id` into range of `target` and fires when the weapon is ready. Returns the
-    /// unit's new position.
+    /// unit's new position. A deployed unit can't move: out of range it just waits. A shell
+    /// weapon holds fire at a target inside its minimum range.
     fn engage(&mut self, id: EntityId, target: EntityId, w: crate::defs::Weapon, speed: Fx) -> Vec2 {
         let t = self.entities.get(target).unwrap();
         let (tpos, tdef) = (t.pos, self.rules.def(t.def));
         let (tr, armour) = (tdef.radius, tdef.armour);
         let e = self.entities.get(id).unwrap();
-        let (pos, ready) = (e.pos, e.cooldown == 0);
-        if pos.distance(tpos) - tr > w.range {
+        let (pos, ready, owner, deployed) =
+            (e.pos, e.cooldown == 0, e.owner.unwrap(), e.deploy == DeployState::Deployed);
+        let gap = pos.distance(tpos) - tr;
+        if gap > w.range {
+            if deployed {
+                return pos;
+            }
             // Close to a point just inside range, so separation can't push it back out.
             return self.approach(id, tpos, tr + w.range - SLACK, speed).0;
         }
         self.entities.get_mut(id).unwrap().route = Route::default();
-        if ready {
-            self.entities.get_mut(id).unwrap().cooldown = w.cooldown_ticks;
-            self.shots.push((id, target, w.damage_vs(armour)));
+        if !ready || !in_band(w, gap) {
+            return pos;
+        }
+        self.entities.get_mut(id).unwrap().cooldown = w.cooldown_ticks;
+        match w.shell {
+            None => self.shots.push((id, target, w.damage_vs(armour), false)),
+            Some(s) => {
+                let flight = (pos.distance(tpos) / s.speed).floor_int().max(1) as u32;
+                let lands = self.tick + flight;
+                self.shells.push(ShellInFlight {
+                    shooter: id,
+                    owner,
+                    from: pos,
+                    at: tpos,
+                    lands,
+                    damage: w.damage,
+                    bonus: w.bonus,
+                    radius: s.radius,
+                });
+                self.events.push(Event::Fired { shooter: id, from: pos, at: tpos, lands });
+            }
         }
         pos
+    }
+
+    /// Shells due this tick land: every live enemy of the shooter's owner whose edge is within
+    /// the blast radius of the impact point takes the shell's damage against its armour. The
+    /// damage joins this tick's direct shots, so it applies together with them.
+    fn land_shells(&mut self) {
+        let tick = self.tick;
+        let (due, flying): (Vec<_>, Vec<_>) =
+            core::mem::take(&mut self.shells).into_iter().partition(|s| s.lands <= tick);
+        self.shells = flying;
+        for s in due {
+            self.events.push(Event::Landed { at: s.at, radius: s.radius });
+            for e in self.entities.iter() {
+                if !e.owner.is_some_and(|o| o != s.owner) || e.hp <= 0 {
+                    continue;
+                }
+                let d = self.rules.def(e.def);
+                if e.pos.distance(s.at) - d.radius > s.radius {
+                    continue;
+                }
+                let damage = (s.damage + s.bonus[d.armour as usize]).max(1);
+                self.shots.push((s.shooter, e.id, damage, true));
+            }
+        }
     }
 
     /// Applies this tick's shots together, so every unit alive at the start of the tick fires
     /// and the outcome does not depend on entity order: two units that shoot each other both
     /// land their hit. `killed` is reported once, by the shot that took the target to zero.
     fn resolve_shots(&mut self) {
-        for (shooter, target, damage) in core::mem::take(&mut self.shots) {
+        for (shooter, target, damage, splash) in core::mem::take(&mut self.shots) {
             let Some(t) = self.entities.get_mut(target) else { continue };
             let was_alive = t.hp > 0;
             t.hp -= damage;
             let killed = was_alive && t.hp <= 0;
             let at = t.pos;
-            self.events.push(Event::Hit { shooter, target, at, damage, killed });
+            self.events.push(Event::Hit { shooter, target, at, damage, killed, splash });
         }
     }
 
@@ -1182,6 +1382,12 @@ impl World {
             p.defeated = !alive;
         }
     }
+}
+
+/// Whether a target whose edge is `gap` away is in weapon `w`'s firing band (within range,
+/// and for a shell not inside its minimum range).
+fn in_band(w: crate::defs::Weapon, gap: Fx) -> bool {
+    gap <= w.range && w.shell.is_none_or(|s| gap >= s.min_range)
 }
 
 /// Whether segments `a`–`b` and `c`–`d` properly cross (touching ends and collinear overlap

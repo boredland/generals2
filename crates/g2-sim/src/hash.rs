@@ -89,6 +89,12 @@ impl World {
             h.u64(e.powered as u64);
             h.u64(e.income_ticks as u64);
             h.u64(e.cooldown as u64);
+            h.u64(match e.deploy {
+                crate::entity::DeployState::Packed => 0,
+                crate::entity::DeployState::Deploying(t) => 1 << 32 | t as u64,
+                crate::entity::DeployState::Deployed => 2 << 32,
+                crate::entity::DeployState::Packing(t) => 3 << 32 | t as u64,
+            });
             let r = &e.route;
             h.u64(r.key);
             match r.target {
@@ -104,6 +110,21 @@ impl World {
                 h.i64(p.x.0);
                 h.i64(p.y.0);
             }
+        }
+        h.u64(self.shells.len() as u64);
+        for s in &self.shells {
+            id(&mut h, s.shooter);
+            h.u64(s.owner.0 as u64);
+            h.i64(s.from.x.0);
+            h.i64(s.from.y.0);
+            h.i64(s.at.x.0);
+            h.i64(s.at.y.0);
+            h.u64(s.lands as u64);
+            h.i64(s.damage as i64);
+            for b in s.bonus {
+                h.i64(b as i64);
+            }
+            h.i64(s.radius.0);
         }
         h.0
     }

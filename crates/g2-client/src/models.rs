@@ -347,6 +347,10 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
         }
         return;
     }
+    if def.weapon().is_some_and(|w| w.shell.is_some()) || def.deploy.is_some() {
+        artillery(p, faction, r);
+        return;
+    }
     let (l, wd) = (r * 2.0, r * 1.3);
     for side in [-1.0, 1.0] {
         p.push(block(Slot::Dark, side * wd * 0.42, 0.0, 0.0, wd * 0.22, 0.8, l));
@@ -372,6 +376,56 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
             p.push(block(Slot::Crate(2), wd * 0.2, -l * 0.38, 1.4, 0.8, 0.6, 0.7));
         }
     }
+}
+
+/// Self-propelled guns: a long chassis with a big barrel raised for indirect fire. EU: a flat
+/// casemate with hazard trim; APA (Thunderfist): a squat turret on a heavy hull; GLA: an open
+/// truck bed with a scrap-plated gun and three short tubes (the "tri-artillery cannon").
+fn artillery(p: &mut Vec<Part>, faction: Faction, r: f32) {
+    let (l, wd) = (r * 2.4, r * 1.35);
+    for side in [-1.0, 1.0] {
+        p.push(block(Slot::Dark, side * wd * 0.42, 0.0, 0.0, wd * 0.22, 0.8, l));
+    }
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, wd * 0.72, 0.8, l * 0.95));
+    p.push(block(Slot::Team, 0.0, l * 0.32, 1.3, wd * 0.72, 0.15, l * 0.22));
+    let raised = |slot: Slot, x: f32, len: f32, thick: f32| {
+        // Parts have no pitch, so the raised barrel is a stack of short segments, each a little
+        // further forward and higher than the last.
+        (0..4).map(move |k| {
+            let t = k as f32 / 3.0;
+            block(slot, x, -l * 0.05 + len * t, 2.0 + len * t * 0.55, thick, thick, len * 0.36)
+        })
+    };
+    match faction {
+        Faction::Eu => {
+            p.push(block(Slot::Panel, 0.0, -l * 0.12, 1.3, wd * 0.62, 0.9, l * 0.5));
+            p.extend(raised(Slot::Dark, 0.0, l * 0.5, 0.32));
+            hazard_trim(p, wd * 0.72, l * 0.95, 1.3);
+        }
+        Faction::Apa => {
+            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.9, -l * 0.1), Vec3::new(wd * 0.7, 0.9, wd * 0.7)));
+            p.extend(raised(Slot::Dark, 0.0, l * 0.55, 0.4));
+        }
+        Faction::Gla => {
+            p.push(block(Slot::Crate(1), 0.0, -l * 0.2, 1.3, wd * 0.7, 0.5, l * 0.5));
+            for x in [-0.35, 0.0, 0.35] {
+                p.extend(raised(Slot::Dark, x, l * 0.42, 0.2));
+            }
+            p.push(block(Slot::Crate(3), wd * 0.25, l * 0.3, 1.3, 0.8, 0.6, 0.7));
+        }
+    }
+}
+
+/// The Thunderfist's stabiliser legs, fully out; the view scales them across while it sets up
+/// or packs up and hides them while packed.
+pub fn outriggers(r: f32) -> Vec<Part> {
+    let (l, wd) = (r * 2.4, r * 1.35);
+    let mut p = Vec::new();
+    for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        p.push(block(Slot::Dark, x * wd * 0.85, z * l * 0.32, 0.15, 0.5, 0.3, 0.5));
+        p.push(block(Slot::Panel, x * wd * 0.63, z * l * 0.32, 0.45, wd * 0.45, 0.2, 0.25));
+    }
+    p
 }
 
 pub fn supply_pile(r: f32) -> Vec<Part> {

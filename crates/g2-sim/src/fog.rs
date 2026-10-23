@@ -116,11 +116,13 @@ impl Vision {
     }
 }
 
-/// How far `def` sees, for an entity that is (`complete`) or isn't finished yet.
+/// How far `def` sees, for an entity that is (`complete`) or isn't finished yet. A deployable
+/// unit sees as far as its longest weapon reaches, so the howitzer has targets to set up for.
 pub fn sight(rules: &Rules, def: DefId, complete: bool, acquire: Fx) -> Fx {
     let d = rules.def(def);
-    match d.weapon() {
-        Some(w) => w.range + acquire + d.radius,
+    let weapon = d.deploy.map(|dep| dep.weapon).into_iter().chain(d.weapon()).map(|w| w.range).max();
+    match weapon {
+        Some(range) => range + acquire + d.radius,
         None if d.is_building() && complete => BUILDING_SIGHT + d.radius,
         None if d.is_unit() || d.is_building() => UNIT_SIGHT + d.radius,
         None => Fx::ZERO,

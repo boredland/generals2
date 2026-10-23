@@ -72,8 +72,11 @@ pub enum Armour {
     Structure,
 }
 
-/// An instant-hit weapon: every `cooldown_ticks` it deals `damage_vs(armour)` to one target
-/// whose edge is within `range` of the shooter's centre.
+/// A weapon: every `cooldown_ticks` it fires at one target whose edge is within `range` of the
+/// shooter's centre (and, for a shell, at least `min_range` away). Without a `shell` the hit is
+/// instant and deals `damage_vs(armour)` to that target. With one it lobs a shell at the spot
+/// the target stood on when it fired; the shell lands after its flight time and damages every
+/// enemy within `radius` of that spot, so a unit that moved away is missed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Weapon {
     pub damage: i32,
@@ -81,6 +84,7 @@ pub struct Weapon {
     pub bonus: [i32; 4],
     pub range: Fx,
     pub cooldown_ticks: u32,
+    pub shell: Option<Shell>,
 }
 
 impl Weapon {
@@ -88,6 +92,26 @@ impl Weapon {
     pub fn damage_vs(&self, armour: Armour) -> i32 {
         (self.damage + self.bonus[armour as usize]).max(1)
     }
+}
+
+/// An artillery shell. Splash hurts enemies only: friendly fire would need an AI that avoids it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Shell {
+    /// Units within this distance of the impact point (edge, not centre) are hit.
+    pub radius: Fx,
+    /// World units per tick; flight time is the distance over this, at least one tick.
+    pub speed: Fx,
+    /// No firing at targets whose edge is closer than this.
+    pub min_range: Fx,
+}
+
+/// A unit that must stop and set up to use its main gun (the Thunderfist's howitzer). It moves
+/// and fights with its class weapon; deployed it can't move, fires `weapon`, and setting up or
+/// packing up takes `ticks`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Deploy {
+    pub weapon: Weapon,
+    pub ticks: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -119,6 +143,8 @@ pub struct Def {
     pub produces: &'static [DefId],
     /// Buildings a constructor of this def may place.
     pub builds: &'static [DefId],
+    /// Deployable units only: the set-up time and the deployed weapon.
+    pub deploy: Option<Deploy>,
 }
 
 impl Def {
@@ -141,6 +167,14 @@ impl Def {
         match self.class {
             Class::Unit { collector, .. } => collector,
             _ => None,
+        }
+    }
+
+    /// The weapon in use: the deployed one while `deployed`, else the class weapon.
+    pub fn weapon_for(&self, deployed: bool) -> Option<Weapon> {
+        match (deployed, self.deploy) {
+            (true, Some(d)) => Some(d.weapon),
+            _ => self.weapon(),
         }
     }
 

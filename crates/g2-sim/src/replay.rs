@@ -232,6 +232,11 @@ impl Writer {
                 self.ids(units);
                 self.pos(*target);
             }
+            CommandKind::Deploy { units, deployed } => {
+                self.u8(10);
+                self.ids(units);
+                self.u8(*deployed as u8);
+            }
         }
     }
 }
@@ -293,6 +298,7 @@ impl Reader<'_> {
             7 => CommandKind::Surrender,
             8 => CommandKind::Attack { units: self.ids()?, target: self.id()? },
             9 => CommandKind::AttackMove { units: self.ids()?, target: self.pos()? },
+            10 => CommandKind::Deploy { units: self.ids()?, deployed: self.u8()? != 0 },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

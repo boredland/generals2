@@ -145,6 +145,21 @@ fn keyboard(
         placing.0 = None;
     }
     let rules = sim.world.rules;
+    // T: deployable units in the selection set up, or pack up if every one is already set up.
+    if keys.just_pressed(KeyCode::KeyT) {
+        let deployable: Vec<EntityId> = sel
+            .0
+            .iter()
+            .copied()
+            .filter(|&id| sim.world.entity(id).is_some_and(|e| rules.def(e.def).deploy.is_some()))
+            .collect();
+        if !deployable.is_empty() {
+            let all_set_up = deployable
+                .iter()
+                .all(|&id| sim.world.entity(id).unwrap().deploy == g2_sim::entity::DeployState::Deployed);
+            sim.order(CommandKind::Deploy { units: deployable, deployed: !all_set_up });
+        }
+    }
     if let Some(builder) = selected_constructor(&sim, &sel) {
         let builds = rules.def(sim.world.entity(builder).unwrap().def).builds;
         for (i, key) in DIGITS.iter().enumerate() {

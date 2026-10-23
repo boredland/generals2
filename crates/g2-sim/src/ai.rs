@@ -118,12 +118,24 @@ impl Ai {
             }
         }
 
-        // 3b. Keep every factory training (one at a time, so collectors come first).
+        // 3b. Keep every factory training (one at a time, so collectors come first). A factory
+        // with several units trains the one this AI owns fewest of, weighting the first (the
+        // line unit) double, so artillery makes up about a third of a war factory's output.
+        let owned = |def| {
+            mine.iter().filter(|e| e.def == def).count()
+                + mine.iter().flat_map(|e| &e.queue).filter(|p| p.def == def).count()
+        };
         for f in mine.iter().filter(|e| !saving && e.is_complete() && e.queue.is_empty()) {
             if rules.def(f.def).role() != Some(BuildingRole::Factory) {
                 continue;
             }
-            if let Some(&unit) = rules.def(f.def).produces.first()
+            let produces = rules.def(f.def).produces;
+            let pick = produces
+                .iter()
+                .enumerate()
+                .min_by_key(|&(i, &u)| (owned(u) * if i == 0 { 1 } else { 2 }, i))
+                .map(|(_, &u)| u);
+            if let Some(unit) = pick
                 && world.player(me).credits >= rules.def(unit).cost.credits
             {
                 out.push(CommandKind::Train { producer: f.id, def: unit });

@@ -128,10 +128,20 @@ pub struct Previous(pub std::collections::BTreeMap<g2_sim::EntityId, g2_sim::Vec
 #[derive(Resource, Default)]
 pub struct Deliveries(pub Vec<(g2_sim::EntityId, i64)>);
 
-/// Every hit since the view last drained this: `(shooter position, target position, killed)`,
-/// gathered per step like `Deliveries`.
+/// Every shot since the view last drained this, gathered per step like `Deliveries`.
 #[derive(Resource, Default)]
-pub struct Hits(pub Vec<(g2_sim::Vec2, g2_sim::Vec2, bool)>);
+pub struct Hits(pub Vec<Shot>);
+
+/// What the view draws for combat.
+#[derive(Clone, Copy, Debug)]
+pub enum Shot {
+    /// A hit on a target at `at`; `tracer` for direct fire (a shell's hits are its blast).
+    Hit { from: g2_sim::Vec2, at: g2_sim::Vec2, killed: bool, tracer: bool },
+    /// A shell from `from` to `at`, in the air for `flight` ticks.
+    Shell { from: g2_sim::Vec2, at: g2_sim::Vec2, flight: u32 },
+    /// A shell landed at `at`; its blast has `radius`.
+    Blast { at: g2_sim::Vec2, radius: g2_sim::Fx },
+}
 
 pub struct SimPlugin;
 
@@ -160,20 +170,33 @@ fn step_sim(
     for _ in 0..sim.speed {
         sim.world.step();
         for e in sim.world.events() {
-            match *e {
-                g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } => {
-                    deliveries.0.push((depot, credits))
-                }
-                g2_sim::world::Event::Hit { shooter, at, killed, .. } => {
-                    let from = sim.world.entity(shooter).map_or(at, |s| s.pos);
-                    hits.0.push((from, at, killed));
-                }
-                _ => {}
+            if let g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } = *e {
+                deliveries.0.push((depot, credits));
             }
         }
+        collect_shots(&sim.world, &mut hits);
         if sim.world.winner().is_some() {
             sim.speed = 0;
             break;
+        }
+    }
+}
+
+/// Turns the last step's combat events into `Shot`s for the view. A shell's blast is drawn at
+/// its landing, so its hits get no tracer of their own.
+pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
+    let tick = world.tick();
+    for e in world.events() {
+        match *e {
+            g2_sim::world::Event::Hit { shooter, at, killed, splash, .. } => {
+                let from = world.entity(shooter).map_or(at, |s| s.pos);
+                hits.0.push(Shot::Hit { from, at, killed, tracer: !splash });
+            }
+            g2_sim::world::Event::Fired { from, at, lands, .. } => {
+                hits.0.push(Shot::Shell { from, at, flight: lands.saturating_sub(tick) + 1 })
+            }
+            g2_sim::world::Event::Landed { at, radius } => hits.0.push(Shot::Blast { at, radius }),
+            _ => {}
         }
     }
 }

@@ -4,7 +4,8 @@
 //! Everything else is a placeholder chosen for playability and will be tuned.
 
 use g2_sim::defs::{
-    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Faction, General, Modifier, Rules, Weapon,
+    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Faction, General, Modifier, Rules, Shell,
+    Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -41,6 +42,9 @@ pub mod ids {
     pub const GLA_FACTORY: DefId = DefId(27);
     pub const GLA_RABBLE: DefId = DefId(28);
     pub const GLA_TANK: DefId = DefId(29);
+    pub const APA_THUNDERFIST: DefId = DefId(30);
+    pub const GLA_TOXIN_ARTILLERY: DefId = DefId(31);
+    pub const EU_ARTILLERY: DefId = DefId(32);
 }
 
 /// Stable ids into `RULES.generals`.
@@ -91,6 +95,7 @@ const fn building(
         radius: Fx::from_int(radius),
         produces,
         builds: NONE,
+        deploy: None,
     }
 }
 
@@ -119,6 +124,7 @@ const fn unit(
         radius: Fx::from_int(2),
         produces: NONE,
         builds,
+        deploy: None,
     }
 }
 
@@ -152,6 +158,7 @@ const fn soldier(
         radius: Fx::from_int(radius),
         produces: NONE,
         builds: NONE,
+        deploy: None,
     }
 }
 
@@ -163,7 +170,21 @@ const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) 
         bonus,
         range: Fx::from_int(range),
         cooldown_ticks: cooldown_tenths * g2_sim::TICKS_PER_SECOND / 10,
+        shell: None,
     }
+}
+
+/// `w` firing artillery shells: blast `radius`, flight `speed` in world units per second,
+/// no targets closer than `min_range`.
+const fn shelling(mut w: Weapon, radius: i64, speed: i64, min_range: i64) -> Weapon {
+    w.shell = Some(Shell { radius: Fx::from_int(radius), speed: per_sec(speed), min_range: Fx::from_int(min_range) });
+    w
+}
+
+/// `d` deploys for `weapon`, taking `set_up_tenths` tenths of a second each way.
+const fn deploying(mut d: Def, weapon: Weapon, set_up_tenths: u32) -> Def {
+    d.deploy = Some(Deploy { weapon, ticks: set_up_tenths * g2_sim::TICKS_PER_SECOND / 10 });
+    d
 }
 
 /// Hundredths of a second to ticks, rounded down.
@@ -178,11 +199,24 @@ const FACTORY: BuildingRole = BuildingRole::Factory;
 const RIFLES: Weapon = weapon(13, [2, 0, 0, 0], 25, 9);
 // src: Warlord tank: 40 (bonus 30 vs. Light), cooldown 1.50, range 35. Placeholder for Aegis.
 const TANK_GUN: Weapon = weapon(40, [0, 30, 0, 0], 35, 15);
+// src: Thunderfist undeployed cannon 40 (+30 vs. light units), cooldown 1.65, range 30.
+const THUNDERFIST_CANNON: Weapon = weapon(40, [0, 30, 0, 0], 30, 16);
+// src: Thunderfist deployed howitzer 100 (+30 vs. light units, +100 vs. garrisoned buildings),
+// cooldown 4, range 65. There are no garrisons, so the +100 goes to every building (a
+// placeholder). Blast radius 6, shell speed 40/s and minimum range 20: placeholders, after the
+// way Zero Hour's artillery (Inferno cannon: radius 15, minimum range 50 of 300) is shaped.
+const HOWITZER: Weapon = shelling(weapon(100, [0, 30, 0, 100], 65, 40), 6, 40, 20);
+// Placeholder: GLA Toxin Artillery's "tri-artillery cannon" has no numbers on its card, and
+// its toxin damage over time is not modelled. A lighter, faster-firing shell than the howitzer.
+const TOXIN_SHELL: Weapon = shelling(weapon(45, [15, 0, 0, 0], 55, 25), 8, 40, 15);
+// Placeholder: the EU has no artillery card in the archive (only the general Salvo's artillery
+// strike). A mid-weight shell between the other two.
+const EU_SHELL: Weapon = shelling(weapon(70, [0, 20, 0, 40], 60, 30), 6, 45, 18);
 
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 30] = [
+static DEFS: [Def; 33] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -194,6 +228,7 @@ static DEFS: [Def; 30] = [
         radius: Fx::from_int(4),
         produces: NONE,
         builds: NONE,
+        deploy: None,
     },
     Def {
         name: "Oil Well",
@@ -206,6 +241,7 @@ static DEFS: [Def; 30] = [
         radius: Fx::from_int(5),
         produces: NONE,
         builds: NONE,
+        deploy: None,
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
@@ -332,20 +368,20 @@ static DEFS: [Def; 30] = [
     // ---- Combat ----------------------------------------------------------------------------
     // Barracks numbers are placeholders. War factories copy the GLA war factory card.
     building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 7, &[EU_RECON]),
-    building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS]),
+    building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS, EU_ARTILLERY]),
     // src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
     soldier("EU Recon Squad", Faction::Eu, 200, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
     // src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
     soldier("EU Aegis Tank", Faction::Eu, 660, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
     building("APA Barracks", Faction::Apa, FACTORY, -10, 800, credits(500), 15, 7, &[APA_RED_GUARD]),
-    building("APA War Factory", Faction::Apa, FACTORY, -20, 1000, credits(900), 25, 9, &[APA_WARLORD]),
+    building("APA War Factory", Faction::Apa, FACTORY, -20, 1000, credits(900), 25, 9, &[APA_WARLORD, APA_THUNDERFIST]),
     // src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
     soldier("APA Red Guard", Faction::Apa, 180, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
     // src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
     soldier("APA Warlord Tank", Faction::Apa, 610, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
     building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE]),
     // src: GLA war factory hp 1000, $900, 25 s.
-    building("GLA War Factory", Faction::Gla, FACTORY, 0, 1000, credits(900), 25, 9, &[GLA_TANK]),
+    building("GLA War Factory", Faction::Gla, FACTORY, 0, 1000, credits(900), 25, 9, &[GLA_TANK, GLA_TOXIN_ARTILLERY]),
     // src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
     soldier(
         "GLA Rabble Squad",
@@ -371,6 +407,28 @@ static DEFS: [Def; 30] = [
         3,
         weapon(30, [0, 15, 0, 0], 30, 12),
     ),
+    // src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
+    // cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders.
+    deploying(
+        soldier(
+            "APA Thunderfist",
+            Faction::Apa,
+            600,
+            Armour::Heavy,
+            credits(980),
+            centis(2151),
+            7,
+            3,
+            THUNDERFIST_CANNON,
+        ),
+        HOWITZER,
+        30,
+    ),
+    // src: Toxin Artillery hp 950, $1000, 30.11 s, GLA war factory, anti-ground artillery.
+    // Weapon, armour (Light, like the Scorpion) and speed are placeholders; it fires on the move.
+    soldier("GLA Toxin Artillery", Faction::Gla, 950, Armour::Light, credits(1000), centis(3011), 7, 3, TOXIN_SHELL),
+    // Placeholder throughout: no EU artillery card is archived. Fires on the move.
+    soldier("EU Howitzer", Faction::Eu, 550, Armour::Heavy, credits(950), secs(24), 7, 3, EU_SHELL),
 ];
 
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
@@ -471,6 +529,9 @@ mod tests {
             (GLA_FACTORY, "GLA War Factory"),
             (GLA_RABBLE, "GLA Rabble Squad"),
             (GLA_TANK, "GLA Scorpion Tank"),
+            (APA_THUNDERFIST, "APA Thunderfist"),
+            (GLA_TOXIN_ARTILLERY, "GLA Toxin Artillery"),
+            (EU_ARTILLERY, "EU Howitzer"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

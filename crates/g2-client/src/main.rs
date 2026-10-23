@@ -220,24 +220,28 @@ mod headless {
 
     pub fn run(mut sim: Sim, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
         sim.speed = 0;
-        // The last few ticks' hits, so the frame shows tracers and kill flashes in flight.
+        // The last few ticks' shots, so the frame shows tracers, shells and blasts in flight.
         let mut hits = crate::sim::Hits::default();
         for t in 0..ticks {
             sim.world.step();
             if t + 4 >= ticks {
-                for e in sim.world.events() {
-                    if let g2_sim::world::Event::Hit { shooter, at, killed, .. } = *e {
-                        hits.0.push((sim.world.entity(shooter).map_or(at, |s| s.pos), at, killed));
-                    }
-                }
+                crate::sim::collect_shots(&sim.world, &mut hits);
             }
         }
         // Midpoint of the last few ticks' shots (shooter to target), for `View::Battle`, so both
         // sides of the fight are in frame.
-        let fight = (!hits.0.is_empty()).then(|| {
-            let n = hits.0.len() as f32;
+        let ends: Vec<(g2_sim::Vec2, g2_sim::Vec2)> = hits
+            .0
+            .iter()
+            .map(|s| match *s {
+                crate::sim::Shot::Hit { from, at, .. } | crate::sim::Shot::Shell { from, at, .. } => (from, at),
+                crate::sim::Shot::Blast { at, .. } => (at, at),
+            })
+            .collect();
+        let fight = (!ends.is_empty()).then(|| {
+            let n = ends.len() as f32;
             let p = |v: g2_sim::Vec2| Vec2::new(v.x.to_f32(), v.y.to_f32());
-            hits.0.iter().fold(Vec2::ZERO, |s, &(from, at, _)| s + (p(from) + p(at)) / 2.0) / n
+            ends.iter().fold(Vec2::ZERO, |s, &(from, at)| s + (p(from) + p(at)) / 2.0) / n
         });
         let mut app = App::new();
         app.add_plugins(

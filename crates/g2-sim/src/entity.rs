@@ -83,8 +83,22 @@ pub struct Entity {
     pub income_ticks: u32,
     /// Armed units: ticks until the weapon can fire again.
     pub cooldown: u32,
+    /// Deployable units (`Def::deploy`): set up for the main gun, or between modes.
+    pub deploy: DeployState,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
+}
+
+/// A deployable unit's mode. Only `Packed` can move; only `Deployed` fires the main gun.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum DeployState {
+    #[default]
+    Packed,
+    /// Setting up; deployed when this reaches 0.
+    Deploying(u32),
+    Deployed,
+    /// Packing up; packed (and free to move) when this reaches 0.
+    Packing(u32),
 }
 
 /// A planned way around obstacles to the current `approach` target. Planned once per target
@@ -218,6 +232,7 @@ mod tests {
             powered: false,
             income_ticks: 0,
             cooldown: 0,
+            deploy: DeployState::Packed,
             route: Route::default(),
         }
     }

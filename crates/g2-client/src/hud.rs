@@ -350,6 +350,15 @@ fn update_fields(
                     if e.cargo > 0 {
                         s += &format!("  -  carrying ${}", e.cargo);
                     }
+                    if d.deploy.is_some() {
+                        use g2_sim::entity::DeployState;
+                        s += match e.deploy {
+                            DeployState::Packed => "  -  mobile (T: deploy)",
+                            DeployState::Deploying(_) => "  -  setting up",
+                            DeployState::Deployed => "  -  DEPLOYED (T: pack up)",
+                            DeployState::Packing(_) => "  -  packing up",
+                        };
+                    }
                     s
                 })
             }
