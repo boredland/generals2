@@ -4,7 +4,8 @@
 //! Right click: context order (supply pile → gather, own foundation → construct, ground → move).
 //! With a constructor selected: B opens build mode, 1-9 pick a building, left click places, Esc cancels.
 //! With a building selected: 1-9 queue production, Backspace cancels the last item.
-//! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders.
+//! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
+//! collector and centres the camera on it.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -41,8 +42,38 @@ impl Plugin for InputPlugin {
         app.init_resource::<Selection>()
             .init_resource::<Placement>()
             .init_resource::<Drag>()
-            .add_systems(Update, (prune_selection, keyboard, mouse, draw_overlays).chain());
+            .add_systems(Update, (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays).chain());
     }
+}
+
+/// Tab: select the next own collector (in entity order, wrapping) and centre the camera on it.
+fn cycle_collectors(
+    keys: Res<ButtonInput<KeyCode>>,
+    sim: Res<Sim>,
+    mut sel: ResMut<Selection>,
+    mut cam: Query<&mut RtsCamera>,
+) {
+    if !keys.just_pressed(KeyCode::Tab) {
+        return;
+    }
+    let world = &sim.world;
+    let collectors: Vec<EntityId> = world
+        .entities()
+        .filter(|e| e.owner == Some(LOCAL) && world.rules.def(e.def).collector().is_some())
+        .map(|e| e.id)
+        .collect();
+    let Some(next) = next_after(&collectors, sel.0.first().copied()) else { return };
+    sel.0 = vec![next];
+    if let (Ok(mut cam), Some(e)) = (cam.single_mut(), world.entity(next)) {
+        let at = sim.to_world(e.pos);
+        cam.pivot = Vec3::new(at.x, cam.pivot.y, at.z);
+    }
+}
+
+/// The entry after `current` in `list`, wrapping; the first entry if `current` isn't in it.
+fn next_after(list: &[EntityId], current: Option<EntityId>) -> Option<EntityId> {
+    let i = current.and_then(|c| list.iter().position(|&x| x == c)).map_or(0, |i| (i + 1) % list.len());
+    list.get(i).copied()
 }
 
 /// Cursor ray → rendered ground.
@@ -273,7 +304,7 @@ mod tests {
         let name = "zh:Defcon6";
         let file = g2_maps::load_file_named(&g2_maps::vendored_root(), name).unwrap();
         let map = file.to_map_def(name);
-        let sim = Sim::new(map, Some(file), 1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true);
+        let sim = Sim::new(map, Some(file), 1, Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], true));
         let (w, h) = (sim.world.map.width.to_f32(), sim.world.map.height.to_f32());
         let mut relief = (f32::MAX, f32::MIN);
         for j in 1..20 {

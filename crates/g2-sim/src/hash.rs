@@ -51,6 +51,11 @@ impl World {
             h.i64(p.power_supply as i64);
             h.i64(p.power_drain as i64);
             h.u64(p.defeated as u64);
+            // Only when set, so hashes of matches without generals (the golden replay) are
+            // unchanged.
+            if let Some(g) = p.general {
+                h.u64(0x6e6e_0000 | g.0 as u64);
+            }
         }
         h.u64(self.entities.slot_count() as u64);
         for e in self.entities.iter() {

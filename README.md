@@ -16,12 +16,14 @@ What works:
   - Local power: plants power consumers within a radius. Unpowered production runs at half speed. The GLA has no grid.
   - Constructors place foundations that must be worked on, production queues with full refunds on cancel, and surrender/defeat.
 - **Three factions** (`crates/g2-rules`): EU, APA and GLA. Command center, constructor, supply center, collector, power plant and oil derrick each. Sourced numbers are tagged `// src:`, everything else is a placeholder.
+- **Generals as data**: a player may pick a general of their faction; its modifiers change the cost and build time of specific units and buildings (integer percent, deterministic, refunded at the price paid). One per faction so far: **Bulldog** (EU), **Taskmaster** (APA), **Junkyard** (GLA). The names are documented Generals 2 generals; their effects are placeholders, mod-style sub-generals (per-unit cost and time changes). The general is part of the state hash and of replays (format v3; v1/v2 still load), and replay files naming an unknown or wrong-faction general are refused with an error.
 - **Built-in AI** that plays the economy. It runs inside the sim and issues ordinary commands, so AI matches replay exactly.
 - **Replays**: setup + human commands + a state hash every second, plus a fingerprint of the map, so a replay whose map file has since changed is reported as such instead of as a divergence. `g2-tools verify` re-simulates a replay and names the first tick that diverges. A committed golden replay fails the test suite on any unintended behaviour change.
 - **Bevy 0.20 client** (`crates/g2-client`):
   - RTS camera, selection, and context orders (move, gather, help build).
   - Build placement with validity preview (derricks snap to wells).
-  - Production hotkeys, a HUD, pause and ×1–×8 speed.
+  - Production hotkeys, a HUD, pause and ×1–×8 speed. The build grid shows prices after your general's modifiers, and the match bar names both generals.
+  - Collectors: cargo pips over your own collectors, a "+credits" pop-up over the supply center on every delivery (none are lost at ×8; a test compares them with the sim), and Tab cycles through your collectors.
   - Interpolated movement between sim ticks.
   - `--record FILE` saves the match as a replay on exit, for `g2-tools verify`.
   - A headless `--screenshot` mode that renders one frame and checks that every sim entity has exactly one model at its sim position. `--view base|map` picks the in-game camera or a whole-map overview.
@@ -31,7 +33,10 @@ What works:
 Not yet:
 
 - Combat, fog of war, pathfinding around obstacles.
-- The generals/perk system, the Onslaught PvE mode, networking, real art, audio.
+- Generals' unique units, player powers and the per-general perk progression (rank, perk slots; archived patch preview #2). Only cost/time modifiers exist.
+- The Onslaught PvE mode, networking, real art, audio.
+- The AI doesn't rebuild a lost constructor. Nothing can destroy one yet, so it can't happen in play; it matters once combat exists.
+- On Crater Ridge the AI's first EU harvester can stall against the command center while heading for the pile: units move in straight lines, and being pushed out of a building doesn't steer them around it. Pathfinding will fix this.
 - The **"base proxy" rule**: Wikipedia says a faction "must have 'captured' a resource stash before letting its harvesters in". The archived sources don't say how capture works, so for now any player can gather from any pile.
 - Rules are const Rust tables, not data files.
 - On imported maps the **sim is still flat**: hills, cliffs and water are drawn, but units drive straight across them, and buildings can be placed on slopes and in water. Retail tech buildings, civilian structures, bridges, cliff textures, blended ground edges and scripts are ignored. Oil wells are finite (10,000 oil each), unlike retail derricks. Water surfaces are flat fans over each area's outline, so a strongly concave lake can overhang its shore. Only 2-player matches are supported, even on 4-, 6- and 8-start maps.
@@ -111,6 +116,7 @@ Bevy is built with an explicit **X11-only** feature list (see the root `Cargo.to
 | Building selected: `1`–`9` | Queue production; Backspace cancels the last item |
 | WASD / arrows / screen edge | Pan; mouse wheel zooms; Q/E rotate |
 | Space | Pause; `+`/`-` change speed (×1–×8) |
+| Tab | Select the next own collector and centre the camera on it |
 | F10 | Surrender |
 
 ## Determinism rules for `g2-sim`

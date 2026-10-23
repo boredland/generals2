@@ -27,6 +27,8 @@ pub struct PlayerSetup {
     pub faction: Faction,
     pub starting_credits: i64,
     pub ai: bool,
+    /// The chosen general of `faction`, or `None` to play the plain faction.
+    pub general: Option<crate::defs::GeneralId>,
 }
 
 #[derive(Clone, Debug)]

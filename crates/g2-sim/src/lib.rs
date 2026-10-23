@@ -20,7 +20,7 @@ pub mod rng;
 pub mod world;
 
 pub use command::{Command, CommandKind, Reject};
-pub use defs::{BuildingRole, Class, Cost, Def, DefId, Faction, Rules};
+pub use defs::{BuildingRole, Class, Cost, Def, DefId, Faction, General, GeneralId, Modifier, Rules};
 pub use entity::{Entity, EntityId, GatherPhase, Order, PlayerId};
 pub use fixed::{Fx, Vec2};
 pub use map::{MapDef, MatchSetup, PlayerSetup};

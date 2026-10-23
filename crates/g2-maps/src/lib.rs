@@ -804,20 +804,20 @@ mod tests {
             map: resolve(name).unwrap(),
             seed: 3,
             players: [Faction::Apa, Faction::Gla]
-                .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: true })
+                .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: true, general: None })
                 .to_vec(),
         };
         let (world, replay) = record(World::new(&setup, g2_rules::rules()), &setup, 3_000, |_| {});
         let decoded = Replay::decode(&replay.encode()).unwrap();
         assert_eq!(decoded.map, name);
         let map = resolve(&decoded.map).unwrap();
-        decoded.check_map(&map).unwrap();
+        decoded.check(&map, g2_rules::rules()).unwrap();
         let end = verify_replay(&decoded, map.clone(), g2_rules::rules());
         assert_eq!(end, Ok(world.state_hash()));
         // The same name on a different map (here: one pile moved) is reported, not simulated.
         let mut moved = map;
         moved.supply_piles[0].0.x.0 += 1;
-        assert!(decoded.check_map(&moved).unwrap_err().contains("changed since"));
+        assert!(decoded.check(&moved, g2_rules::rules()).unwrap_err().contains("changed since"));
         // Both AIs found resources on the imported map within 100 seconds.
         assert!(world.players().iter().all(|p| p.credits != 5_000), "{:?}", world.players());
     }

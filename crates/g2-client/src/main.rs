@@ -1,12 +1,15 @@
 //! Generals 2 client.
 //!
-//!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--seed N] [--spectate] [--record FILE]
+//!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--general NAME]
+//!             [--enemy-general NAME] [--seed N] [--spectate] [--record FILE]
 //!   g2-client --screenshot out.png [--ticks N] [...]   headless: simulate N ticks, render one frame
 //!
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
-//! Generals / Zero Hour map (`g2-tools maps` lists them). `--spectate` lets the AI play your side
-//! too (AI vs AI). `--record` saves the match as a replay on exit; check it with
-//! `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no window or display server.
+//! Generals / Zero Hour map (`g2-tools maps` lists them). `--general` picks a general of your
+//! faction (Bulldog, Taskmaster, Junkyard); without one you play the plain faction. `--spectate`
+//! lets the AI play your side too (AI vs AI). `--record` saves the match as a replay on exit;
+//! check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no window or
+//! display server.
 
 mod camera;
 mod hud;
@@ -18,13 +21,14 @@ mod terrain;
 mod view;
 
 use bevy::prelude::*;
-use g2_sim::Faction;
+use g2_sim::{Faction, GeneralId, PlayerSetup};
 
 use crate::sim::{LOCAL, Sim, SimPlugin};
 
 struct Args {
     map: String,
     factions: [Faction; 2],
+    generals: [Option<String>; 2],
     seed: u64,
     spectate: bool,
     screenshot: Option<String>,
@@ -38,6 +42,7 @@ fn parse_args() -> Result<Args, String> {
     let mut a = Args {
         map: "Crater Ridge".to_owned(),
         factions: [Faction::Eu, Faction::Gla],
+        generals: [None, None],
         seed: 1,
         spectate: false,
         screenshot: None,
@@ -58,6 +63,8 @@ fn parse_args() -> Result<Args, String> {
             "--map" => a.map = it.next().ok_or("--map needs a name")?,
             "--faction" => a.factions[0] = faction(it.next())?,
             "--enemy" => a.factions[1] = faction(it.next())?,
+            "--general" => a.generals[0] = Some(it.next().ok_or("--general needs a name")?),
+            "--enemy-general" => a.generals[1] = Some(it.next().ok_or("--enemy-general needs a name")?),
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()).ok_or("--seed needs a number")?,
             "--spectate" => a.spectate = true,
             "--screenshot" => a.screenshot = Some(it.next().ok_or("--screenshot needs a path")?),
@@ -120,7 +127,20 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
             map.spawns.len()
         ));
     }
-    Ok(Sim::new(map, source, args.seed, args.factions, spectate))
+    let rules = g2_rules::rules();
+    let general = |i: usize| -> Result<Option<GeneralId>, String> {
+        let Some(name) = &args.generals[i] else { return Ok(None) };
+        let id = rules.find_general(name).ok_or_else(|| format!("unknown general {name:?}"))?;
+        let g = rules.general(id);
+        if g.faction != args.factions[i] {
+            return Err(format!("{} is a {:?} general, not {:?}", g.name, g.faction, args.factions[i]));
+        }
+        Ok(Some(id))
+    };
+    let player = |i: usize, ai: bool| -> Result<PlayerSetup, String> {
+        Ok(PlayerSetup { faction: args.factions[i], starting_credits: 5_000, ai, general: general(i)? })
+    };
+    Ok(Sim::new(map, source, args.seed, [player(0, spectate)?, player(1, true)?]))
 }
 
 #[derive(Resource)]

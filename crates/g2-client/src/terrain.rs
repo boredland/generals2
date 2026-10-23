@@ -725,7 +725,7 @@ mod tests {
     }
 
     fn built_in() -> Sim {
-        Sim::new(g2_rules::crater_ridge(), None, 1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true)
+        Sim::new(g2_rules::crater_ridge(), None, 1, Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], true))
     }
 
     #[test]
@@ -781,7 +781,7 @@ mod tests {
     fn imported(name: &str) -> Sim {
         let file = g2_maps::load_file_named(&g2_maps::vendored_root(), name).unwrap();
         let map = file.to_map_def(name);
-        Sim::new(map, Some(file), 1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true)
+        Sim::new(map, Some(file), 1, Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], true))
     }
 
     /// Imported terrain: bases sit on the ground they were designed for, original trees are

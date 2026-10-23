@@ -7,6 +7,7 @@
 //!   g2-tools maps                                     list importable Generals / Zero Hour maps
 //!
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` from `maps`.
+//! `--factions` entries may name a general: `eu:bulldog,gla:junkyard`.
 
 use std::process::ExitCode;
 use std::time::Instant;
@@ -56,7 +57,21 @@ fn ai_setup(args: &[String]) -> Result<MatchSetup, String> {
     let factions: String = flag(args, "--factions", "eu,gla".to_owned())?;
     let players = factions
         .split(',')
-        .map(|f| Ok(PlayerSetup { faction: faction(f)?, starting_credits: 5_000, ai: true }))
+        .map(|entry| {
+            let (f, g) = entry.split_once(':').map_or((entry, None), |(f, g)| (f, Some(g)));
+            let faction = faction(f)?;
+            let general = match g {
+                None => None,
+                Some(name) => {
+                    let id = rules().find_general(name).ok_or_else(|| format!("unknown general {name:?}"))?;
+                    if rules().general(id).faction != faction {
+                        return Err(format!("{} is not a {f} general", rules().general(id).name));
+                    }
+                    Some(id)
+                }
+            };
+            Ok(PlayerSetup { faction, starting_credits: 5_000, ai: true, general })
+        })
         .collect::<Result<Vec<_>, String>>()?;
     let map = resolve(&flag(args, "--map", "Crater Ridge".to_owned())?)?;
     if map.spawns.len() < players.len() {
@@ -102,7 +117,7 @@ fn load(path: Option<&String>) -> Result<Replay, String> {
 fn verify(args: &[String]) -> Result<(), String> {
     let replay = load(args.first())?;
     let map = resolve(&replay.map)?;
-    replay.check_map(&map)?;
+    replay.check(&map, rules())?;
     let start = Instant::now();
     match verify_replay(&replay, map, rules()) {
         Ok(hash) => {
@@ -152,7 +167,7 @@ fn bench(args: &[String]) -> Result<(), String> {
 fn summary(args: &[String]) -> Result<(), String> {
     let replay = load(args.first())?;
     let map = resolve(&replay.map)?;
-    replay.check_map(&map)?;
+    replay.check(&map, rules())?;
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
     let mut world = World::new(&setup, rules());
     for c in &replay.commands {
@@ -172,8 +187,9 @@ fn print_economy(world: &World) {
             world.entities().filter(|e| e.owner == me && pred(world.rules.def(e.def))).count()
         };
         println!(
-            "  P{i} {:<22} credits {:>6}  oil {:>5}  power {:>3}/{:<3}  buildings {:>2}  collectors {:>2}{}",
+            "  P{i} {:<22} {:<11} credits {:>6}  oil {:>5}  power {:>3}/{:<3}  buildings {:>2}  collectors {:>2}{}",
             p.faction.name(),
+            p.general.map_or("", |g| world.rules.general(g).name),
             p.credits,
             p.oil,
             p.power_drain,

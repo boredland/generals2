@@ -12,7 +12,7 @@ fn setup(seed: u64, ai: [bool; 2], factions: [Faction; 2]) -> MatchSetup {
         players: factions
             .iter()
             .zip(ai)
-            .map(|(&faction, ai)| PlayerSetup { faction, starting_credits: 5_000, ai })
+            .map(|(&faction, ai)| PlayerSetup { faction, starting_credits: 5_000, ai, general: None })
             .collect(),
     }
 }

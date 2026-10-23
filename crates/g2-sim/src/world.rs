@@ -17,6 +17,8 @@ const SLACK: Fx = Fx::from_int(1);
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Player {
     pub faction: Faction,
+    /// Chosen general; its modifiers apply to every cost and build time this player pays.
+    pub general: Option<crate::defs::GeneralId>,
     pub credits: i64,
     pub oil: i64,
     pub power_supply: i32,
@@ -26,7 +28,17 @@ pub struct Player {
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Event {
-    Rejected { player: PlayerId, reason: Reject },
+    Rejected {
+        player: PlayerId,
+        reason: Reject,
+    },
+    /// A collector unloaded `credits` at `depot`. Output only: events never feed back into the
+    /// simulation, so they are not part of the state hash.
+    Delivered {
+        player: PlayerId,
+        depot: EntityId,
+        credits: i64,
+    },
 }
 
 pub struct World {
@@ -49,6 +61,17 @@ pub struct World {
 impl World {
     pub fn new(setup: &MatchSetup, rules: &'static Rules) -> World {
         assert!(setup.players.len() <= setup.map.spawns.len(), "map has fewer spawns than players");
+        for p in &setup.players {
+            if let Some(g) = p.general {
+                assert_eq!(
+                    rules.general(g).faction,
+                    p.faction,
+                    "general {} is not {:?}",
+                    rules.general(g).name,
+                    p.faction
+                );
+            }
+        }
         let mut world = World {
             rules,
             map: setup.map.clone(),
@@ -72,6 +95,7 @@ impl World {
             let owner = PlayerId(i as u8);
             world.players.push(Player {
                 faction: p.faction,
+                general: p.general,
                 credits: p.starting_credits,
                 oil: 0,
                 power_supply: 0,
@@ -315,8 +339,19 @@ impl World {
         Ok(e)
     }
 
+    /// What `player` pays for `def`, after their general's modifiers. The general is fixed for the
+    /// match, so a refund at the same price is exact.
+    pub fn cost_for(&self, player: PlayerId, def: DefId) -> crate::defs::Cost {
+        self.rules.cost(self.player(player).general, def)
+    }
+
+    /// Ticks `player` needs to build or train `def`, after their general's modifiers.
+    pub fn build_ticks_for(&self, player: PlayerId, def: DefId) -> u32 {
+        self.rules.build_ticks(self.player(player).general, def)
+    }
+
     fn afford(&self, player: PlayerId, def: DefId) -> Result<(), Reject> {
-        let cost = self.rules.def(def).cost;
+        let cost = self.cost_for(player, def);
         let p = self.player(player);
         if p.credits < cost.credits || p.oil < cost.oil {
             return Err(Reject::InsufficientFunds);
@@ -325,7 +360,7 @@ impl World {
     }
 
     fn pay(&mut self, player: PlayerId, def: DefId, sign: i64) {
-        let cost = self.rules.def(def).cost;
+        let cost = self.cost_for(player, def);
         let p = &mut self.players[player.0 as usize];
         p.credits -= sign * cost.credits;
         p.oil -= sign * cost.oil;
@@ -519,15 +554,17 @@ impl World {
 
     fn update_production(&mut self) {
         for id in self.entities.ids() {
-            let e = self.entities.get_mut(id).unwrap();
+            let e = self.entities.get(id).unwrap();
             if !e.is_complete() || e.queue.is_empty() {
                 continue;
             }
+            let need = self.build_ticks_for(e.owner.unwrap(), e.queue[0].def) * 2;
+            let e = self.entities.get_mut(id).unwrap();
             let step = if e.powered { 2 } else { 1 };
             let front = &mut e.queue[0];
             front.progress_halves += step;
             let def = front.def;
-            if front.progress_halves < self.rules.def(def).build_ticks * 2 {
+            if front.progress_halves < need {
                 continue;
             }
             e.queue.remove(0);
@@ -559,7 +596,7 @@ impl World {
                 continue;
             }
             let progress = progress + 1;
-            let done = progress >= self.rules.def(s.def).build_ticks;
+            let done = progress >= self.build_ticks_for(s.owner.unwrap(), s.def);
             self.entities.get_mut(site).unwrap().construction = (!done).then_some(progress);
             if done {
                 for b in self.entities.ids() {
@@ -689,10 +726,11 @@ impl World {
             GatherPhase::Unloading { depot, ticks_left } if ticks_left > 1 => {
                 (pos, Order::Gather { pile, phase: GatherPhase::Unloading { depot, ticks_left: ticks_left - 1 } })
             }
-            GatherPhase::Unloading { .. } => {
+            GatherPhase::Unloading { depot, .. } => {
                 let u = self.entities.get_mut(id).unwrap();
                 let cargo = core::mem::take(&mut u.cargo);
                 self.players[owner.0 as usize].credits += cargo;
+                self.events.push(Event::Delivered { player: owner, depot, credits: cargo });
                 (pos, Order::Gather { pile, phase: GatherPhase::ToPile })
             }
         }

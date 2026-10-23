@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 use g2_maps::MapFile;
 use g2_rules::rules;
-use g2_sim::{CommandKind, Faction, MapDef, MatchSetup, PlayerId, PlayerSetup, TICKS_PER_SECOND, World};
+use g2_sim::{CommandKind, MapDef, MatchSetup, PlayerId, PlayerSetup, TICKS_PER_SECOND, World};
 
 /// The local human player.
 pub const LOCAL: PlayerId = PlayerId(0);
@@ -21,16 +21,19 @@ pub struct Sim {
 }
 
 impl Sim {
-    pub fn new(map: MapDef, source: Option<MapFile>, seed: u64, factions: [Faction; 2], spectate: bool) -> Sim {
-        let setup = MatchSetup {
-            map,
-            seed,
-            players: vec![
-                PlayerSetup { faction: factions[0], starting_credits: 5_000, ai: spectate },
-                PlayerSetup { faction: factions[1], starting_credits: 5_000, ai: true },
-            ],
-        };
+    pub fn new(map: MapDef, source: Option<MapFile>, seed: u64, players: [PlayerSetup; 2]) -> Sim {
+        let setup = MatchSetup { map, seed, players: players.to_vec() };
         Sim { world: World::new(&setup, rules()), setup, speed: 1, source }
+    }
+
+    /// Players with 5,000 credits and no general; the second is always the AI. Shared by the
+    /// client's test modules.
+    #[cfg(test)]
+    pub fn players(factions: [g2_sim::Faction; 2], spectate: bool) -> [PlayerSetup; 2] {
+        [
+            PlayerSetup { faction: factions[0], starting_credits: 5_000, ai: spectate, general: None },
+            PlayerSetup { faction: factions[1], starting_credits: 5_000, ai: true, general: None },
+        ]
     }
 
     pub fn order(&mut self, kind: CommandKind) {
@@ -73,17 +76,23 @@ pub fn to_sim(p: Vec3) -> g2_sim::Vec2 {
 #[derive(Resource, Default)]
 pub struct Previous(pub std::collections::BTreeMap<g2_sim::EntityId, g2_sim::Vec2>);
 
+/// The local player's deliveries since the HUD last drained this: `(depot, credits)`. Sim events
+/// only live for one step and a frame can run several, so they are gathered here every step.
+#[derive(Resource, Default)]
+pub struct Deliveries(pub Vec<(g2_sim::EntityId, i64)>);
+
 pub struct SimPlugin;
 
 impl Plugin for SimPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Time::<Fixed>::from_hz(TICKS_PER_SECOND as f64))
             .init_resource::<Previous>()
+            .init_resource::<Deliveries>()
             .add_systems(FixedUpdate, step_sim);
     }
 }
 
-fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>) {
+fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>, mut deliveries: ResMut<Deliveries>) {
     if sim.speed == 0 {
         return;
     }
@@ -92,6 +101,11 @@ fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>) {
     prev.0 = sim.world.entities().map(|e| (e.id, e.pos)).collect();
     for _ in 0..sim.speed {
         sim.world.step();
+        for e in sim.world.events() {
+            if let g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } = *e {
+                deliveries.0.push((depot, credits));
+            }
+        }
         if sim.world.winner().is_some() {
             sim.speed = 0;
             break;
@@ -103,6 +117,7 @@ fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>) {
 mod tests {
     use super::*;
     use g2_rules::crater_ridge;
+    use g2_sim::Faction;
 
     #[test]
     fn clicks_snap_to_whole_units() {
@@ -118,7 +133,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(16)))
-            .insert_resource(Sim::new(crater_ridge(), None, 4, [Faction::Gla, Faction::Apa], false))
+            .insert_resource(Sim::new(crater_ridge(), None, 4, Sim::players([Faction::Gla, Faction::Apa], false)))
             .add_plugins(SimPlugin);
         let run = |app: &mut App, frames: u32| {
             for _ in 0..frames {
@@ -159,7 +174,7 @@ mod tests {
         use bevy::time::TimeUpdateStrategy;
         let frame = std::time::Duration::from_millis(10);
         let mut app = App::new();
-        let mut sim = Sim::new(crater_ridge(), None, 1, [Faction::Eu, Faction::Gla], true);
+        let mut sim = Sim::new(crater_ridge(), None, 1, Sim::players([Faction::Eu, Faction::Gla], true));
         sim.speed = speed;
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(frame))
@@ -178,5 +193,40 @@ mod tests {
         let fast = ticks_after(8, 4);
         assert!((8 * 118..=8 * 120).contains(&fast), "{fast} ticks in 4 s at x8");
         assert_eq!(ticks_after(0, 2), 0, "paused");
+    }
+
+    /// At ×8 a fixed step runs eight sim ticks; every local delivery in them still reaches the
+    /// HUD queue. The sim is deterministic, so a reference world stepped one tick at a time from
+    /// the same setup gives the exact deliveries to expect over the same ticks.
+    #[test]
+    fn every_local_delivery_is_collected_at_fast_forward() {
+        use bevy::time::TimeUpdateStrategy;
+        let mut app = App::new();
+        let mut sim = Sim::new(crater_ridge(), None, 1, Sim::players([Faction::Eu, Faction::Gla], true));
+        sim.speed = 8;
+        let mut reference = World::new(&sim.setup, rules());
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(10)))
+            .insert_resource(sim)
+            .add_plugins(SimPlugin);
+        let mut collected = Vec::new();
+        for _ in 0..2_000 {
+            app.update();
+            collected.append(&mut app.world_mut().resource_mut::<Deliveries>().0);
+        }
+        let ticks = app.world().resource::<Sim>().world.tick();
+        let mut expected = Vec::new();
+        while reference.tick() < ticks {
+            reference.step();
+            for e in reference.events() {
+                if let g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } = *e {
+                    expected.push((depot, credits));
+                }
+            }
+        }
+        // 2,000 frames of 10 ms at ×8 and 30 Hz ≈ 4,800 ticks, about 2.7 minutes of match time.
+        assert!(ticks > 4_700, "ran {ticks} ticks");
+        assert!(!expected.is_empty(), "the AI delivered nothing in {ticks} ticks");
+        assert_eq!(collected, expected);
     }
 }

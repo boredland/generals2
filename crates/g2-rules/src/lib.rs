@@ -3,7 +3,7 @@
 //! Values marked `// src:` come from archived material (see the local field notes for the file).
 //! Everything else is a placeholder chosen for playability and will be tuned.
 
-use g2_sim::defs::{BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Faction, Rules};
+use g2_sim::defs::{BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Faction, General, Modifier, Rules};
 use g2_sim::{Fx, MapDef, Vec2};
 
 /// Stable ids into `RULES.defs`; `tests::id_constants_match_table_order` keeps them in sync.
@@ -27,6 +27,14 @@ pub mod ids {
     pub const GLA_WORKER: DefId = DefId(15);
     pub const GLA_STASH: DefId = DefId(16);
     pub const GLA_DERRICK: DefId = DefId(17);
+}
+
+/// Stable ids into `RULES.generals`.
+pub mod generals {
+    use g2_sim::defs::GeneralId;
+    pub const BULLDOG: GeneralId = GeneralId(0);
+    pub const TASKMASTER: GeneralId = GeneralId(1);
+    pub const JUNKYARD: GeneralId = GeneralId(2);
 }
 use ids::*;
 
@@ -216,7 +224,40 @@ static DEFS: [Def; 18] = [
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
 const HARVEST_WORKER: CollectorSpec = CollectorSpec { capacity: 40, load_ticks: secs(2), unload_ticks: secs(1) };
 
-pub static RULES: Rules = Rules { defs: &DEFS };
+pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS };
+
+/// One general per faction for now, to exercise generals-as-data. The names are documented G2
+/// generals (the local field notes); what each changed is not, so these economy modifiers are
+/// placeholders in the spirit of pre-release sub-general designs (e.g. a supply doctrine:
+/// cheaper supply trucks, faster builds).
+static GENERALS: [General; 3] = [
+    General {
+        name: "Bulldog",
+        faction: Faction::Eu,
+        modifiers: &[
+            Modifier::Cost { def: EU_HARVESTER, percent: 80 },
+            Modifier::BuildTime { def: EU_HARVESTER, percent: 85 },
+            Modifier::Cost { def: EU_POWER, percent: 120 },
+        ],
+    },
+    General {
+        name: "Taskmaster",
+        faction: Faction::Apa,
+        modifiers: &[
+            Modifier::BuildTime { def: APA_SUPPLY, percent: 75 },
+            Modifier::BuildTime { def: APA_DERRICK, percent: 75 },
+            Modifier::Cost { def: APA_HARVESTER, percent: 115 },
+        ],
+    },
+    General {
+        name: "Junkyard",
+        faction: Faction::Gla,
+        modifiers: &[
+            Modifier::Cost { def: GLA_WORKER, percent: 75 },
+            Modifier::BuildTime { def: GLA_STASH, percent: 125 },
+        ],
+    },
+];
 
 pub fn rules() -> &'static Rules {
     &RULES
@@ -289,6 +330,23 @@ mod tests {
         for d in r.defs.iter().filter(|d| d.faction == Some(Faction::Gla)) {
             if let Class::Building { power, .. } = d.class {
                 assert_eq!(power, 0, "{}", d.name);
+            }
+        }
+    }
+
+    #[test]
+    fn generals_ids_match_and_only_modify_their_own_faction() {
+        let r = rules();
+        for (id, name) in
+            [(generals::BULLDOG, "Bulldog"), (generals::TASKMASTER, "Taskmaster"), (generals::JUNKYARD, "Junkyard")]
+        {
+            assert_eq!(r.general(id).name, name);
+            assert_eq!(r.find_general(&name.to_lowercase()), Some(id));
+        }
+        for g in r.generals {
+            for m in g.modifiers {
+                let (Modifier::Cost { def, .. } | Modifier::BuildTime { def, .. }) = *m;
+                assert_eq!(r.def(def).faction, Some(g.faction), "{} modifies {}", g.name, r.def(def).name);
             }
         }
     }

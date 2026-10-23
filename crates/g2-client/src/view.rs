@@ -187,9 +187,9 @@ fn sync_entities(
         }
         let Ok(children) = roots.get(root) else { continue };
         // Foundations: the finished model rises inside the scaffold; supply piles shrink as they deplete.
-        let rise = match (def.class, e.construction) {
-            (_, Some(done)) => (done as f32 / def.build_ticks.max(1) as f32).clamp(0.04, 1.0),
-            (Class::SupplyPile, _) => (e.resource as f32 / 6000.0).clamp(0.3, 1.4),
+        let rise = match (def.class, e.construction, e.owner) {
+            (_, Some(done), Some(owner)) => (done as f32 / world.build_ticks_for(owner, e.def) as f32).clamp(0.04, 1.0),
+            (Class::SupplyPile, _, _) => (e.resource as f32 / 6000.0).clamp(0.3, 1.4),
             _ => 1.0,
         };
         for &child in children {

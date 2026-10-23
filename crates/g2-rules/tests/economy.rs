@@ -14,8 +14,8 @@ fn world(f0: Faction, credits: i64) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: credits, ai: false },
-            PlayerSetup { faction: Faction::Eu, starting_credits: credits, ai: false },
+            PlayerSetup { faction: f0, starting_credits: credits, ai: false, general: None },
+            PlayerSetup { faction: Faction::Eu, starting_credits: credits, ai: false, general: None },
         ],
     };
     World::new(&setup, rules())
@@ -36,7 +36,13 @@ fn all(w: &World, owner: PlayerId, def: g2_sim::DefId) -> Vec<EntityId> {
 }
 
 fn rejections(w: &World) -> Vec<Reject> {
-    w.events().iter().map(|Event::Rejected { reason, .. }| *reason).collect()
+    w.events()
+        .iter()
+        .filter_map(|e| match e {
+            Event::Rejected { reason, .. } => Some(*reason),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Issues a command and steps until it has been applied; returns rejections from that tick.
@@ -77,12 +83,22 @@ fn harvesters_carry_supplies_from_pile_to_center() {
     assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: EU_HARVESTER }), vec![]);
     let cost = rules().def(EU_HARVESTER).cost.credits;
     assert_eq!(w.player(P0).credits, before - cost);
-    run(&mut w, 30 * 60);
+    let mut delivered = 0;
+    for _ in 0..30 * 60 {
+        w.step();
+        for e in w.events() {
+            if let Event::Delivered { player, depot: d, credits } = *e {
+                assert_eq!((player, d), (P0, depot));
+                delivered += credits;
+            }
+        }
+    }
     let harvester = first(&w, P0, EU_HARVESTER).expect("harvester trained");
     assert!(matches!(w.entity(harvester).unwrap().order, Order::Gather { .. }));
     let earned = w.player(P0).credits - (before - cost);
     assert!(earned >= 300, "only {earned} credits delivered in 60 s");
     assert_eq!(earned % 100, 0, "deliveries come in full 100-credit loads");
+    assert_eq!(delivered, earned, "every credit earned is reported as a delivery");
 }
 
 #[test]
@@ -129,8 +145,8 @@ fn piles_deplete_and_vanish() {
         map,
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: false },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: false, general: None },
+            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false, general: None },
         ],
     };
     let mut w = World::new(&setup, rules());
@@ -156,8 +172,8 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
         map,
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: false },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: false, general: None },
+            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false, general: None },
         ],
     };
     let mut w = World::new(&setup, rules());
@@ -255,6 +271,136 @@ fn cancelling_production_refunds_in_full() {
     assert!(w.entity(depot).unwrap().queue.is_empty());
 }
 
+/// A general's modifiers change what the player pays and how long training takes; a cancel
+/// refunds the discounted price exactly, and the general survives a replay round trip.
+#[test]
+fn a_general_discounts_and_speeds_up_its_units() {
+    let train_one = |general| {
+        let mut w = world(Faction::Eu, 10_000);
+        if general {
+            // Same match, but P0 plays Bulldog: harvesters at 80 % cost, 85 % build time.
+            let setup = MatchSetup {
+                map: crater_ridge(),
+                seed: 1,
+                players: vec![
+                    PlayerSetup {
+                        faction: Faction::Eu,
+                        starting_credits: 10_000,
+                        ai: false,
+                        general: Some(g2_rules::generals::BULLDOG),
+                    },
+                    PlayerSetup { faction: Faction::Eu, starting_credits: 10_000, ai: false, general: None },
+                ],
+            };
+            w = World::new(&setup, rules());
+        }
+        let depot = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(110, 80));
+        let before = w.player(P0).credits;
+        assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: EU_HARVESTER }), vec![]);
+        let paid = before - w.player(P0).credits;
+        let mut ticks = 0;
+        while first(&w, P0, EU_HARVESTER).is_none() {
+            w.step();
+            ticks += 1;
+        }
+        (paid, ticks, w)
+    };
+    let (plain_paid, plain_ticks, _) = train_one(false);
+    let (paid, ticks, w) = train_one(true);
+    assert_eq!(plain_paid, 450);
+    assert_eq!(paid, 450 * 80 / 100);
+    assert_eq!(w.cost_for(P0, EU_HARVESTER).credits, 360);
+    // Training time scales by the general's 85 %: both runs are counted the same way (the first
+    // production tick happens inside `order`), so the extra tick cancels out.
+    let plain_build = rules().def(EU_HARVESTER).build_ticks;
+    assert_eq!(plain_ticks + 1, plain_build);
+    assert_eq!(ticks + 1, plain_build * 85 / 100);
+
+    // Cancelling refunds the discounted price, not the list price.
+    let mut w = w;
+    let depot = first(&w, P0, EU_SUPPLY).unwrap();
+    let before = w.player(P0).credits;
+    order(&mut w, CommandKind::Train { producer: depot, def: EU_HARVESTER });
+    order(&mut w, CommandKind::CancelTrain { producer: depot });
+    assert_eq!(w.player(P0).credits, before);
+
+    // The general is part of the recorded setup.
+    let setup = MatchSetup {
+        map: crater_ridge(),
+        seed: 1,
+        players: w
+            .players()
+            .iter()
+            .map(|p| PlayerSetup { faction: p.faction, starting_credits: 10_000, ai: false, general: p.general })
+            .collect(),
+    };
+    let decoded = g2_sim::Replay::decode(&w.replay(&setup).encode()).unwrap();
+    assert_eq!(decoded.players[0].general, Some(g2_rules::generals::BULLDOG));
+    assert_eq!(decoded.players[1].general, None);
+}
+
+#[test]
+#[should_panic(expected = "is not")]
+fn a_general_of_another_faction_is_refused_at_setup() {
+    let setup = MatchSetup {
+        map: crater_ridge(),
+        seed: 1,
+        players: vec![
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 0,
+                ai: false,
+                general: Some(g2_rules::generals::JUNKYARD),
+            },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: false, general: None },
+        ],
+    };
+    World::new(&setup, rules());
+}
+
+/// The general changes future ticks, so it is part of the state: two otherwise identical worlds
+/// differ in hash from tick 0.
+#[test]
+fn the_general_is_part_of_the_state_hash() {
+    let with = |general| {
+        let setup = MatchSetup {
+            map: crater_ridge(),
+            seed: 1,
+            players: vec![
+                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false, general },
+                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: false, general: None },
+            ],
+        };
+        World::new(&setup, rules()).state_hash()
+    };
+    assert_ne!(with(None), with(Some(g2_rules::generals::BULLDOG)));
+}
+
+/// A replay file naming a general that doesn't exist, or one of another faction, is refused with
+/// an error instead of reaching `World::new`'s assertions.
+#[test]
+fn replays_with_invalid_generals_are_refused() {
+    let setup = MatchSetup {
+        map: crater_ridge(),
+        seed: 1,
+        players: vec![
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 0,
+                ai: true,
+                general: Some(g2_rules::generals::BULLDOG),
+            },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: true, general: None },
+        ],
+    };
+    let (_, mut replay) = g2_sim::record(World::new(&setup, rules()), &setup, 60, |_| {});
+    replay.check(&crater_ridge(), rules()).unwrap();
+    replay.players[1].general = Some(g2_sim::GeneralId(999));
+    assert!(replay.check(&crater_ridge(), rules()).unwrap_err().contains("unknown general"));
+    replay.players[1].general = Some(g2_rules::generals::BULLDOG);
+    assert!(replay.check(&crater_ridge(), rules()).unwrap_err().contains("does not belong"));
+}
+
 #[test]
 fn surrender_defeats_the_player_and_the_last_one_standing_wins() {
     let mut w = World::new(
@@ -262,8 +408,8 @@ fn surrender_defeats_the_player_and_the_last_one_standing_wins() {
             map: crater_ridge(),
             seed: 1,
             players: vec![
-                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false },
-                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: false },
+                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false, general: None },
+                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: false, general: None },
             ],
         },
         rules(),

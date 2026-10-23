@@ -123,8 +123,32 @@ impl Def {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct GeneralId(pub u16);
+
+/// A general a player picks within a faction. Generals 2 had several per faction (docs/
+/// field notes), each with "unique advantages … balanced with disadvantages" (2012 developer
+/// blog in archive/wayback). Their exact rules are unknown; this models them as data, the way
+/// such designs do (per-unit cost and build-time changes).
+#[derive(Clone, Debug)]
+pub struct General {
+    pub name: &'static str,
+    pub faction: Faction,
+    pub modifiers: &'static [Modifier],
+}
+
+/// A per-def change, in whole percent; several for one def multiply.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Modifier {
+    /// `cost_percent` of the normal credit and oil cost.
+    Cost { def: DefId, percent: i64 },
+    /// `percent` of the normal build time.
+    BuildTime { def: DefId, percent: u32 },
+}
+
 pub struct Rules {
     pub defs: &'static [Def],
+    pub generals: &'static [General],
 }
 
 impl Rules {
@@ -134,5 +158,36 @@ impl Rules {
 
     pub fn find(&self, name: &str) -> Option<DefId> {
         self.defs.iter().position(|d| d.name == name).map(|i| DefId(i as u16))
+    }
+
+    pub fn general(&self, id: GeneralId) -> &General {
+        &self.generals[id.0 as usize]
+    }
+
+    pub fn find_general(&self, name: &str) -> Option<GeneralId> {
+        self.generals.iter().position(|g| g.name.eq_ignore_ascii_case(name)).map(|i| GeneralId(i as u16))
+    }
+
+    /// Cost of `def` for a player with `general`: integer percent, rounded down.
+    pub fn cost(&self, general: Option<GeneralId>, def: DefId) -> Cost {
+        let base = self.def(def).cost;
+        let percent = self.modifiers(general).fold(100_i64, |p, m| match m {
+            Modifier::Cost { def: d, percent } if d == def => p * percent / 100,
+            _ => p,
+        });
+        Cost { credits: base.credits * percent / 100, oil: base.oil * percent / 100 }
+    }
+
+    /// Build time of `def` in ticks for a player with `general`; at least one tick.
+    pub fn build_ticks(&self, general: Option<GeneralId>, def: DefId) -> u32 {
+        let percent = self.modifiers(general).fold(100_u32, |p, m| match m {
+            Modifier::BuildTime { def: d, percent } if d == def => p * percent / 100,
+            _ => p,
+        });
+        (self.def(def).build_ticks * percent / 100).max(1)
+    }
+
+    fn modifiers(&self, general: Option<GeneralId>) -> impl Iterator<Item = Modifier> + '_ {
+        general.into_iter().flat_map(|g| self.general(g).modifiers.iter().copied())
     }
 }

@@ -9,8 +9,11 @@ use crate::fixed::{Fx, Vec2};
 use crate::map::PlayerSetup;
 
 const MAGIC: &[u8; 4] = b"G2RP";
-/// v2 added `map_fingerprint`; v1 replays still decode (fingerprint unknown).
-pub const VERSION: u16 = 2;
+/// v2 added `map_fingerprint`, v3 each player's general; older replays still decode (fingerprint
+/// unknown, no generals).
+pub const VERSION: u16 = 3;
+/// Encodes "no general" in v3+.
+const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
 pub const HASH_INTERVAL: u32 = 30;
 
@@ -49,6 +52,7 @@ impl Replay {
             w.u8(p.faction as u8);
             w.i64(p.starting_credits);
             w.u8(p.ai as u8);
+            w.u16(p.general.map_or(NO_GENERAL, |g| g.0));
         }
         w.u32(self.length_ticks);
         w.u32(self.commands.len() as u32);
@@ -85,7 +89,12 @@ impl Replay {
                 2 => Faction::Gla,
                 t => return Err(DecodeError::BadTag(t)),
             };
-            players.push(PlayerSetup { faction, starting_credits: r.i64()?, ai: r.u8()? != 0 });
+            let (starting_credits, ai) = (r.i64()?, r.u8()? != 0);
+            let general = match version {
+                3.. => Some(r.u16()?).filter(|&g| g != NO_GENERAL).map(crate::defs::GeneralId),
+                _ => None,
+            };
+            players.push(PlayerSetup { faction, starting_credits, ai, general });
         }
         let length_ticks = r.u32()?;
         let mut commands = Vec::new();
@@ -106,18 +115,37 @@ impl Replay {
 }
 
 impl Replay {
-    /// Whether `map` is the map this replay was recorded on. v1 replays carry no fingerprint and
-    /// always pass. Call before `verify_replay`, so a changed map file is not misreported as a
-    /// simulation divergence at tick 0.
-    pub fn check_map(&self, map: &crate::map::MapDef) -> Result<(), String> {
-        match self.map_fingerprint {
-            Some(f) if f != map.fingerprint() => Err(format!(
+    /// Whether this replay can be simulated on `map` with `rules`: the map is the one it was
+    /// recorded on (v1 replays carry no fingerprint and pass), the map has enough player starts,
+    /// and every general exists and belongs to its player's faction. Replay files are untrusted
+    /// input; call this before `verify_replay` or `World::new`, which assume a valid setup.
+    pub fn check(&self, map: &crate::map::MapDef, rules: &crate::defs::Rules) -> Result<(), String> {
+        if let Some(f) = self.map_fingerprint
+            && f != map.fingerprint()
+        {
+            return Err(format!(
                 "map {:?} changed since this replay was recorded (fingerprint {f:016x}, now {:016x})",
                 self.map,
                 map.fingerprint()
-            )),
-            _ => Ok(()),
+            ));
         }
+        if self.players.len() > map.spawns.len() {
+            return Err(format!(
+                "{} players but map {:?} has {} starts",
+                self.players.len(),
+                self.map,
+                map.spawns.len()
+            ));
+        }
+        for (i, p) in self.players.iter().enumerate() {
+            let Some(g) = p.general else { continue };
+            let general =
+                rules.generals.get(g.0 as usize).ok_or_else(|| format!("player {i}: unknown general id {}", g.0))?;
+            if general.faction != p.faction {
+                return Err(format!("player {i}: general {} does not belong to {:?}", general.name, p.faction));
+            }
+        }
+        Ok(())
     }
 }
 

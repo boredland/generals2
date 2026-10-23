@@ -60,11 +60,53 @@ struct WorldLabel;
 #[derive(Component)]
 struct HealthBar;
 
+/// A "+credits" pop-up over a supply center: rises and fades over `POPUP_SECS`.
+#[derive(Component)]
+struct Popup {
+    depot: g2_sim::EntityId,
+    age: f32,
+}
+
+const POPUP_SECS: f32 = 1.5;
+
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn).add_systems(Update, (update_fields, minimap, overlays));
+        app.add_systems(Startup, spawn).add_systems(Update, (update_fields, minimap, overlays, popups));
+    }
+}
+
+/// Spawns a pop-up per local delivery and moves the live ones; they track the depot on screen.
+fn popups(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    time: Res<Time>,
+    mut deliveries: ResMut<crate::sim::Deliveries>,
+    cam: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
+    mut live: Query<(Entity, &mut Popup, &mut Node, &mut TextColor)>,
+) {
+    for (depot, credits) in deliveries.0.drain(..) {
+        commands.spawn((
+            abs(px(-100.0), auto(), px(-100.0), auto()),
+            text(&format!("+{credits}"), 13.0, MONEY),
+            TextShadow { offset: Vec2::splat(1.0), ..default() },
+            Popup { depot, age: 0.0 },
+        ));
+    }
+    let Ok((camera, cam_tf)) = cam.single() else { return };
+    for (id, mut p, mut node, mut color) in &mut live {
+        p.age += time.delta_secs();
+        let anchor = sim.world.entity(p.depot).map(|e| crate::view::overlay_anchor(&sim, e));
+        let screen = anchor.and_then(|a| camera.world_to_viewport(cam_tf, a).ok());
+        let (Some(screen), true) = (screen, p.age < POPUP_SECS) else {
+            commands.entity(id).despawn();
+            continue;
+        };
+        let t = p.age / POPUP_SECS;
+        node.left = px(screen.x - 14.0);
+        node.top = px(screen.y - 60.0 - t * 24.0);
+        color.0 = MONEY.with_alpha(1.0 - t * t);
     }
 }
 
@@ -91,22 +133,23 @@ fn faction_initial(f: Faction) -> &'static str {
 }
 
 fn spawn(mut commands: Commands, sim: Res<Sim>) {
-    let me = sim.world.player(LOCAL).faction;
-    let enemy = sim.world.players().iter().enumerate().find(|(i, _)| *i != LOCAL.0 as usize).map(|(_, p)| p.faction);
+    let world = &sim.world;
+    let me = world.player(LOCAL);
+    let enemy = world.players().iter().enumerate().find(|(i, _)| *i != LOCAL.0 as usize).map(|(_, p)| p);
 
     // Top left: menu; top right: neutral project label (no EA trademarks in the UI).
     commands.spawn((abs(px(14), auto(), px(8), auto()), text("MENU", 14.0, DIM)));
     commands.spawn((abs(auto(), px(14), px(8), auto()), text("OPEN RTS - M1", 12.0, DIM)));
 
-    // Top centre: one compact match bar: own tag, clock, enemy tag.
+    // Top centre: one compact match bar: own tag, clock, enemy tag; a general shows after its faction.
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
                 top: px(6),
                 left: percent(50),
-                margin: UiRect::left(px(-95)),
-                width: px(190),
+                margin: UiRect::left(px(-150)),
+                width: px(300),
                 padding: UiRect::axes(px(8), px(3)),
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,
@@ -117,12 +160,15 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
             BorderColor::all(TEAL),
         ))
         .with_children(|t| {
-            let tag =
-                |f: Faction| text(faction_initial(f), 12.0, crate::models::color(Some(f), crate::models::Slot::Team));
-            t.spawn(tag(me));
+            let label = |p: &g2_sim::Player| match p.general {
+                Some(g) => format!("{} {}", faction_initial(p.faction), world.rules.general(g).name.to_uppercase()),
+                None => faction_initial(p.faction).to_owned(),
+            };
+            let team = |p: &g2_sim::Player| crate::models::color(Some(p.faction), crate::models::Slot::Team);
+            t.spawn(text(&label(me), 12.0, team(me)));
             t.spawn((text("0:00:00", 15.0, TEXT), Field::Clock));
             if let Some(e) = enemy {
-                t.spawn(tag(e));
+                t.spawn(text(&label(e), 12.0, team(e)));
             }
         });
 
@@ -294,8 +340,8 @@ fn update_fields(
                 t.0 = focus.map_or(String::new(), |e| {
                     let d = rules.def(e.def);
                     let mut s = format!("{}/{}", e.hp, d.hp);
-                    if let Some(done) = e.construction {
-                        s += &format!("  -  building {}%", done * 100 / d.build_ticks.max(1));
+                    if let (Some(done), Some(owner)) = (e.construction, e.owner) {
+                        s += &format!("  -  building {}%", done * 100 / world.build_ticks_for(owner, e.def));
                     }
                     if let Class::Building { power, .. } = d.class
                         && power < 0
@@ -316,8 +362,8 @@ fn update_fields(
             }
             Field::QueueBar => {
                 if let Some(mut n) = node {
-                    let pct = focus.and_then(|e| e.queue.first()).map_or(0.0, |p| {
-                        p.progress_halves as f32 / (rules.def(p.def).build_ticks * 2).max(1) as f32 * 100.0
+                    let pct = focus.and_then(|e| e.queue.first().zip(e.owner)).map_or(0.0, |(p, owner)| {
+                        p.progress_halves as f32 / (world.build_ticks_for(owner, p.def) * 2) as f32 * 100.0
                     });
                     n.width = percent(pct);
                 }
@@ -327,7 +373,7 @@ fn update_fields(
                     Some(&def) => {
                         let d = rules.def(def);
                         let short = d.name.split_once(' ').map_or(d.name, |(_, rest)| rest);
-                        format!("{} {}  ${}", i + 1, short, d.cost.credits)
+                        format!("{} {}  ${}", i + 1, short, world.cost_for(LOCAL, def).credits)
                     }
                     None => format!("{}", i + 1),
                 }
@@ -410,6 +456,31 @@ fn overlays(
             ));
         }
         let def = world.rules.def(e.def);
+        // Cargo pips over own collectors: five segments, filled by load.
+        if e.owner == Some(LOCAL)
+            && let Some(spec) = def.collector()
+        {
+            let filled = cargo_pips(e.cargo, spec.capacity);
+            commands
+                .spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(screen.x - 20.0),
+                        top: px(screen.y - 18.0),
+                        column_gap: px(2),
+                        padding: UiRect::all(px(1)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+                    HealthBar,
+                ))
+                .with_children(|row| {
+                    for i in 0..5 {
+                        let c = if i < filled { MONEY } else { Color::srgb(0.18, 0.20, 0.20) };
+                        row.spawn((Node { width: px(6), height: px(5), ..default() }, BackgroundColor(c)));
+                    }
+                });
+        }
         let selected = sel.0.contains(&e.id);
         let damaged = e.hp < def.hp;
         if e.owner.is_some() && (selected || damaged) {
@@ -442,5 +513,20 @@ fn overlays(
                     ));
                 });
         }
+    }
+}
+
+/// Filled cargo pips out of five: any cargo lights the first, a full load lights all five.
+fn cargo_pips(cargo: i64, capacity: i64) -> i64 {
+    ((cargo * 5 + capacity - 1) / capacity.max(1)).clamp(0, 5)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cargo_pips_round_up_and_cap_at_five() {
+        let pips = [0, 1, 20, 21, 99, 100, 140].map(|c| super::cargo_pips(c, 100));
+        assert_eq!(pips, [0, 1, 1, 2, 5, 5, 5]);
+        assert_eq!(super::cargo_pips(40, 40), 5, "a GLA worker's full 40-credit load");
     }
 }
