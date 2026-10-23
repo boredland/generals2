@@ -198,12 +198,14 @@ fn sync_entities(
     mut root_tf: Query<(&mut Transform, &mut Visibility), (With<SimRef>, Without<Body>, Without<Scaffold>)>,
 ) {
     let world = &sim.world;
+    // A model goes when its entity does, except a remembered building destroyed out of sight:
+    // it stays as a ghost until the player sees its spot again (and the sim forgets it).
     mirror.0.retain(|id, &mut e| {
-        let alive = world.entity(*id).is_some();
-        if !alive {
+        let keep = world.entity(*id).is_some() || sim.remembers(*id);
+        if !keep {
             commands.entity(e).despawn();
         }
-        alive
+        keep
     });
     for e in world.entities() {
         let def = world.rules.def(e.def);
@@ -341,5 +343,65 @@ pub fn depot_label(sim: &Sim, e: &g2_sim::Entity) -> Option<(u32, u32)> {
             Some((sim.world.depot_load(e.id), collector_cap))
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use g2_sim::{CommandKind, PlayerId, PlayerSetup, Vec2};
+
+    /// A remembered enemy building destroyed out of sight keeps its model (a ghost), so the
+    /// player doesn't learn of the kill; once its spot is seen again the ghost goes.
+    #[test]
+    fn a_building_destroyed_out_of_sight_stays_as_a_ghost_until_seen() {
+        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: false, ..p });
+        let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+        let enemy = PlayerId(1);
+        let rules = sim.world.rules;
+        let first = |s: &Sim, owner, pred: fn(&g2_sim::Def) -> bool| {
+            s.world.entities().find(|e| e.owner == Some(owner) && pred(rules.def(e.def))).unwrap().id
+        };
+        let dozer = first(&sim, LOCAL, |d| d.is_constructor());
+        let cc = first(&sim, enemy, |d| d.is_building());
+        let (home, cc_pos) = (sim.world.entity(dozer).unwrap().pos, sim.world.entity(cc).unwrap().pos);
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .insert_resource(sim)
+            .init_resource::<Previous>()
+            .init_resource::<crate::sim::Hits>()
+            .add_plugins(ViewPlugin);
+        let step_until = |app: &mut App, done: &dyn Fn(&Sim) -> bool, what: &str| {
+            for _ in 0..30 * 120 {
+                if done(app.world().resource::<Sim>()) {
+                    return;
+                }
+                app.world_mut().resource_mut::<Sim>().world.step();
+            }
+            panic!("timed out: {what}");
+        };
+        let order = |app: &mut App, target: Vec2| {
+            app.world_mut().resource_mut::<Sim>().order(CommandKind::Move { units: vec![dozer], target });
+        };
+        // Scout the enemy command center, then drive home until it is out of sight.
+        order(&mut app, cc_pos - Vec2::from_int(14, 14));
+        step_until(&mut app, &|s| s.remembers(cc), "scouted");
+        order(&mut app, home);
+        step_until(&mut app, &|s| !s.sees(s.world.entity(cc).unwrap()), "out of sight");
+        app.update();
+        assert!(app.world().resource::<Mirror>().0.contains_key(&cc), "drawn while remembered");
+        // The GLA surrenders: its buildings go at the next cleanup, where we can't see them.
+        app.world_mut().resource_mut::<Sim>().world.submit(enemy, CommandKind::Surrender);
+        step_until(&mut app, &|s| s.world.entity(cc).is_none(), "destroyed");
+        app.update();
+        assert!(app.world().resource::<Sim>().remembers(cc));
+        assert!(app.world().resource::<Mirror>().0.contains_key(&cc), "a ghost stays");
+        // Back in sight of the spot: the sim forgets it and the ghost goes.
+        order(&mut app, cc_pos - Vec2::from_int(14, 14));
+        step_until(&mut app, &|s| !s.remembers(cc), "seen again");
+        app.update();
+        assert!(!app.world().resource::<Mirror>().0.contains_key(&cc), "the ghost is gone");
     }
 }

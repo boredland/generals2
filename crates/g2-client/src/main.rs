@@ -344,13 +344,15 @@ mod headless {
             return AppExit::error();
         }
         // Every sim entity must have exactly one mesh, at its sim position (ground plane x/z).
+        // The only other meshes allowed are ghosts: remembered buildings destroyed out of sight.
         let world = apps.main.world_mut();
         let mirrored: Vec<(g2_sim::EntityId, Vec3)> = world
             .query::<(&crate::view::SimRef, &Transform)>()
             .iter(world)
             .map(|(r, tf)| (r.0, tf.translation))
             .collect();
-        let sim = &world.resource::<Sim>().world;
+        let client = world.resource::<Sim>();
+        let sim = &client.world;
         let total = sim.entities().count();
         let misplaced = sim
             .entities()
@@ -360,8 +362,13 @@ mod headless {
                 hits.len() != 1 || Vec2::new(hits[0].1.x - want.x, hits[0].1.z - want.z).length() > 0.01
             })
             .count();
-        println!("wrote {path}; sim entities {total}, models {}, misplaced {misplaced}", mirrored.len());
-        if mirrored.len() != total || misplaced > 0 {
+        let ghosts = mirrored.iter().filter(|(id, _)| sim.entity(*id).is_none()).count();
+        let stray = mirrored.iter().filter(|(id, _)| sim.entity(*id).is_none() && !client.remembers(*id)).count();
+        println!(
+            "wrote {path}; sim entities {total}, models {}, ghosts {ghosts}, misplaced {misplaced}",
+            mirrored.len()
+        );
+        if mirrored.len() != total + ghosts || misplaced > 0 || stray > 0 {
             eprintln!("render mirror does not match the simulation");
             return AppExit::error();
         }

@@ -41,9 +41,15 @@ impl Sim {
 
     /// Whether `e` is drawn: what the local player sees, plus enemy buildings it remembers.
     /// Buildings don't move, so a remembered one stands where it was seen. One destroyed out
-    /// of sight disappears at once (the sim entity is gone), a small leak a ghost model would fix.
+    /// of sight stays drawn as a ghost (`view::sync_entities`) until the spot is seen again.
     pub fn shows(&self, e: &g2_sim::Entity) -> bool {
-        self.sees(e) || self.world.vision(LOCAL).memory.contains_key(&e.id)
+        self.sees(e) || self.remembers(e.id)
+    }
+
+    /// Whether the local player's fog still remembers entity `id` (an enemy building, possibly
+    /// since destroyed). Always false with the fog off.
+    pub fn remembers(&self, id: g2_sim::EntityId) -> bool {
+        self.fog && self.world.vision(LOCAL).memory.contains_key(&id)
     }
 
     /// The local player's fog cells for drawing, row-major on the sim's fog grid: 0 never

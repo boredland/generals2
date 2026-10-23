@@ -436,9 +436,18 @@ fn minimap(
             ImageNode::new(handle.clone()),
             MinimapDot,
         ));
-        for e in world.entities().filter(|e| sim.shows(e)) {
-            let def = world.rules.def(e.def);
-            let (color, size) = match (def.class, e.owner) {
+        // Shown entities, plus ghosts: remembered buildings destroyed out of sight, drawn where
+        // they were seen.
+        let ghosts = world
+            .vision(LOCAL)
+            .memory
+            .iter()
+            .filter(|(id, _)| sim.fog && world.entity(**id).is_none())
+            .map(|(_, s)| (s.def, Some(s.owner), s.pos));
+        let dots = world.entities().filter(|e| sim.shows(e)).map(|e| (e.def, e.owner, e.pos)).chain(ghosts);
+        for (def_id, owner, pos) in dots {
+            let def = world.rules.def(def_id);
+            let (color, size) = match (def.class, owner) {
                 // Resources in neutral greys, so they never read as a faction.
                 (Class::SupplyPile, _) => (Color::srgb(0.80, 0.80, 0.78), 4.0),
                 (Class::OilWell, _) => (Color::srgb(0.35, 0.35, 0.35), 4.0),
@@ -450,7 +459,7 @@ fn minimap(
                 }
                 _ => continue,
             };
-            let (x, y) = (e.pos.x.to_f32() / w * MINIMAP, e.pos.y.to_f32() / h * MINIMAP);
+            let (x, y) = (pos.x.to_f32() / w * MINIMAP, pos.y.to_f32() / h * MINIMAP);
             m.spawn((
                 Node {
                     position_type: PositionType::Absolute,
