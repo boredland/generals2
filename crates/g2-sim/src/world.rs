@@ -133,6 +133,7 @@ impl World {
             let cc_id = world.spawn_owned(cc, owner, spawn);
             let dozer = rules.starting_constructor(p.faction);
             let offset = rules.def(cc).radius + rules.def(dozer).radius + SLACK;
+            let offset = offset * world.toward_centre(spawn);
             world.spawn_owned(dozer, owner, world.map.clamp(spawn + Vec2::new(Fx::ZERO, offset)));
             debug_assert!(world.entities.get(cc_id).is_some());
         }
@@ -169,6 +170,12 @@ impl World {
     fn spawn_owned(&mut self, def: DefId, owner: PlayerId, pos: Vec2) -> EntityId {
         let hp = self.rules.def(def).hp;
         self.entities.spawn(|id| Entity { owner: Some(owner), ..Self::blank_entity(id, def, hp, pos) })
+    }
+
+    /// `+1` or `-1`: the vertical direction from `pos` toward the map centre. Units spawn on
+    /// that side of their building, so starts that mirror each other produce mirrored units.
+    fn toward_centre(&self, pos: Vec2) -> Fx {
+        if pos.y * Fx::from_int(2) > self.map.height { -Fx::ONE } else { Fx::ONE }
     }
 
     // ---- queries -------------------------------------------------------------------------
@@ -635,7 +642,9 @@ impl World {
             let (owner, pos, radius) = (e.owner.unwrap(), e.pos, self.rules.def(e.def).radius);
             let is_depot = matches!(self.rules.def(e.def).role(), Some(BuildingRole::SupplyCenter { .. }));
             let ud = self.rules.def(def);
-            let spawn_at = self.map.clamp(pos + Vec2::new(Fx::ZERO, radius + ud.radius + SLACK));
+            // On the side facing the map centre, so mirrored starts produce mirrored units.
+            let side = self.toward_centre(pos);
+            let spawn_at = self.map.clamp(pos + Vec2::new(Fx::ZERO, (radius + ud.radius + SLACK) * side));
             let unit = self.spawn_owned(def, owner, spawn_at);
             if is_depot
                 && ud.collector().is_some()

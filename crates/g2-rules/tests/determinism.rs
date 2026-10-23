@@ -121,6 +121,35 @@ fn ai_vs_ai_is_deterministic_for_every_faction_pairing() {
     }
 }
 
+/// In a mirror match on Crater Ridge (starts at (80,80) and (320,320)), the second AI's base is
+/// the first one's rotated 180° about the map centre: same buildings, mirrored positions.
+/// Checked after the opening, when every building is placed by the AI's own layout rules.
+#[test]
+fn mirror_matches_build_mirrored_bases() {
+    for f in Faction::ALL {
+        let s = setup(1, [true, true], [f, f]);
+        let mut w = World::new(&s, rules());
+        while w.tick() < 30 * 100 {
+            w.step();
+        }
+        let base = |p: u8| {
+            let mut v: Vec<(&str, i64, i64)> = w
+                .entities()
+                .filter(|e| e.owner == Some(PlayerId(p)) && rules().def(e.def).is_building())
+                .map(|e| {
+                    let (x, y) = (e.pos.x.floor_int(), e.pos.y.floor_int());
+                    let (x, y) = if p == 1 { (400 - x, 400 - y) } else { (x, y) };
+                    (rules().def(e.def).name, x, y)
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        assert!(base(0).len() >= 4, "{f:?}: {:?}", base(0));
+        assert_eq!(base(0), base(1), "{f:?}");
+    }
+}
+
 /// Every faction pairing, played AI against AI, ends with exactly one winner within 15 minutes,
 /// and the recorded match reproduces exactly: combat (targeting, hits, deaths, the AI's
 /// waves and rebuilding) is deterministic end to end.

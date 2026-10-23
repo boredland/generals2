@@ -182,8 +182,7 @@ impl Ai {
         let step = world.rules.def(def).radius * Fx::from_int(2) + Fx::from_int(4);
         for ring in 1..12i64 {
             for k in 0..8 * ring {
-                let (dx, dy) = ring_offset(ring, k);
-                let pos = around + Vec2::new(step * Fx::from_int(dx), step * Fx::from_int(dy));
+                let pos = spiral_cell(world, around, step, ring, k);
                 if world.check_placement(def, pos).is_ok() {
                     return Some(pos);
                 }
@@ -199,8 +198,7 @@ impl Ai {
         let mut best: Option<(Fx, Vec2)> = None;
         for ring in 1..4i64 {
             for k in 0..8 * ring {
-                let (dx, dy) = ring_offset(ring, k);
-                let pos = around + Vec2::new(step * Fx::from_int(dx), step * Fx::from_int(dy));
+                let pos = spiral_cell(world, around, step, ring, k);
                 if world.check_placement(def, pos).is_ok() && best.is_none_or(|(d, _)| pos.distance(toward) < d) {
                     best = Some((pos.distance(toward), pos));
                 }
@@ -239,6 +237,16 @@ impl Ai {
         }
         best.map(|(_, p)| p)
     }
+}
+
+/// The `k`-th spiral cell around `around`, `step` apart, with both axes flipped to point at the
+/// map centre. Starts that mirror each other through the centre (as on every 2-player map)
+/// then scan mirrored cells in the same order and build mirrored bases.
+fn spiral_cell(world: &World, around: Vec2, step: Fx, ring: i64, k: i64) -> Vec2 {
+    let toward = |v: Fx, size: Fx| if v * Fx::from_int(2) > size { -1 } else { 1 };
+    let (fx, fy) = (toward(around.x, world.map.width), toward(around.y, world.map.height));
+    let (dx, dy) = ring_offset(ring, k);
+    around + Vec2::new(step * Fx::from_int(dx * fx), step * Fx::from_int(dy * fy))
 }
 
 /// The `k`-th cell (0-based, `0..8*ring`) on the square ring at Chebyshev distance `ring`.
