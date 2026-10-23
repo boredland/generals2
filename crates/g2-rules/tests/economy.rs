@@ -529,6 +529,81 @@ fn group_moves_spread_units_instead_of_stacking() {
     }
 }
 
+/// A group moves at its slowest member's speed: Scorpion tanks (11/s) ordered together with
+/// Rabble squads (10/s) don't pull ahead. Over 10 s of open-ground march, every member covers
+/// at most the slow pace's distance (plus a little sideways separation).
+#[test]
+fn a_group_moves_at_its_slowest_members_pace() {
+    let mut w = world(Faction::Gla, 1_000_000);
+    let factory = build(&mut w, GLA_WORKER, GLA_FACTORY, Vec2::from_int(110, 110));
+    for _ in 0..3 {
+        order(&mut w, CommandKind::Train { producer: factory, def: GLA_TANK });
+    }
+    let barracks = build(&mut w, GLA_WORKER, GLA_BARRACKS, Vec2::from_int(110, 140));
+    for _ in 0..3 {
+        order(&mut w, CommandKind::Train { producer: barracks, def: GLA_RABBLE });
+    }
+    while all(&w, P0, GLA_TANK).len() < 3 || all(&w, P0, GLA_RABBLE).len() < 3 {
+        w.step();
+    }
+    let group: Vec<EntityId> = all(&w, P0, GLA_TANK).into_iter().chain(all(&w, P0, GLA_RABBLE)).collect();
+    let (slow, fast) = (rules().def(GLA_RABBLE).speed(), rules().def(GLA_TANK).speed());
+    assert!(fast > slow, "the test needs two speeds");
+    order(&mut w, CommandKind::Move { units: group.clone(), target: Vec2::from_int(330, 330) });
+    let start: Vec<Vec2> = group.iter().map(|&u| w.entity(u).unwrap().pos).collect();
+    let ticks = 30 * 10;
+    run(&mut w, ticks);
+    for (k, &u) in group.iter().enumerate() {
+        let moved = w.entity(u).unwrap().pos.distance(start[k]);
+        // 10 s at the slow pace is 100 units, at the fast one 110; allow 4 for separation.
+        assert!(
+            moved <= slow * Fx::from_int(ticks as i64) + Fx::from_int(4),
+            "{u:?} moved {moved:?}, ahead of the group"
+        );
+    }
+}
+
+/// Formation slots are dealt out so paths don't cross: no two units' straight lines from
+/// start to slot intersect.
+#[test]
+fn formation_slots_do_not_cross() {
+    let mut w = world(Faction::Gla, 100_000);
+    let depot = build(&mut w, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 80));
+    for _ in 0..8 {
+        order(&mut w, CommandKind::Train { producer: depot, def: GLA_WORKER });
+    }
+    run(&mut w, 30 * 60);
+    let workers = all(&w, P0, GLA_WORKER);
+    assert!(workers.len() >= 6);
+    order(&mut w, CommandKind::Stop { units: workers.clone() });
+    for target in [Vec2::from_int(300, 300), Vec2::from_int(40, 300), Vec2::from_int(300, 40)] {
+        order(&mut w, CommandKind::Move { units: workers.clone(), target });
+        let legs: Vec<(Vec2, Vec2)> = workers
+            .iter()
+            .map(|&u| {
+                let e = w.entity(u).unwrap();
+                let Order::Move { target, .. } = e.order else { panic!("{u:?} has no move order") };
+                (e.pos, target)
+            })
+            .collect();
+        let cross = |(a, b): (Vec2, Vec2), (c, d): (Vec2, Vec2)| {
+            let side = |p: Vec2, q: Vec2, r: Vec2| ((q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x)).0.signum();
+            side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0
+        };
+        for i in 0..legs.len() {
+            for j in i + 1..legs.len() {
+                assert!(
+                    !cross(legs[i], legs[j]),
+                    "to {target:?}: paths {i} and {j} cross: {:?} {:?}",
+                    legs[i],
+                    legs[j]
+                );
+            }
+        }
+        run(&mut w, 30 * 60);
+    }
+}
+
 /// Builds `factory` with the starting constructor, then trains one `unit` from it.
 fn train_one(w: &mut World, ctor: g2_sim::DefId, factory: g2_sim::DefId, unit: g2_sim::DefId) -> EntityId {
     let f = build(w, ctor, factory, Vec2::from_int(110, 110));

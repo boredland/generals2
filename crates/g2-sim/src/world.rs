@@ -408,9 +408,10 @@ impl World {
         match &cmd.kind {
             CommandKind::Move { units, target } => {
                 let units = self.own_units(player, units, |_| true)?;
+                let pace = self.group_pace(&units);
                 for (u, dest) in self.formation(&units, *target) {
                     let e = self.entities.get_mut(u).unwrap();
-                    e.order = Order::Move { target: dest };
+                    e.order = Order::Move { target: dest, pace };
                     e.home = None;
                 }
                 Ok(())
@@ -521,9 +522,10 @@ impl World {
             CommandKind::AttackMove { units, target } => {
                 let units =
                     self.own_units(player, units, |d| d.weapon().is_some()).map_err(|_| Reject::CannotAttack)?;
+                let pace = self.group_pace(&units);
                 for (u, dest) in self.formation(&units, *target) {
                     let e = self.entities.get_mut(u).unwrap();
-                    e.order = Order::AttackMove { dest, engaged: None };
+                    e.order = Order::AttackMove { dest, pace, engaged: None };
                     e.home = None;
                 }
                 Ok(())
@@ -531,26 +533,66 @@ impl World {
         }
     }
 
-    /// One destination per unit around `target`: a square, row-major in selection order,
-    /// spaced by the widest unit. A slot inside a building or on blocked terrain moves to the
-    /// nearest free cell; otherwise the unit could never arrive, and every attempt to route
-    /// there would search the whole reachable map.
+    /// The slowest selected unit's speed: a group moves at one pace and arrives together.
+    fn group_pace(&self, units: &[EntityId]) -> Fx {
+        units.iter().map(|&u| self.rules.def(self.entities.get(u).unwrap().def).speed()).min().unwrap_or(Fx::ZERO)
+    }
+
+    /// One destination per unit around `target`: a square block of slots, spaced by the widest
+    /// unit, facing the direction of travel. Slots are dealt out so paths don't cross: a first
+    /// guess pairs units and slots by their order front-to-back, then left-to-right, and any
+    /// two units whose straight legs still cross swap slots. A swap always shortens the total
+    /// of all legs (the triangle inequality), so this ends, and the result has no crossings.
+    /// A slot inside a building or on blocked terrain moves to the nearest free cell;
+    /// otherwise the unit could never arrive, and every attempt to route there would search
+    /// the whole reachable map.
     fn formation(&self, units: &[EntityId], target: Vec2) -> Vec<(EntityId, Vec2)> {
         let target = self.map.clamp(target);
+        let n = units.len() as i64;
         let spacing = units.iter().map(|&u| self.radius_of(u)).max().unwrap_or(SLACK) * Fx::from_int(2) + SLACK;
-        let side = ceil_sqrt(units.len() as i64);
-        units
-            .iter()
-            .enumerate()
-            .map(|(i, &u)| {
-                let (row, col) = (i as i64 / side, i as i64 % side);
-                let offset = Vec2::new(
-                    spacing * Fx::from_int(col) - spacing * Fx::from_ratio(side - 1, 2),
-                    spacing * Fx::from_int(row) - spacing * Fx::from_ratio(side - 1, 2),
-                );
-                (u, self.nav.free_point(self.map.clamp(target + offset)))
+        let side = ceil_sqrt(n);
+        let pos = |u: EntityId| self.entities.get(u).unwrap().pos;
+        let centre = units.iter().fold(Vec2::ZERO, |s, &u| s + pos(u));
+        let centre = Vec2::new(centre.x / Fx::from_int(n), centre.y / Fx::from_int(n));
+        // Travel direction (unit length) and its left-hand normal; +y for a group already there.
+        let delta = target - centre;
+        let len = delta.length();
+        let fwd = if len > Fx::ONE { delta.scale(Fx::ONE / len) } else { Vec2::new(Fx::ZERO, Fx::ONE) };
+        let left = Vec2::new(-fwd.y, fwd.x);
+        let dot = |a: Vec2, b: Vec2| a.x * b.x + a.y * b.y;
+        // Units: front first (largest projection on `fwd`), cut into rows of `side`, each row
+        // left to right; slots in the same order.
+        let mut order: Vec<EntityId> = units.to_vec();
+        order.sort_by_key(|&u| (-dot(pos(u) - centre, fwd), u));
+        for row in order.chunks_mut(side as usize) {
+            row.sort_by_key(|&u| (-dot(pos(u) - centre, left), u));
+        }
+        let slots: Vec<Vec2> = (0..n)
+            .map(|i| {
+                let (row, col) = (i / side, i % side);
+                let back = spacing * Fx::from_int(row) - spacing * Fx::from_ratio(side - 1, 2);
+                let across = spacing * Fx::from_ratio(side - 1, 2) - spacing * Fx::from_int(col);
+                self.nav.free_point(self.map.clamp(target - fwd.scale(back) + left.scale(across)))
             })
-            .collect()
+            .collect();
+        let from: Vec<Vec2> = order.iter().map(|&u| pos(u)).collect();
+        let mut slot_of: Vec<usize> = (0..order.len()).collect();
+        // Bounded for safety: each swap shortens the total, so it converges long before this.
+        for _ in 0..order.len() * order.len() {
+            let mut swapped = false;
+            for i in 0..order.len() {
+                for j in i + 1..order.len() {
+                    if segments_cross(from[i], slots[slot_of[i]], from[j], slots[slot_of[j]]) {
+                        slot_of.swap(i, j);
+                        swapped = true;
+                    }
+                }
+            }
+            if !swapped {
+                break;
+            }
+        }
+        order.iter().enumerate().map(|(i, &u)| (u, slots[slot_of[i]])).collect()
     }
 
     /// The subset of `ids` that are live units owned by `player` and match `filter`.
@@ -788,11 +830,11 @@ impl World {
         let (new_pos, new_order) = match order {
             Order::Idle => match weapon.and_then(|w| self.enemy_near(owner, pos, w.range + ACQUIRE)) {
                 // Guard: an idle armed unit engages what comes close and then walks back.
-                Some(t) => (pos, Order::AttackMove { dest: pos, engaged: Some(t) }),
+                Some(t) => (pos, Order::AttackMove { dest: pos, pace: speed, engaged: Some(t) }),
                 None => (pos, Order::Idle),
             },
-            Order::Move { target } => {
-                let (p, arrived) = self.approach(id, target, Fx::ZERO, speed);
+            Order::Move { target, pace } => {
+                let (p, arrived) = self.approach(id, target, Fx::ZERO, pace.min(speed));
                 (p, if arrived { Order::Idle } else { order })
             }
             Order::Construct { site } => match self.entities.get(site).filter(|s| s.construction.is_some()) {
@@ -808,7 +850,7 @@ impl World {
                 (Some(w), Some(_)) => (self.engage(id, target, w, speed), order),
                 _ => (pos, Order::Idle),
             },
-            Order::AttackMove { dest, engaged } => match weapon {
+            Order::AttackMove { dest, pace, engaged } => match weapon {
                 None => (pos, Order::Idle),
                 Some(w) => {
                     // Keep the current target while it lives and stays within acquisition
@@ -821,10 +863,10 @@ impl World {
                         })
                         .or_else(|| self.enemy_near(owner, pos, reach));
                     match target {
-                        Some(t) => (self.engage(id, t, w, speed), Order::AttackMove { dest, engaged: Some(t) }),
+                        Some(t) => (self.engage(id, t, w, speed), Order::AttackMove { dest, pace, engaged: Some(t) }),
                         None => {
-                            let (p, arrived) = self.approach(id, dest, Fx::ZERO, speed);
-                            (p, if arrived { Order::Idle } else { Order::AttackMove { dest, engaged: None } })
+                            let (p, arrived) = self.approach(id, dest, Fx::ZERO, pace.min(speed));
+                            (p, if arrived { Order::Idle } else { Order::AttackMove { dest, pace, engaged: None } })
                         }
                     }
                 }
@@ -1101,6 +1143,17 @@ impl World {
             p.defeated = !alive;
         }
     }
+}
+
+/// Whether segments `a`–`b` and `c`–`d` properly cross (touching ends and collinear overlap
+/// don't count). Exact: the products are compared by sign in i128.
+fn segments_cross(a: Vec2, b: Vec2, c: Vec2, d: Vec2) -> bool {
+    let side = |p: Vec2, q: Vec2, r: Vec2| {
+        let cross =
+            (q.x.0 - p.x.0) as i128 * (r.y.0 - p.y.0) as i128 - (q.y.0 - p.y.0) as i128 * (r.x.0 - p.x.0) as i128;
+        cross.signum()
+    };
+    side(a, b, c) * side(a, b, d) < 0 && side(c, d, a) * side(c, d, b) < 0
 }
 
 /// Smallest `s >= 1` with `s * s >= n`.

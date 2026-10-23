@@ -1,5 +1,5 @@
 use crate::defs::DefId;
-use crate::fixed::Vec2;
+use crate::fixed::{Fx, Vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct EntityId {
@@ -15,8 +15,11 @@ pub struct PlayerId(pub u8);
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Order {
     Idle,
+    /// Walk to `target` at most `pace` world units per tick (a group's shared pace, so it
+    /// arrives together; a lone unit's own speed).
     Move {
         target: Vec2,
+        pace: Fx,
     },
     /// Collector loop: walk to `pile`, load, walk to a supply center, unload, repeat.
     Gather {
@@ -31,11 +34,12 @@ pub enum Order {
     Attack {
         target: EntityId,
     },
-    /// Walk to `dest`, fighting the enemy `engaged` whenever one comes within acquisition
-    /// range on the way. An idle armed unit that spots an enemy switches to this with `dest`
-    /// at its own position, so it walks back after the fight.
+    /// Walk to `dest` at `pace`, fighting the enemy `engaged` whenever one comes within
+    /// acquisition range on the way (at full speed). An idle armed unit that spots an enemy
+    /// switches to this with `dest` at its own position, so it walks back after the fight.
     AttackMove {
         dest: Vec2,
+        pace: Fx,
         engaged: Option<EntityId>,
     },
 }

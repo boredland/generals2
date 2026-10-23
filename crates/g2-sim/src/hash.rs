@@ -113,10 +113,11 @@ fn id(h: &mut Fnv, e: crate::entity::EntityId) {
 fn hash_order(h: &mut Fnv, o: Order) {
     match o {
         Order::Idle => h.u64(0),
-        Order::Move { target } => {
+        Order::Move { target, pace } => {
             h.u64(1);
             h.i64(target.x.0);
             h.i64(target.y.0);
+            h.i64(pace.0);
         }
         Order::Gather { pile, phase } => {
             h.u64(2);
@@ -146,10 +147,11 @@ fn hash_order(h: &mut Fnv, o: Order) {
             h.u64(4);
             id(h, target);
         }
-        Order::AttackMove { dest, engaged } => {
+        Order::AttackMove { dest, pace, engaged } => {
             h.u64(5);
             h.i64(dest.x.0);
             h.i64(dest.y.0);
+            h.i64(pace.0);
             h.u64(engaged.map_or(u64::MAX, |e| ((e.index as u64) << 32) | e.generation as u64));
         }
     }
