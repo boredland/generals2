@@ -67,3 +67,6 @@
 [submodule "vendor/tools/cnc-formats"]
 	path = vendor/tools/cnc-formats
 	url = https://github.com/iron-curtain-engine/cnc-formats.git
+[submodule "vendor/reimpl/Generals-Alpha"]
+	path = vendor/reimpl/Generals-Alpha
+	url = https://github.com/MustaphaTR/Generals-Alpha.git

@@ -2,7 +2,7 @@
 
 Upstream source vendored as git submodules. Nothing in `vendor/` is modified in place. Our own code, scripts and patches live outside `vendor/`; patches needed to build upstream go in `patches/<repo>/` and are applied to a scratch worktree under `build/` (see below).
 
-Clone with `git clone --recursive`, or run `git submodule update --init --recursive`. `CnC_Modding_Support` is a shallow (`--depth 1`) submodule.
+Clone with `git clone --recursive`, or run `git submodule update --init --recursive`. `CnC_Modding_Support` and `Generals-Alpha` are shallow (`--depth 1`) submodules.
 
 ## Pins
 
@@ -27,6 +27,7 @@ Pinned 2026-10-23. Each pin is the default-branch HEAD at add time, except Gener
 | `reimpl/OpenSAGE` | [OpenSAGE/OpenSAGE](https://github.com/OpenSAGE/OpenSAGE) | `master` | `588ac477` | GPL-3.0, and because it ports EA code, also the EA §7 terms (`LICENSE.md` + `LICENSE-EA.md`) | C# clean-room reimplementation of SAGE, now partly ported from EA code |
 | `reimpl/OpenSAGE-Docs` | [OpenSAGE/Docs](https://github.com/OpenSAGE/Docs) | `master` | `a41f431d` | none stated | SAGE file-format and systems documentation (`file-formats/`, `behaviors/`, `systems/`) |
 | `reimpl/Thyme` | [TheAssemblyArmada/Thyme](https://github.com/TheAssemblyArmada/Thyme) | `develop` | `ccef1e11` | GPL-2.0-or-later | Reverse-engineered Zero Hour reimplementation (predates the EA release) |
+| `reimpl/Generals-Alpha` | [MustaphaTR/Generals-Alpha](https://github.com/MustaphaTR/Generals-Alpha) | `master` (shallow, added 2026-10-23) | `f16d9537` | GPL-3.0 | OpenRA mod recreating original *Generals* gameplay with Red Alert / Tiberian Dawn sprites. Reference for mechanics as data (`mods/gen/rules`, `weapons`) and C# traits (`OpenRA.Mods.GenSDK`: supply docks/collectors, generals powers). It is not an asset archive. Its art and audio are Westwood/EA assets; never copy them |
 | `tools/OpenSAGE.BlenderPlugin` | [OpenSAGE/OpenSAGE.BlenderPlugin](https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin) | `master` | `53d77d38` | LGPL-3.0 | Blender W3D import/export. Nested submodule `blender_addon_updater` @ `981aa298` |
 | `tools/pySAGE` | [ClementJ18/pySAGE](https://github.com/ClementJ18/pySAGE) | `master` | `4b0cdd84` | MIT | Python parsers for SAGE formats (`.map`, `.str`, …) |
 | `tools/pyBIG` | [ClementJ18/pyBIG](https://github.com/ClementJ18/pyBIG) | `master` | `081f57f5` | MIT | Python `.big` archive reader/writer |
@@ -38,7 +39,7 @@ Excluded because they are retail data overlays, not engine code: `TheSuperHacker
 
 - **EA-derived code** (`ea/*`, `superhackers/GeneralsGameCode`, `ports/*`, `reimpl/OpenSAGE`) is GPL-3.0 with EA's §7 additional terms: no use of EA trademarks, no claims of EA affiliation or endorsement, and modified versions must be marked as changed. Anything we derive from it inherits all of these terms.
 - **Thyme** is GPL-2.0-or-later, so it can be used under GPL-3.0. `LICENSE` is the GPL-2.0 text, and 1256 of 1261 `src/` files carry "version 2 of the License, or (at your option) any later version"; the other 5 have no header.
-- **BlenderPlugin** is LGPL-3.0. **pySAGE, pyBIG, GeneralsModBuilder, GeneralsBigCreator** are MIT. **cnc-formats** is MIT OR Apache-2.0.
+- **BlenderPlugin** is LGPL-3.0. **pySAGE, pyBIG, GeneralsModBuilder, GeneralsBigCreator** are MIT. **cnc-formats** is MIT OR Apache-2.0. **Generals-Alpha** code and rules are GPL-3.0; its sprites and audio are EA-owned game assets and stay reference-only.
 - **min-dx8-sdk, lzhl, GeneralsDocuments, GeneralsWiki, OpenSAGE-Docs** have no license file. Use them as reference only.
 
 ## Building GeneralsGameCode on Linux
