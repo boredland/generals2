@@ -119,6 +119,7 @@ impl World {
             h.i64(s.from.y.0);
             h.i64(s.at.x.0);
             h.i64(s.at.y.0);
+            h.u64(s.fired as u64);
             h.u64(s.lands as u64);
             h.i64(s.damage as i64);
             for b in s.bonus {

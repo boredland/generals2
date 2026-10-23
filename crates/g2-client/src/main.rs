@@ -220,13 +220,22 @@ mod headless {
 
     pub fn run(mut sim: Sim, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
         sim.speed = 0;
-        // The last few ticks' shots, so the frame shows tracers, shells and blasts in flight.
+        // The last few ticks' tracers and blasts, plus every shell still in the air, drawn
+        // where it is along its flight, so the frame shows the battle as it stands.
         let mut hits = crate::sim::Hits::default();
         for t in 0..ticks {
             sim.world.step();
             if t + 4 >= ticks {
                 crate::sim::collect_shots(&sim.world, &mut hits);
             }
+        }
+        hits.0.retain(|s| !matches!(s, crate::sim::Shot::Shell { .. }));
+        let now = sim.world.tick();
+        for s in sim.world.shells() {
+            let whole = (s.lands - s.fired).max(1);
+            let left = s.lands.saturating_sub(now) + 1;
+            let done = (now - s.fired) as f32 / whole as f32;
+            hits.0.push(crate::sim::Shot::Shell { from: s.from, at: s.at, flight: left, done: done.min(0.95) });
         }
         // Midpoint of the last few ticks' shots (shooter to target), for `View::Battle`, so both
         // sides of the fight are in frame.

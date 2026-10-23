@@ -137,8 +137,9 @@ pub struct Hits(pub Vec<Shot>);
 pub enum Shot {
     /// A hit on a target at `at`; `tracer` for direct fire (a shell's hits are its blast).
     Hit { from: g2_sim::Vec2, at: g2_sim::Vec2, killed: bool, tracer: bool },
-    /// A shell from `from` to `at`, in the air for `flight` ticks.
-    Shell { from: g2_sim::Vec2, at: g2_sim::Vec2, flight: u32 },
+    /// A shell from `from` to `at`, in the air for `flight` more ticks, `done` of its whole flight
+    /// (0 at the muzzle) already behind it.
+    Shell { from: g2_sim::Vec2, at: g2_sim::Vec2, flight: u32, done: f32 },
     /// A shell landed at `at`; its blast has `radius`.
     Blast { at: g2_sim::Vec2, radius: g2_sim::Fx },
 }
@@ -193,7 +194,7 @@ pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
                 hits.0.push(Shot::Hit { from, at, killed, tracer: !splash });
             }
             g2_sim::world::Event::Fired { from, at, lands, .. } => {
-                hits.0.push(Shot::Shell { from, at, flight: lands.saturating_sub(tick) + 1 })
+                hits.0.push(Shot::Shell { from, at, flight: lands.saturating_sub(tick) + 1, done: 0.0 })
             }
             g2_sim::world::Event::Landed { at, radius } => hits.0.push(Shot::Blast { at, radius }),
             _ => {}

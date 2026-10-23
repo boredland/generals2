@@ -331,17 +331,21 @@ fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, m
                     ));
                 }
             }
-            Shot::Shell { from, at, flight } => {
+            Shot::Shell { from, at, flight, done } => {
                 if !seen(from) && !seen(at) {
                     continue;
                 }
                 let (a, b) = (sim.to_world(from) + Vec3::Y * 2.5, sim.to_world(at) + Vec3::Y * 0.5);
                 let peak = (a.distance(b) * 0.35).max(4.0);
+                // A shell already partway along (a screenshot of one fired earlier) starts there.
+                let whole = flight as f32 * tick_secs / (1.0 - done).max(0.05);
+                let age = whole * done;
+                let start = a.lerp(b, done) + Vec3::Y * peak * 4.0 * done * (1.0 - done);
                 commands.spawn((
                     Mesh3d(assets.sphere.clone()),
                     MeshMaterial3d(assets.tracer.clone()),
-                    Transform::from_translation(a).with_scale(Vec3::splat(0.9)),
-                    Effect { age: 0.0, life: flight as f32 * tick_secs, grow: 1.0, arc: Some((a, b, peak)) },
+                    Transform::from_translation(start).with_scale(Vec3::splat(0.9)),
+                    Effect { age, life: whole, grow: 1.0, arc: Some((a, b, peak)) },
                 ));
             }
             Shot::Blast { at, radius } => {
@@ -468,5 +472,46 @@ mod tests {
         step_until(&mut app, &|s| !s.remembers(cc), "seen again");
         app.update();
         assert!(!app.world().resource::<Mirror>().0.contains_key(&cc), "the ghost is gone");
+    }
+
+    /// A shell handed over partway through its flight (a screenshot of one fired earlier)
+    /// starts at that point of its arc, not at the muzzle, and still lands on time.
+    #[test]
+    fn a_shell_partway_through_its_flight_starts_where_it_is() {
+        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: false, ..p });
+        let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .insert_resource(sim)
+            .init_resource::<Previous>()
+            .init_resource::<crate::sim::Hits>()
+            .insert_resource(FreezeEffects)
+            .add_plugins(ViewPlugin);
+        let (from, at) = (Vec2::from_int(100, 100), Vec2::from_int(160, 100));
+        for done in [0.0, 0.5] {
+            app.world_mut().resource_mut::<crate::sim::Hits>().0.push(crate::sim::Shot::Shell {
+                from,
+                at,
+                flight: 20,
+                done,
+            });
+        }
+        app.update();
+        let mut shells: Vec<(f32, f32, f32)> = app
+            .world_mut()
+            .query::<(&Effect, &Transform)>()
+            .iter(app.world())
+            .filter(|(e, _)| e.arc.is_some())
+            .map(|(e, tf)| (tf.translation.x, e.age, e.life))
+            .collect();
+        shells.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let [(x0, age0, life0), (x1, age1, life1)] = shells[..] else { panic!("two shells: {shells:?}") };
+        assert!((x0 - 100.0).abs() < 0.01, "a fresh shell starts at the muzzle: {x0}");
+        assert!((x1 - 130.0).abs() < 0.01, "a half-flown shell starts halfway: {x1}");
+        let tick = 1.0 / g2_sim::TICKS_PER_SECOND as f32;
+        assert!(age0 == 0.0 && (life0 - 20.0 * tick).abs() < 1e-4);
+        assert!((life1 - age1 - 20.0 * tick).abs() < 1e-4, "lands after the 20 ticks still left");
     }
 }

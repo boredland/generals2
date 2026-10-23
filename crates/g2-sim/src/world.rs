@@ -76,7 +76,8 @@ pub struct ShellInFlight {
     pub owner: PlayerId,
     pub from: Vec2,
     pub at: Vec2,
-    /// Tick on which it lands.
+    /// Tick it was fired on, and the tick on which it lands.
+    pub fired: u32,
     pub lands: u32,
     pub damage: i32,
     pub bonus: [i32; 4],
@@ -239,6 +240,11 @@ impl World {
     /// Events produced by the most recent `step`.
     pub fn events(&self) -> &[Event] {
         &self.events
+    }
+
+    /// Artillery shells in the air, in firing order.
+    pub fn shells(&self) -> &[ShellInFlight] {
+        &self.shells
     }
 
     /// The match so far as a replay: setup, human commands and hash checkpoints. Any driver
@@ -1140,6 +1146,7 @@ impl World {
                     owner,
                     from: pos,
                     at: tpos,
+                    fired: self.tick,
                     lands,
                     damage: w.damage,
                     bonus: w.bonus,
