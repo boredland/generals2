@@ -8,7 +8,7 @@ The engine needs no game files. EA's GPL release of *Generals/Zero Hour* in `ven
 
 What works:
 
-- **Deterministic simulation** (`crates/g2-sim`): 30 ticks/s like SAGE, 48.16 fixed point, PCG32, a generational entity arena, a per-tick state hash. No floats in state, no dependencies, no IO. About 68,000–70,000 ticks/s single-threaded (about 2,300× real time) for a 10-minute 2-player AI match on Crater Ridge, with armies, artillery and fog. Artillery made matches larger (71 entities at the end of the bench match, up from 40), and unit updates and fog now take about two thirds of a tick.
+- **Deterministic simulation** (`crates/g2-sim`): 30 ticks/s like SAGE, 48.16 fixed point, PCG32, a generational entity arena, a per-tick state hash. No floats in state, no dependencies, no IO. About 80,000–88,000 ticks/s single-threaded (about 2,800× real time) for a 10-minute 2-player Easy-AI match on Crater Ridge with armies, artillery and fog, and 45,000–48,000 for Normal AIs, whose matches are larger (121 entities at the end against 71). Unit updates take about half of a tick and fog a fifth. Straight-line checks skip sampling when a summed-area table shows the box between the two ends is clear, fog marks each row's visible run at once, and unit separation works on copied positions.
 - **Generals 2 economy**, from the archived sources:
   - Credits from supply piles, carried by collectors to a supply center.
   - Collector cap per supply center: **EU 3, APA 5, GLA 8**.

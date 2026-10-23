@@ -900,8 +900,13 @@ impl World {
     /// Whether the straight segment `a`→`b` crosses only free cells, apart from the cells at
     /// its ends (a unit may stand at, and arrive at, an obstacle's edge).
     fn straight_is_free(&self, a: Vec2, b: Vec2) -> bool {
-        let steps = (a.distance(b).floor_int() / crate::nav::CELL).max(1);
         let (ca, cb) = (self.nav.cell(a), self.nav.cell(b));
+        // Every sampled point lies between `a` and `b` on both axes, so its cell is inside
+        // the box of the end cells: a box with nothing blocked needs no sampling.
+        if !self.nav.any_blocked_in(ca, cb) {
+            return true;
+        }
+        let steps = (a.distance(b).floor_int() / crate::nav::CELL).max(1);
         (1..steps).all(|k| {
             let c = self.nav.cell(a + (b - a).scale(Fx::from_ratio(k, steps)));
             c == ca || c == cb || !self.nav.blocked(c.0, c.1)
@@ -1300,15 +1305,18 @@ impl World {
                 (!d.is_unit()).then_some((e.pos, d.radius))
             })
             .collect();
-        for i in 0..units.len() {
-            for j in i + 1..units.len() {
-                let (a, b) = (self.entities.get(units[i]).unwrap(), self.entities.get(units[j]).unwrap());
-                let (ad, bd) = (self.rules.def(a.def), self.rules.def(b.def));
-                if ad.collector().is_some() || bd.collector().is_some() {
-                    continue;
-                }
-                let min = ad.radius + bd.radius;
-                let delta = b.pos - a.pos;
+        // Positions and radii copied out so the pair loop touches no entity: pairs still run
+        // in index order and each push is seen by the pairs after it.
+        let pushed: Vec<usize> = (0..units.len())
+            .filter(|&i| self.rules.def(self.entities.get(units[i]).unwrap().def).collector().is_none())
+            .collect();
+        let mut pos: Vec<Vec2> = pushed.iter().map(|&i| self.entities.get(units[i]).unwrap().pos).collect();
+        let rad: Vec<Fx> =
+            pushed.iter().map(|&i| self.rules.def(self.entities.get(units[i]).unwrap().def).radius).collect();
+        for i in 0..pos.len() {
+            for j in i + 1..pos.len() {
+                let min = rad[i] + rad[j];
+                let delta = pos[j] - pos[i];
                 // Box test before the sqrt in `length`: nearly every pair is far apart.
                 if delta.x.abs() >= min || delta.y.abs() >= min {
                     continue;
@@ -1319,10 +1327,12 @@ impl World {
                 }
                 let dir = if dist == Fx::ZERO { Vec2::new(Fx::ONE, Fx::ZERO) } else { delta.scale(Fx::ONE / dist) };
                 let push = dir.scale((min - dist) / Fx::from_int(2));
-                let (apos, bpos) = (a.pos - push, b.pos + push);
-                self.entities.get_mut(units[i]).unwrap().pos = self.map.clamp(apos);
-                self.entities.get_mut(units[j]).unwrap().pos = self.map.clamp(bpos);
+                pos[i] = self.map.clamp(pos[i] - push);
+                pos[j] = self.map.clamp(pos[j] + push);
             }
+        }
+        for (k, &i) in pushed.iter().enumerate() {
+            self.entities.get_mut(units[i]).unwrap().pos = pos[k];
         }
         for &u in &units {
             let e = self.entities.get(u).unwrap();

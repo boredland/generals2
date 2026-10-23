@@ -82,20 +82,25 @@ impl Vision {
         let (x0, x1) = (to_cell(c.x - r), to_cell(c.x + r).min(self.w - 1));
         let (y0, y1) = (to_cell(c.y - r), to_cell(c.y + r).min(self.h - 1));
         let r2 = r.0 * r.0;
+        let cx = centre(x0, 0).x.0 - c.x.0;
+        let cell = Fx::from_int(CELL).0;
         for y in y0..=y1 {
             let dy = (centre(0, y).y - c.y).0;
             let rem = r2 - dy * dy;
             if rem < 0 {
                 continue;
             }
+            // The row's cells inside the disc are one contiguous run around the centre.
             let row = (y * self.w) as usize;
-            for x in x0..=x1 {
-                let dx = (centre(x, 0).x - c.x).0;
-                if dx * dx <= rem {
-                    self.visible[row + x as usize] = true;
-                    self.explored[row + x as usize] = true;
-                }
-            }
+            let inside = |x: i32| {
+                let dx = cx + (x - x0) as i64 * cell;
+                dx * dx <= rem
+            };
+            let Some(first) = (x0..=x1).find(|&x| inside(x)) else { continue };
+            let last = (first..=x1).rev().find(|&x| inside(x)).unwrap_or(first);
+            let span = row + first as usize..=row + last as usize;
+            self.visible[span.clone()].fill(true);
+            self.explored[span].fill(true);
         }
     }
 
@@ -188,5 +193,22 @@ mod tests {
         v.visible.fill(false);
         assert!(!v.is_visible(Vec2::from_int(50, 50)));
         assert!(v.is_explored(Vec2::from_int(50, 50)), "explored stays");
+    }
+
+    #[test]
+    fn reveal_marks_exactly_the_cells_whose_centre_is_in_range() {
+        for (c, r) in [((50, 50), 20), ((3, 97), 31), ((0, 0), 9), ((99, 10), 14), ((41, 63), 1)] {
+            let mut v = Vision::new(Fx::from_int(100), Fx::from_int(100));
+            let (c, r) = (Vec2::from_int(c.0, c.1), Fx::from_int(r));
+            v.reveal(c, r);
+            for y in 0..v.h {
+                for x in 0..v.w {
+                    let d = centre(x, y) - c;
+                    let inside =
+                        d.x.0 as i128 * d.x.0 as i128 + d.y.0 as i128 * d.y.0 as i128 <= r.0 as i128 * r.0 as i128;
+                    assert_eq!(v.visible[(y * v.w + x) as usize], inside, "{c:?} r {r:?} cell ({x}, {y})");
+                }
+            }
+        }
     }
 }

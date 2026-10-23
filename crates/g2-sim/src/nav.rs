@@ -26,6 +26,9 @@ pub struct Grid {
     pub w: i32,
     pub h: i32,
     blocked: Vec<bool>,
+    /// Summed-area table of `blocked`, `(w + 1)`×`(h + 1)`: entry `(x, y)` counts the blocked
+    /// cells above and left of cell `(x, y)`, so any box is counted in four lookups.
+    sums: Vec<u32>,
 }
 
 impl Grid {
@@ -50,7 +53,16 @@ impl Grid {
                 }
             }
         }
-        Grid { w, h, blocked }
+        let stride = (w + 1) as usize;
+        let mut sums = vec![0u32; stride * (h + 1) as usize];
+        for cy in 0..h as usize {
+            let mut row = 0;
+            for cx in 0..w as usize {
+                row += blocked[cy * w as usize + cx] as u32;
+                sums[(cy + 1) * stride + cx + 1] = sums[cy * stride + cx + 1] + row;
+            }
+        }
+        Grid { w, h, blocked, sums }
     }
 
     fn cell_of(v: Fx) -> i32 {
@@ -73,6 +85,15 @@ impl Grid {
 
     pub fn blocked(&self, cx: i32, cy: i32) -> bool {
         cx < 0 || cy < 0 || cx >= self.w || cy >= self.h || self.blocked[(cy * self.w + cx) as usize]
+    }
+
+    /// Whether any cell in the box spanned by cells `a` and `b` (inclusive, both on the grid)
+    /// is blocked.
+    pub fn any_blocked_in(&self, a: (i32, i32), b: (i32, i32)) -> bool {
+        let (x0, x1) = (a.0.min(b.0) as usize, a.0.max(b.0) as usize + 1);
+        let (y0, y1) = (a.1.min(b.1) as usize, a.1.max(b.1) as usize + 1);
+        let s = |x: usize, y: usize| self.sums.get(y * (self.w + 1) as usize + x).copied().unwrap_or(0);
+        s(x1, y1) + s(x0, y0) != s(x0, y1) + s(x1, y0)
     }
 
     /// Whether a straight walk between two cells crosses only free cells (supercover line, so
@@ -264,6 +285,24 @@ mod tests {
         let grid = Grid::new(Fx::from_int(100), Fx::from_int(100), &[], &[]);
         let to = v(90, 10);
         assert_eq!(grid.find(v(5, 95), to, |c| c.distance(to) <= Fx::from_int(2)), Some(vec![to]));
+    }
+
+    #[test]
+    fn box_test_matches_a_scan_of_every_cell() {
+        let rocks = [(v(30, 20), Fx::from_int(5)), (v(70, 60), Fx::from_int(3))];
+        let grid = Grid::new(Fx::from_int(100), Fx::from_int(80), &rocks, &[]);
+        let cells: Vec<(i32, i32)> =
+            (0..grid.h).step_by(3).flat_map(|y| (0..grid.w).step_by(3).map(move |x| (x, y))).collect();
+        let (mut hits, mut misses) = (0, 0);
+        for &a in &cells {
+            for &b in cells.iter().step_by(7) {
+                let scan =
+                    (a.1.min(b.1)..=a.1.max(b.1)).any(|y| (a.0.min(b.0)..=a.0.max(b.0)).any(|x| grid.blocked(x, y)));
+                assert_eq!(grid.any_blocked_in(a, b), scan, "{a:?}..{b:?}");
+                if scan { hits += 1 } else { misses += 1 }
+            }
+        }
+        assert!(hits > 100 && misses > 100, "both outcomes covered: {hits}/{misses}");
     }
 
     #[test]
