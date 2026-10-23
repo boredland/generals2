@@ -1,0 +1,12 @@
+archive/videos/**
+archive/local/**
+archive/wayback/**
+archive/ia/**
+!archive/**/
+!archive/**/*.md
+!archive/**/*.json
+!archive/**/*.txt
+!archive/**/*.csv
+!archive/**/*.sha256
+!archive/local/SHA256SUMS
+vendor/**/build/
