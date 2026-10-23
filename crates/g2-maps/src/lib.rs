@@ -840,16 +840,37 @@ mod tests {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../local/pre-release-maps");
         let Ok(dirs) = std::fs::read_dir(&root) else { return };
-        let mut parsed = 0;
+        let (mut parsed, mut known) = (0, 0);
         for d in dirs.flatten() {
             for f in std::fs::read_dir(d.path()).into_iter().flatten().flatten() {
                 if f.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("map")) {
                     let map = load(&std::fs::read(f.path()).unwrap()).unwrap_or_else(|e| panic!("{:?}: {e}", f.path()));
+                    // Misaligned v4/v5 offsets would still yield *some* classes; real ones are
+                    // readable texture names that cover the cells.
                     assert!(!map.texture_classes.is_empty(), "{:?}", f.path());
+                    for c in &map.texture_classes {
+                        assert!(
+                            !c.name.is_empty() && c.name.bytes().all(|b| b.is_ascii_graphic() || b == b' '),
+                            "{:?}: class name {:?}",
+                            f.path(),
+                            c.name
+                        );
+                        known += usize::from(
+                            ["grass", "sand", "dirt", "rock", "snow", "cliff", "concrete", "asphalt"]
+                                .iter()
+                                .any(|k| c.name.to_ascii_lowercase().contains(k)),
+                        );
+                    }
+                    let painted = (0..map.grid_h)
+                        .flat_map(|j| (0..map.grid_w).map(move |i| (i, j)))
+                        .filter(|&(i, j)| map.texture_class(i, j).is_some())
+                        .count();
+                    assert!(painted * 10 >= map.tiles.len() * 9, "{:?}: {painted}/{} cells", f.path(), map.tiles.len());
                     parsed += 1;
                 }
             }
         }
         assert!(parsed > 0);
+        assert!(known > 100, "{known} recognisable texture class names");
     }
 }
