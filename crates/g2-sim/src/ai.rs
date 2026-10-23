@@ -1,10 +1,19 @@
 //! Built-in opponent. It runs inside the simulation and only issues ordinary commands, so a
 //! replay of an AI match reproduces exactly without recording AI decisions separately.
+//!
+//! Both levels run the same economy and base layout. `Easy` (the original AI) sends its army
+//! in waves of five and defends with the units at home. `Normal` judges the battle first: it
+//! keeps an estimate of the enemy army it has seen, attacks only with an army that outweighs
+//! it, pulls units out of a fight they are losing, calls the field army home when the base is
+//! attacked by more than its guards can hold, moves constructors away from enemies, builds
+//! more factories when credits pile up and opens a second supply center when the base's
+//! piles run low.
 
 use crate::command::CommandKind;
 use crate::defs::{BuildingRole, Class};
-use crate::entity::{EntityId, Order, PlayerId};
+use crate::entity::{DeployState, Entity, EntityId, Order, PlayerId};
 use crate::fixed::{Fx, Vec2};
+use crate::map::AiLevel;
 use crate::world::{TICKS_PER_SECOND, World};
 
 /// Decisions every second, not every tick: cheaper and closer to a human's pace.
@@ -13,14 +22,42 @@ const THINK_INTERVAL: u32 = TICKS_PER_SECOND;
 const WAVE: usize = 5;
 /// Enemy units this close to one of our buildings trigger the whole army's defence.
 const DEFEND_RADIUS: Fx = Fx::from_int(50);
+/// A wave's own fight: enemies this close to its centre count against it.
+const BATTLE_RADIUS: Fx = Fx::from_int(60);
+/// Constructors move home when an armed enemy comes this close.
+const DANGER_RADIUS: Fx = Fx::from_int(45);
 
 pub struct Ai {
     player: PlayerId,
+    level: AiLevel,
+    /// Combat strength of the largest enemy army seen lately (see `strength`), fading by a
+    /// sixteenth every second, so an army out of sight still counts for a while.
+    enemy_seen: i64,
+    /// No new wave before this tick: set by a retreat, so the army regroups first.
+    regroup_until: u32,
+}
+
+/// What a unit adds to a fight: hit points times damage per second, so a fresh tank counts
+/// for more than a damaged one and a fast gun for more than a slow one. Unarmed units: 0.
+pub fn strength(world: &World, e: &Entity) -> i64 {
+    let d = world.rules.def(e.def);
+    let Some(w) = d.weapon_for(e.deploy == DeployState::Deployed).or(d.deploy.map(|dep| dep.weapon)) else {
+        return 0;
+    };
+    e.hp.max(0) as i64 * w.damage as i64 * TICKS_PER_SECOND as i64 / w.cooldown_ticks.max(1) as i64
 }
 
 impl Ai {
-    pub fn new(player: PlayerId) -> Ai {
-        Ai { player }
+    pub fn new(player: PlayerId, level: AiLevel) -> Ai {
+        Ai { player, level, enemy_seen: 0, regroup_until: 0 }
+    }
+
+    /// Hash input: the state a `Normal` AI decides on. `Easy` keeps none, so it adds nothing.
+    pub(crate) fn hash_into(&self, mut put: impl FnMut(u64)) {
+        if self.level != AiLevel::Easy {
+            put(self.enemy_seen as u64);
+            put(self.regroup_until as u64);
+        }
     }
 
     pub(crate) fn think(&mut self, world: &World, out: &mut Vec<CommandKind>) {
@@ -77,14 +114,48 @@ impl Ai {
                 f
             };
             let missing_factory = factories.iter().copied().find(|&f| !mine.iter().any(|e| e.def == f));
-            let want = if count(|r| matches!(r, BuildingRole::SupplyCenter { .. })) == 0 {
-                find(|d| matches!(d.role(), Some(BuildingRole::SupplyCenter { .. })))
+            let depots: Vec<&&Entity> = mine
+                .iter()
+                .filter(|e| matches!(rules.def(e.def).role(), Some(BuildingRole::SupplyCenter { .. })))
+                .collect();
+            let supply = find(|d| matches!(d.role(), Some(BuildingRole::SupplyCenter { .. })));
+            let smart = self.level != AiLevel::Easy;
+            // Normal: expand to the nearest pile with no supply center of ours close by,
+            // once the base's own pile is nearly spent; add a factory when credits pile up.
+            let expansion = || {
+                let near_ours = |p: Vec2| depots.iter().any(|d| d.pos.distance(p) <= Fx::from_int(60));
+                let spent = world
+                    .nearest_pile(cc.pos)
+                    .and_then(|p| world.entity(p))
+                    .is_none_or(|p| p.resource < 2_000 || p.pos.distance(cc.pos) > Fx::from_int(90));
+                spent
+                    .then(|| {
+                        world
+                            .entities()
+                            .filter(|e| matches!(rules.def(e.def).class, Class::SupplyPile) && e.resource >= 2_000)
+                            .filter(|e| !near_ours(e.pos))
+                            .min_by_key(|e| (e.pos.distance(cc.pos), e.id))
+                            .map(|e| e.pos)
+                    })
+                    .flatten()
+            };
+            let expand_to = if smart && depots.len() < 3 { expansion() } else { None };
+            let rich = world.player(me).credits >= 3_000
+                && mine.iter().filter(|e| rules.def(e.def).role() == Some(BuildingRole::Factory)).count() < 4;
+            let want = if depots.is_empty() {
+                supply
             } else if world.player(me).faction.uses_power() && count(|r| r == BuildingRole::PowerPlant) == 0 {
                 find(|d| d.role() == Some(BuildingRole::PowerPlant))
             } else if derricks == 0 && derrick.is_some_and(|d| self.free_well(world, d, cc.pos).is_some()) {
                 derrick
+            } else if let Some(f) = missing_factory {
+                Some(f)
+            } else if expand_to.is_some() {
+                supply
+            } else if smart && rich {
+                factories.last().copied()
             } else {
-                missing_factory.or(derrick)
+                derrick
             };
             if let Some(def) = want
                 && world.player(me).credits >= rules.def(def).cost.credits
@@ -92,10 +163,17 @@ impl Ai {
                 let pos = if Some(def) == derrick {
                     self.free_well(world, def, cc.pos)
                 } else if matches!(rules.def(def).role(), Some(BuildingRole::SupplyCenter { .. })) {
-                    // Toward the nearest pile: shorter trips, and the same layout from every
-                    // start (the spiral's fixed ring order favours one corner of the map).
-                    let toward = world.nearest_pile(cc.pos).and_then(|p| world.entity(p)).map_or(cc.pos, |p| p.pos);
-                    self.find_spot_toward(world, def, cc.pos, toward)
+                    match expand_to.filter(|_| !depots.is_empty()) {
+                        // Beside the new pile, toward home.
+                        Some(pile) => self.find_spot_toward(world, def, pile, cc.pos),
+                        // Toward the nearest pile: shorter trips, and the same layout from every
+                        // start (the spiral's fixed ring order favours one corner of the map).
+                        None => {
+                            let toward =
+                                world.nearest_pile(cc.pos).and_then(|p| world.entity(p)).map_or(cc.pos, |p| p.pos);
+                            self.find_spot_toward(world, def, cc.pos, toward)
+                        }
+                    }
                 } else {
                     self.find_spot(world, def, cc.pos)
                 };
@@ -154,10 +232,21 @@ impl Ai {
             out.push(CommandKind::Gather { units: idle, pile });
         }
 
-        // 5. Army: defend first, then attack in waves. Only visible, armed intruders call the
-        //    defence: a passing harvester or dozer is no threat, and idle guards shoot it anyway
-        //    if it comes within range.
-        let army: Vec<_> = mine.iter().filter(|e| rules.def(e.def).weapon().is_some()).collect();
+        // 5. Army.
+        let army: Vec<_> = mine.iter().copied().filter(|e| rules.def(e.def).weapon().is_some()).collect();
+        let home = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos));
+        if self.level == AiLevel::Easy {
+            self.waves(world, &mine, &army, home, out);
+        } else {
+            self.command_army(world, &mine, &army, home, out);
+        }
+    }
+
+    /// `Easy`: defend with the units at home, attack in waves of five. Only visible, armed
+    /// intruders call the defence: a passing harvester or dozer is no threat, and idle guards
+    /// shoot it anyway if it comes within range.
+    fn waves(&self, world: &World, mine: &[&Entity], army: &[&Entity], home: Option<Vec2>, out: &mut Vec<CommandKind>) {
+        let (me, rules) = (self.player, world.rules);
         let vision = world.vision(me);
         let intruder = world.entities().find(|e| {
             e.owner.is_some_and(|o| o != me)
@@ -184,10 +273,106 @@ impl Ai {
         }
         let idle: Vec<EntityId> = army.iter().filter(|e| e.order == Order::Idle).map(|e| e.id).collect();
         if idle.len() >= WAVE
-            && let Some(home) = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos))
+            && let Some(home) = home
             && let Some(target) = self.enemy_base(world, home)
         {
             out.push(CommandKind::AttackMove { units: idle, target });
+        }
+    }
+
+    /// `Normal`: weigh the fight before every move. Strength is `strength` summed; the army
+    /// attacks once it is half again as strong as the enemy army seen lately (and at least a
+    /// wave), a unit whose own fight goes worse than one to two falls back with the units
+    /// near it to regroup, and a base attacked by more than its guards can hold calls the
+    /// field army home.
+    fn command_army(
+        &mut self,
+        world: &World,
+        mine: &[&Entity],
+        army: &[&Entity],
+        home: Option<Vec2>,
+        out: &mut Vec<CommandKind>,
+    ) {
+        let (me, rules) = (self.player, world.rules);
+        let Some(home) = home else { return };
+        let vision = world.vision(me);
+        let enemies: Vec<&Entity> = world
+            .entities()
+            .filter(|e| e.owner.is_some_and(|o| o != me) && e.hp > 0 && vision.is_visible(e.pos))
+            .collect();
+        let sum = |units: &mut dyn Iterator<Item = &&Entity>| units.map(|e| strength(world, e)).sum::<i64>();
+        let seen_now = sum(&mut enemies.iter());
+        // Slow fade (a 64th per second): an army that walked out of sight still exists.
+        self.enemy_seen = (self.enemy_seen - self.enemy_seen / 64).max(seen_now);
+        let buildings: Vec<&&Entity> = mine.iter().filter(|e| rules.def(e.def).is_building()).collect();
+        let near_base = |p: Vec2| buildings.iter().any(|b| b.pos.distance(p) <= DEFEND_RADIUS);
+        let at_home = |e: &&Entity| near_base(e.pos);
+
+        // Constructors: away from armed enemies, back to the command center.
+        for c in mine.iter().filter(|e| rules.def(e.def).is_constructor()) {
+            let threatened = enemies.iter().any(|e| strength(world, e) > 0 && e.pos.distance(c.pos) <= DANGER_RADIUS);
+            if threatened && c.pos.distance(home) > Fx::from_int(20) && !matches!(c.order, Order::Move { .. }) {
+                out.push(CommandKind::Move { units: vec![c.id], target: home });
+            }
+        }
+
+        // Defence: armed intruders near the base. Guards at home fight them; if the intruders
+        // outweigh the guards, every wave comes home too.
+        let intruders: Vec<&&Entity> = enemies.iter().filter(|e| strength(world, e) > 0 && near_base(e.pos)).collect();
+        if let Some(first) = intruders.iter().min_by_key(|e| (e.pos.distance(home), e.id)) {
+            let threat = sum(&mut intruders.iter().copied());
+            let guards: Vec<&&Entity> = army.iter().filter(|e| at_home(e)).collect();
+            let free: Vec<EntityId> = guards
+                .iter()
+                .filter(|e| !matches!(e.order, Order::Attack { .. } | Order::AttackMove { engaged: Some(_), .. }))
+                .map(|e| e.id)
+                .collect();
+            if !free.is_empty() {
+                out.push(CommandKind::AttackMove { units: free, target: first.pos });
+            }
+            if sum(&mut guards.iter().copied()) < threat {
+                let away: Vec<EntityId> = army.iter().filter(|e| !at_home(e)).map(|e| e.id).collect();
+                if !away.is_empty() {
+                    out.push(CommandKind::AttackMove { units: away, target: first.pos });
+                }
+            }
+            return;
+        }
+
+        // Units in the field: each one in a fight judges the fight around itself, so two waves
+        // in different places don't average out. A losing group falls back to regroup; units
+        // already on their way home are left alone, so a retreat is issued once.
+        let out_there: Vec<&&Entity> = army.iter().filter(|e| !at_home(e)).collect();
+        let retreating = |e: &&Entity| matches!(e.order, Order::Move { target, .. } if target == home);
+        let mut fleeing: Vec<EntityId> = Vec::new();
+        for e in out_there.iter().filter(|e| !retreating(e)) {
+            let near = |p: Vec2| p.distance(e.pos) <= BATTLE_RADIUS;
+            let theirs = sum(&mut enemies.iter().filter(|x| near(x.pos)));
+            if theirs == 0 {
+                continue;
+            }
+            let ours = sum(&mut out_there.iter().copied().filter(|x| near(x.pos)));
+            if ours * 2 < theirs {
+                fleeing.push(e.id);
+            }
+        }
+        if !fleeing.is_empty() {
+            out.push(CommandKind::Move { units: fleeing, target: home });
+            self.regroup_until = world.tick() + 20 * TICKS_PER_SECOND;
+        }
+
+        // New wave: every idle armed unit, at home or left in the field by an earlier wave,
+        // once it outweighs the enemy army seen lately by half and the army isn't regrouping.
+        if world.tick() < self.regroup_until {
+            return;
+        }
+        let idle: Vec<&&Entity> = army.iter().filter(|e| e.order == Order::Idle).collect();
+        let ready = sum(&mut idle.iter().copied());
+        if idle.len() >= WAVE
+            && ready * 2 >= self.enemy_seen * 3
+            && let Some(target) = self.enemy_base(world, home)
+        {
+            out.push(CommandKind::AttackMove { units: idle.iter().map(|e| e.id).collect(), target });
         }
     }
 

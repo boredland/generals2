@@ -78,8 +78,18 @@ impl Sim {
     #[cfg(test)]
     pub fn players(factions: [g2_sim::Faction; 2], spectate: bool) -> [PlayerSetup; 2] {
         [
-            PlayerSetup { faction: factions[0], starting_credits: 5_000, ai: spectate, general: None },
-            PlayerSetup { faction: factions[1], starting_credits: 5_000, ai: true, general: None },
+            PlayerSetup {
+                faction: factions[0],
+                starting_credits: 5_000,
+                ai: spectate.then_some(g2_sim::AiLevel::Easy),
+                general: None,
+            },
+            PlayerSetup {
+                faction: factions[1],
+                starting_credits: 5_000,
+                ai: Some(g2_sim::AiLevel::Easy),
+                general: None,
+            },
         ]
     }
 

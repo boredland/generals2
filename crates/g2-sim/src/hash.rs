@@ -66,6 +66,10 @@ impl World {
         for v in &self.visions {
             v.hash_into(|x| h.u64(x));
         }
+        // Only Normal AIs carry state; Easy matches (the golden replay) hash as before.
+        for ai in self.ai.iter().flatten() {
+            ai.hash_into(|x| h.u64(x));
+        }
         h.u64(self.entities.slot_count() as u64);
         for e in self.entities.iter() {
             h.u64(e.id.index as u64);

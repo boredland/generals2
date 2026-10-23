@@ -890,7 +890,7 @@ mod tests {
     fn props_on_unexplored_ground_are_hidden_until_explored() {
         // A human local player and a passive opponent, so only our dozer explores.
         let players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false)
-            .map(|p| g2_sim::PlayerSetup { ai: false, ..p });
+            .map(|p| g2_sim::PlayerSetup { ai: None, ..p });
         let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
         let dozer = sim
             .world
@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn an_unseen_enemy_building_does_not_clear_props() {
         let players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false)
-            .map(|p| g2_sim::PlayerSetup { ai: false, ..p });
+            .map(|p| g2_sim::PlayerSetup { ai: None, ..p });
         let mut sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
         let mine = |sim: &Sim, owner| {
             sim.world
@@ -988,7 +988,7 @@ mod tests {
     #[test]
     fn a_ghost_keeps_its_props_hidden_until_seen() {
         let players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false)
-            .map(|p| g2_sim::PlayerSetup { ai: false, ..p });
+            .map(|p| g2_sim::PlayerSetup { ai: None, ..p });
         let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
         let enemy = g2_sim::PlayerId(1);
         let rules = sim.world.rules;

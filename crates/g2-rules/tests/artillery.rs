@@ -15,7 +15,12 @@ fn setup(f0: Faction, f1: Faction, ai: [bool; 2]) -> MatchSetup {
         map: crater_ridge(),
         seed: 1,
         players: [(f0, ai[0]), (f1, ai[1])]
-            .map(|(faction, ai)| PlayerSetup { faction, starting_credits: 100_000, ai, general: None })
+            .map(|(faction, ai)| PlayerSetup {
+                faction,
+                starting_credits: 100_000,
+                ai: ai.then_some(g2_sim::AiLevel::Easy),
+                general: None,
+            })
             .to_vec(),
     }
 }

@@ -424,7 +424,7 @@ mod tests {
     /// player doesn't learn of the kill; once its spot is seen again the ghost goes.
     #[test]
     fn a_building_destroyed_out_of_sight_stays_as_a_ghost_until_seen() {
-        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: false, ..p });
+        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: None, ..p });
         let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
         let enemy = PlayerId(1);
         let rules = sim.world.rules;
@@ -478,7 +478,7 @@ mod tests {
     /// starts at that point of its arc, not at the muzzle, and still lands on time.
     #[test]
     fn a_shell_partway_through_its_flight_starts_where_it_is() {
-        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: false, ..p });
+        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: None, ..p });
         let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
         let mut app = App::new();
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))

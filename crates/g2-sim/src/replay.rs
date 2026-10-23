@@ -6,12 +6,13 @@ use crate::command::{Command, CommandKind};
 use crate::defs::{DefId, Faction};
 use crate::entity::{EntityId, PlayerId};
 use crate::fixed::{Fx, Vec2};
-use crate::map::PlayerSetup;
+use crate::map::{AiLevel, PlayerSetup};
 
 const MAGIC: &[u8; 4] = b"G2RP";
-/// v2 added `map_fingerprint`, v3 each player's general; older replays still decode (fingerprint
-/// unknown, no generals).
-pub const VERSION: u16 = 3;
+/// v2 added `map_fingerprint`, v3 each player's general, v4 the AI level (0 human, 1 + level;
+/// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI). Older
+/// replays still decode.
+pub const VERSION: u16 = 4;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -51,7 +52,7 @@ impl Replay {
         for p in &self.players {
             w.u8(p.faction as u8);
             w.i64(p.starting_credits);
-            w.u8(p.ai as u8);
+            w.u8(p.ai.map_or(0, |l| 1 + l as u8));
             w.u16(p.general.map_or(NO_GENERAL, |g| g.0));
         }
         w.u32(self.length_ticks);
@@ -89,7 +90,14 @@ impl Replay {
                 2 => Faction::Gla,
                 t => return Err(DecodeError::BadTag(t)),
             };
-            let (starting_credits, ai) = (r.i64()?, r.u8()? != 0);
+            let starting_credits = r.i64()?;
+            let ai = match (version, r.u8()?) {
+                (_, 0) => None,
+                (..=3, _) => Some(AiLevel::Easy),
+                (_, 1) => Some(AiLevel::Easy),
+                (_, 2) => Some(AiLevel::Normal),
+                (_, t) => return Err(DecodeError::BadTag(t)),
+            };
             let general = match version {
                 3.. => Some(r.u16()?).filter(|&g| g != NO_GENERAL).map(crate::defs::GeneralId),
                 _ => None,

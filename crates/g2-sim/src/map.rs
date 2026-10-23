@@ -45,9 +45,31 @@ impl MapDef {
 pub struct PlayerSetup {
     pub faction: Faction,
     pub starting_credits: i64,
-    pub ai: bool,
+    /// Played by the built-in AI at this level; `None` for a human.
+    pub ai: Option<AiLevel>,
     /// The chosen general of `faction`, or `None` to play the plain faction.
     pub general: Option<crate::defs::GeneralId>,
+}
+
+/// How strong the built-in AI plays. `Easy` is the original wave AI. `Normal` judges the battle
+/// (army strength seen, threats at home, its own fights) before attacking, retreats from losing
+/// fights, guards its constructors and expands when its base's supply runs low.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+pub enum AiLevel {
+    #[default]
+    Easy,
+    Normal,
+}
+
+impl AiLevel {
+    pub const ALL: [AiLevel; 2] = [AiLevel::Easy, AiLevel::Normal];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AiLevel::Easy => "Easy",
+            AiLevel::Normal => "Normal",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]

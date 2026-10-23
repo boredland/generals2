@@ -924,7 +924,12 @@ mod tests {
             map: resolve(name).unwrap(),
             seed: 3,
             players: [Faction::Apa, Faction::Gla]
-                .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: true, general: None })
+                .map(|faction| PlayerSetup {
+                    faction,
+                    starting_credits: 5_000,
+                    ai: Some(g2_sim::AiLevel::Easy),
+                    general: None,
+                })
                 .to_vec(),
         };
         let (world, replay) = record(World::new(&setup, g2_rules::rules()), &setup, 3_000, |_| {});

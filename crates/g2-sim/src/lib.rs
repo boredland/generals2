@@ -25,7 +25,7 @@ pub use command::{Command, CommandKind, Reject};
 pub use defs::{Armour, BuildingRole, Class, Cost, Def, DefId, Faction, General, GeneralId, Modifier, Rules, Weapon};
 pub use entity::{Entity, EntityId, GatherPhase, Order, PlayerId};
 pub use fixed::{Fx, Vec2};
-pub use map::{MapDef, MatchSetup, PlayerSetup};
+pub use map::{AiLevel, MapDef, MatchSetup, PlayerSetup};
 pub use replay::Replay;
 pub use world::{Event, Player, TICKS_PER_SECOND, World};
 

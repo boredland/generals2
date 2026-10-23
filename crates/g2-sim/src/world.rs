@@ -93,7 +93,7 @@ pub struct World {
     pub(crate) entities: Entities,
     pending: Vec<Command>,
     events: Vec<Event>,
-    ai: Vec<Option<Ai>>,
+    pub(crate) ai: Vec<Option<Ai>>,
     /// Every human command processed so far, in processing order. AI commands are excluded:
     /// replays re-run the AI, so recording them would apply them twice.
     log: Vec<Command>,
@@ -162,7 +162,7 @@ impl World {
                 power_drain: 0,
                 defeated: false,
             });
-            world.ai.push(p.ai.then(|| Ai::new(owner)));
+            world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
             let spawn = setup.map.spawns[i];
             let cc = rules.command_center(p.faction);
             let cc_id = world.spawn_owned(cc, owner, spawn);

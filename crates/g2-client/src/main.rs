@@ -33,6 +33,8 @@ struct Args {
     generals: [Option<String>; 2],
     seed: u64,
     spectate: bool,
+    /// Level of every AI player in the match.
+    ai: g2_sim::AiLevel,
     reveal: bool,
     screenshot: Option<String>,
     record: Option<String>,
@@ -48,6 +50,7 @@ fn parse_args() -> Result<Args, String> {
         generals: [None, None],
         seed: 1,
         spectate: false,
+        ai: g2_sim::AiLevel::Normal,
         reveal: false,
         screenshot: None,
         record: None,
@@ -71,6 +74,13 @@ fn parse_args() -> Result<Args, String> {
             "--enemy-general" => a.generals[1] = Some(it.next().ok_or("--enemy-general needs a name")?),
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()).ok_or("--seed needs a number")?,
             "--spectate" => a.spectate = true,
+            "--ai" => {
+                a.ai = match it.next().as_deref() {
+                    Some("easy") => g2_sim::AiLevel::Easy,
+                    Some("normal") => g2_sim::AiLevel::Normal,
+                    other => return Err(format!("--ai expects easy|normal, got {other:?}")),
+                }
+            }
             "--reveal" => a.reveal = true,
             "--screenshot" => a.screenshot = Some(it.next().ok_or("--screenshot needs a path")?),
             "--record" => a.record = Some(it.next().ok_or("--record needs a path")?),
@@ -144,7 +154,12 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
         Ok(Some(id))
     };
     let player = |i: usize, ai: bool| -> Result<PlayerSetup, String> {
-        Ok(PlayerSetup { faction: args.factions[i], starting_credits: 5_000, ai, general: general(i)? })
+        Ok(PlayerSetup {
+            faction: args.factions[i],
+            starting_credits: 5_000,
+            ai: ai.then_some(args.ai),
+            general: general(i)?,
+        })
     };
     let mut sim = Sim::new(map, source, args.seed, [player(0, spectate)?, player(1, true)?]);
     sim.fog = !args.reveal;
