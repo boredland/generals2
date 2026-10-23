@@ -118,6 +118,22 @@ cargo run -p g2-tools --release -- verify match.g2rp
 
 Bevy is built with an explicit **X11-only** feature list (see the root `Cargo.toml`), because the build host lacks Wayland development headers. On a host that has them, add `"wayland"` to the list.
 
+### AppImage
+
+`scripts/build-appimage.sh` builds `dist/Generals2-x86_64.AppImage` (about 66 MB): the client compiled in a Debian 12 container, the 174 official Generals and Zero Hour maps (only their `.map` files, 45 MB unpacked) and EA's licence for them (GPL-3.0 with section 7 terms). It needs docker and network on the build machine. `--no-maps` leaves the maps out.
+
+On the target machine:
+
+```
+chmod +x Generals2-x86_64.AppImage
+./Generals2-x86_64.AppImage                          # same arguments as g2-client
+./Generals2-x86_64.AppImage --map "zh:Tournament Desert"
+```
+
+Requirements: x86-64 Linux with glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, Fedora 36+), an X11 session or XWayland, and a GPU with a Vulkan driver (Mesa or the vendor's). Nothing else is bundled: X11, Vulkan and the driver come from the host. Without FUSE, run it with `--appimage-extract-and-run`. Imported maps are found in the AppImage; `G2_MAPS_DIR` still overrides them.
+
+Verified on the build host: the AppImage renders headless (`--screenshot`) on the built-in map and on `zh:Tournament Desert` and `gen:Alpine Assault`, with the source tree's own Zero Hour maps moved out of the way so only the bundled copy could be read. It has not been run on another machine or in a window.
+
 ## Controls
 
 | Input | Action |

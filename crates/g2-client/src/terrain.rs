@@ -42,19 +42,28 @@ struct Scenery {
 
 /// Props are placed once from the map; players build anywhere. Hide every prop that overlaps a
 /// shown building's footprint (an enemy building in the fog must not clear its trees, or the
-/// gap would give it away), and (under fog) every prop on ground the local player hasn't
-/// explored, since props stand taller than the fog sheet. Props never move, so this only
-/// reruns when the shown footprints or the explored area change.
+/// gap would give it away) or a ghost's (a remembered building destroyed out of sight: its
+/// trees growing back would give the kill away), and (under fog) every prop on ground the
+/// local player hasn't explored, since props stand taller than the fog sheet. Props never
+/// move, so this only reruns when the footprints or the explored area change.
 fn clear_under_buildings(
     sim: Res<Sim>,
     mut seen: Local<(Vec<(Vec2, f32)>, usize)>,
     mut props: Query<(&Scenery, &mut Visibility)>,
 ) {
     let world = &sim.world;
+    let ghosts = world
+        .vision(crate::sim::LOCAL)
+        .memory
+        .iter()
+        .filter(|(id, _)| sim.fog && world.entity(**id).is_none())
+        .map(|(_, s)| (s.pos, s.def));
     let buildings: Vec<(Vec2, f32)> = world
         .entities()
         .filter(|e| world.rules.def(e.def).is_building() && sim.shows(e))
-        .map(|e| (to_world(e.pos).xz(), world.rules.def(e.def).radius.to_f32()))
+        .map(|e| (e.pos, e.def))
+        .chain(ghosts)
+        .map(|(pos, def)| (to_world(pos).xz(), world.rules.def(def).radius.to_f32()))
         .collect();
     let v = world.vision(crate::sim::LOCAL);
     let explored = (0..v.h).flat_map(|y| (0..v.w).map(move |x| (x, y))).filter(|&(x, y)| v.cell_state(x, y).0).count();
@@ -972,6 +981,55 @@ mod tests {
         app.world_mut().resource_mut::<Sim>().fog = false;
         app.update();
         assert_eq!(app.world().get::<Visibility>(prop), Some(&Visibility::Hidden), "shown, the foundation clears it");
+    }
+
+    /// A remembered building destroyed out of sight keeps the props on its footprint hidden
+    /// (trees growing back would give the kill away) until its spot is seen again.
+    #[test]
+    fn a_ghost_keeps_its_props_hidden_until_seen() {
+        let players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false)
+            .map(|p| g2_sim::PlayerSetup { ai: false, ..p });
+        let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+        let enemy = g2_sim::PlayerId(1);
+        let rules = sim.world.rules;
+        let dozer = sim
+            .world
+            .entities()
+            .find(|e| e.owner == Some(crate::sim::LOCAL) && rules.def(e.def).is_constructor())
+            .unwrap()
+            .id;
+        let cc = sim.world.entities().find(|e| e.owner == Some(enemy) && rules.def(e.def).is_building()).unwrap();
+        let (cc, cc_pos) = (cc.id, cc.pos);
+        let home = sim.world.entity(dozer).unwrap().pos;
+        let mut app = App::new();
+        app.insert_resource(sim).add_systems(Update, clear_under_buildings);
+        let prop =
+            app.world_mut().spawn((Scenery { at: to_world(cc_pos).xz(), radius: 1.0 }, Visibility::default())).id();
+        let step_until = |app: &mut App, done: &dyn Fn(&Sim) -> bool, what: &str| {
+            for _ in 0..30 * 120 {
+                if done(app.world().resource::<Sim>()) {
+                    return;
+                }
+                app.world_mut().resource_mut::<Sim>().world.step();
+            }
+            panic!("timed out: {what}");
+        };
+        let order = |app: &mut App, target| {
+            app.world_mut().resource_mut::<Sim>().order(g2_sim::CommandKind::Move { units: vec![dozer], target });
+        };
+        let near = cc_pos - g2_sim::Vec2::from_int(14, 14);
+        order(&mut app, near);
+        step_until(&mut app, &|s| s.remembers(cc), "scouted");
+        order(&mut app, home);
+        step_until(&mut app, &|s| !s.sees(s.world.entity(cc).unwrap()), "out of sight");
+        app.world_mut().resource_mut::<Sim>().world.submit(enemy, g2_sim::CommandKind::Surrender);
+        step_until(&mut app, &|s| s.world.entity(cc).is_none(), "destroyed");
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(prop), Some(&Visibility::Hidden), "the ghost keeps its clearing");
+        order(&mut app, near);
+        step_until(&mut app, &|s| !s.remembers(cc), "seen again");
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(prop), Some(&Visibility::Inherited), "trees back once seen");
     }
 
     fn imported(name: &str) -> Sim {
