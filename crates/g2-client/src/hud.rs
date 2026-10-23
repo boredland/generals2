@@ -404,7 +404,8 @@ fn overlays(
             commands.spawn((
                 abs(px(screen.x - 50.0), auto(), px(screen.y - 44.0), auto()),
                 text(&format!("COLLECTORS {n}/{cap}"), 12.0, color),
-                TextShadow::default(),
+                // A tight shadow for contrast; the 4 px default reads as a doubled label at 12 px.
+                TextShadow { offset: Vec2::splat(1.0), ..default() },
                 WorldLabel,
             ));
         }

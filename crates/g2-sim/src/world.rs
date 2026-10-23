@@ -152,6 +152,7 @@ impl World {
     pub fn replay(&self, setup: &MatchSetup) -> crate::replay::Replay {
         crate::replay::Replay {
             map: self.map.name.to_owned(),
+            map_fingerprint: Some(self.map.fingerprint()),
             seed: setup.seed,
             players: setup.players.clone(),
             length_ticks: self.tick,

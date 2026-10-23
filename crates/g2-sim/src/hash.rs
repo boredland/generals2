@@ -18,6 +18,25 @@ impl Fnv {
     }
 }
 
+impl crate::map::MapDef {
+    /// Fingerprint of everything the sim reads from a map. Replays store it, so a changed map
+    /// file (a submodule bump, an importer change) is reported as such, not as a divergence.
+    pub fn fingerprint(&self) -> u64 {
+        let mut h = Fnv(0xcbf2_9ce4_8422_2325);
+        h.i64(self.width.0);
+        h.i64(self.height.0);
+        for list in [&self.spawns.iter().map(|&p| (p, 0)).collect::<Vec<_>>(), &self.supply_piles, &self.oil_wells] {
+            h.u64(list.len() as u64);
+            for &(p, amount) in list {
+                h.i64(p.x.0);
+                h.i64(p.y.0);
+                h.i64(amount);
+            }
+        }
+        h.0
+    }
+}
+
 impl World {
     pub fn state_hash(&self) -> u64 {
         let mut h = Fnv(0xcbf2_9ce4_8422_2325);

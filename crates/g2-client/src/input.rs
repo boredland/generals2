@@ -45,13 +45,17 @@ impl Plugin for InputPlugin {
     }
 }
 
-/// Cursor ray → rendered ground. Marches the ray against the terrain height (flat at Y = 0
-/// on the built-in map), then refines the crossing by bisection.
+/// Cursor ray → rendered ground.
 fn cursor_ground(sim: &Sim, window: &Window, cam: (&Camera, &GlobalTransform)) -> Option<Vec3> {
     let ray = cam.0.viewport_to_world(cam.1, window.cursor_position()?).ok()?;
-    let dir = *ray.direction;
+    ray_ground(sim, ray.origin, *ray.direction)
+}
+
+/// First crossing of a ray with the rendered ground (flat at Y = 0 on the built-in map):
+/// marched in 2-unit steps, then refined by bisection.
+fn ray_ground(sim: &Sim, origin: Vec3, dir: Vec3) -> Option<Vec3> {
     let above = |t: f32| {
-        let p = ray.origin + dir * t;
+        let p = origin + dir * t;
         p.y - sim.ground_y(p.x, p.z)
     };
     let step = 2.0;
@@ -62,7 +66,7 @@ fn cursor_ground(sim: &Sim, window: &Window, cam: (&Camera, &GlobalTransform)) -
                 let mid = (lo + t) / 2.0;
                 if above(mid) > 0.0 { lo = mid } else { t = mid }
             }
-            let p = ray.origin + dir * t;
+            let p = origin + dir * t;
             return Some(Vec3::new(p.x, sim.ground_y(p.x, p.z), p.z));
         }
         lo = t;
@@ -255,5 +259,34 @@ fn draw_overlays(
             Err(_) => (ground, Color::srgb(1.0, 0.25, 0.2)),
         };
         gizmos.circle(flat(pos), sim.world.rules.def(def).radius.to_f32(), color);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A camera ray aimed at a point lands on that point, on the high and low ground of an
+    /// imported map, not on the Y = 0 plane below or above it.
+    #[test]
+    fn cursor_ray_lands_on_imported_terrain() {
+        let name = "zh:Defcon6";
+        let file = g2_maps::load_file_named(&g2_maps::vendored_root(), name).unwrap();
+        let map = file.to_map_def(name);
+        let sim = Sim::new(map, Some(file), 1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true);
+        let (w, h) = (sim.world.map.width.to_f32(), sim.world.map.height.to_f32());
+        let mut relief = (f32::MAX, f32::MIN);
+        for j in 1..20 {
+            for i in 1..20 {
+                let (x, z) = (w * i as f32 / 20.0, h * j as f32 / 20.0);
+                let target = Vec3::new(x, sim.ground_y(x, z), z);
+                relief = (relief.0.min(target.y), relief.1.max(target.y));
+                // From where the in-game camera would sit: up and back along +Z, looking down.
+                let origin = target + Vec3::new(0.0, 90.0, 55.0);
+                let hit = ray_ground(&sim, origin, (target - origin).normalize()).unwrap();
+                assert!(hit.distance(target) < 0.5, "aimed at {target}, hit {hit}");
+            }
+        }
+        assert!(relief.1 - relief.0 > 10.0, "Defcon6 should have relief, got {relief:?}");
     }
 }

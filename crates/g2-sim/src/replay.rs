@@ -9,13 +9,16 @@ use crate::fixed::{Fx, Vec2};
 use crate::map::PlayerSetup;
 
 const MAGIC: &[u8; 4] = b"G2RP";
-pub const VERSION: u16 = 1;
+/// v2 added `map_fingerprint`; v1 replays still decode (fingerprint unknown).
+pub const VERSION: u16 = 2;
 /// Hash checkpoint spacing in ticks.
 pub const HASH_INTERVAL: u32 = 30;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Replay {
     pub map: String,
+    /// `MapDef::fingerprint` at recording time; `None` for v1 replays.
+    pub map_fingerprint: Option<u64>,
     pub seed: u64,
     pub players: Vec<PlayerSetup>,
     pub length_ticks: u32,
@@ -39,6 +42,7 @@ impl Replay {
         w.0.extend_from_slice(MAGIC);
         w.u16(VERSION);
         w.bytes(self.map.as_bytes());
+        w.u64(self.map_fingerprint.unwrap_or(0));
         w.u64(self.seed);
         w.u32(self.players.len() as u32);
         for p in &self.players {
@@ -67,10 +71,11 @@ impl Replay {
             return Err(DecodeError::BadMagic);
         }
         let version = r.u16()?;
-        if version != VERSION {
+        if !(1..=VERSION).contains(&version) {
             return Err(DecodeError::UnsupportedVersion(version));
         }
         let map = String::from_utf8(r.bytes()?.to_vec()).map_err(|_| DecodeError::BadUtf8)?;
+        let map_fingerprint = if version >= 2 { Some(r.u64()?) } else { None };
         let seed = r.u64()?;
         let mut players = Vec::new();
         for _ in 0..r.u32()? {
@@ -96,7 +101,23 @@ impl Replay {
         if r.at != bytes.len() {
             return Err(DecodeError::Truncated);
         }
-        Ok(Replay { map, seed, players, length_ticks, commands, hashes })
+        Ok(Replay { map, map_fingerprint, seed, players, length_ticks, commands, hashes })
+    }
+}
+
+impl Replay {
+    /// Whether `map` is the map this replay was recorded on. v1 replays carry no fingerprint and
+    /// always pass. Call before `verify_replay`, so a changed map file is not misreported as a
+    /// simulation divergence at tick 0.
+    pub fn check_map(&self, map: &crate::map::MapDef) -> Result<(), String> {
+        match self.map_fingerprint {
+            Some(f) if f != map.fingerprint() => Err(format!(
+                "map {:?} changed since this replay was recorded (fingerprint {f:016x}, now {:016x})",
+                self.map,
+                map.fingerprint()
+            )),
+            _ => Ok(()),
+        }
     }
 }
 

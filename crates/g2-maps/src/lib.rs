@@ -251,10 +251,11 @@ impl MapFile {
                     continue;
                 }
             }
-            // The template name may carry a "Faction/Sub/" path prefix.
+            // The template name may carry a "Faction/Sub/" path prefix. Amounts are
+            // `StartingBoxes` × `ValuePerSupplyBox` (75) from GamePatch2's INI, not retail 1.04.
             let template = o.name.rsplit('/').next().unwrap_or(&o.name);
             let supply = match template {
-                "SupplyDock" | "SupplyWarehouse" => Some(30_000),
+                "SupplyDock" | "SupplyWarehouse" | "ToxinRepository" => Some(30_000),
                 "SupplyPile" => Some(11_250),
                 "SupplyPileSmall" => Some(3_750),
                 _ => None,
@@ -288,7 +289,8 @@ impl MapFile {
         if w <= 0 || h <= 0 || w > 4096 || h > 4096 {
             return Err(Error::BadChunk("height map size"));
         }
-        let border = c.i32()?;
+        // The border field exists from version 3; version 2 maps have none.
+        let border = if version >= 3 { c.i32()? } else { 0 };
         if border < 0 || 2 * border >= w || 2 * border >= h {
             return Err(Error::BadChunk("height map border"));
         }
@@ -660,9 +662,13 @@ pub struct Entry {
     pub path: std::path::PathBuf,
 }
 
-/// Root of the vendored EA map sources, relative to the workspace.
+/// Root of the map sources: `$G2_MAPS_DIR` if set (a `CnC_Modding_Support` checkout, for a
+/// binary run outside this source tree), else the vendored submodule of this workspace.
 pub fn vendored_root() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/ea/CnC_Modding_Support")
+    match std::env::var_os("G2_MAPS_DIR") {
+        Some(dir) => dir.into(),
+        None => std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/ea/CnC_Modding_Support"),
+    }
 }
 
 /// Every official multiplayer and campaign map under `root` (a `CnC_Modding_Support`
@@ -796,8 +802,14 @@ mod tests {
         let (world, replay) = record(World::new(&setup, g2_rules::rules()), &setup, 3_000, |_| {});
         let decoded = Replay::decode(&replay.encode()).unwrap();
         assert_eq!(decoded.map, name);
-        let end = verify_replay(&decoded, resolve(&decoded.map).unwrap(), g2_rules::rules());
+        let map = resolve(&decoded.map).unwrap();
+        decoded.check_map(&map).unwrap();
+        let end = verify_replay(&decoded, map.clone(), g2_rules::rules());
         assert_eq!(end, Ok(world.state_hash()));
+        // The same name on a different map (here: one pile moved) is reported, not simulated.
+        let mut moved = map;
+        moved.supply_piles[0].0.x.0 += 1;
+        assert!(decoded.check_map(&moved).unwrap_err().contains("changed since"));
         // Both AIs found resources on the imported map within 100 seconds.
         assert!(world.players().iter().all(|p| p.credits != 5_000), "{:?}", world.players());
     }

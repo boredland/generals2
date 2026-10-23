@@ -102,6 +102,7 @@ fn load(path: Option<&String>) -> Result<Replay, String> {
 fn verify(args: &[String]) -> Result<(), String> {
     let replay = load(args.first())?;
     let map = resolve(&replay.map)?;
+    replay.check_map(&map)?;
     let start = Instant::now();
     match verify_replay(&replay, map, rules()) {
         Ok(hash) => {
@@ -151,6 +152,7 @@ fn bench(args: &[String]) -> Result<(), String> {
 fn summary(args: &[String]) -> Result<(), String> {
     let replay = load(args.first())?;
     let map = resolve(&replay.map)?;
+    replay.check_map(&map)?;
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
     let mut world = World::new(&setup, rules());
     for c in &replay.commands {

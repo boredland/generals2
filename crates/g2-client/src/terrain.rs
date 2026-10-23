@@ -185,7 +185,14 @@ impl<'a> Layout<'a> {
         match &sim.source {
             // The original road network, as straight segments between road points.
             Some(file) => {
+                // Real roads only; markings (arrows, words, parking lines, caution areas)
+                // are decals in the original and would read as dirt tracks here.
+                const ROADS: [&str; 7] = ["road", "lane", "path", "cobble", "gravel", "sidewalk", "track"];
                 for r in file.roads() {
+                    let n = r.name.to_ascii_lowercase();
+                    if !ROADS.iter().any(|k| n.contains(k)) {
+                        continue;
+                    }
                     let a = Vec2::from(file.to_world(r.a.0, r.a.1));
                     let b = Vec2::from(file.to_world(r.b.0, r.b.1));
                     roads.push(Road::new(a, b, 0.0));
@@ -230,13 +237,17 @@ impl<'a> Layout<'a> {
         let b = self.border(p);
         let ridge = b * b * (14.0 + fbm(p.x * 0.05, p.y * 0.05, 4, 11) * 22.0);
         if let Some(file) = self.source {
-            // Inside: the original relief. Outside: the relief around the nearest edge point,
-            // averaged over a window that widens with distance (5×5 samples, clamped into the
-            // map), plus our ridge. Continuous at the edge and at corners, and the source's
-            // border cliffs soften instead of streaking outward.
+            // Inside: exactly the original relief, which models are placed on. Outside: the
+            // relief around the nearest edge point, averaged over a window that widens with
+            // distance (5×5 samples, clamped into the map), plus our ridge. Continuous at the
+            // edge and corners; the source's border cliffs soften instead of streaking outward.
             let size = Vec2::new(self.width, self.height);
             let edge = p.clamp(Vec2::ZERO, size);
-            let spread = p.distance(edge) * 0.5;
+            let out = p.distance(edge);
+            if out == 0.0 {
+                return file.ground_y(p.x, p.y);
+            }
+            let spread = out * 0.5;
             let mut sum = 0.0;
             for j in -2..=2 {
                 for i in -2..=2 {
@@ -244,21 +255,28 @@ impl<'a> Layout<'a> {
                     sum += file.ground_y(q.x, q.y);
                 }
             }
-            return sum / 25.0 + ridge;
+            // Ridge rises from zero at the edge (`border` already ramps up inside the edge).
+            let rise = (out / 40.0).min(1.0);
+            return sum / 25.0 + ridge * rise;
         }
         // Gentle undulation only; the sim ground is flat, so keep it within ±0.3.
         let undulate = (fbm(p.x * 0.02, p.y * 0.02, 3, 5) - 0.5) * 0.6 * (1.0 - b);
         ridge + undulate
     }
 
-    /// Painted ground under `p`: the imported map's texture class, or `None` for procedural.
-    /// The lookup is warped by a few units of noise, so class boundaries come out ragged and
-    /// organic instead of following the source's square cells (we don't read its blend tiles).
-    fn ground(&self, p: Vec2) -> Option<Ground> {
+    /// Painted ground around `p` as weights per `Ground` (Grass, Dirt, Sand, Rock, Snow, Paved).
+    /// Four noise-warped samples ±1.5 units apart are averaged, so class boundaries are ragged
+    /// and soft instead of following the source's square cells (we don't read its blend tiles).
+    fn ground_mix(&self, p: Vec2) -> Option<[f32; 6]> {
         let file = self.source?;
         let warp = Vec2::new(fbm(p.x * 0.09, p.y * 0.09, 3, 71) - 0.5, fbm(p.x * 0.09, p.y * 0.09, 3, 73) - 0.5) * 9.0;
-        let q = p + warp;
-        Some(file.class_at(q.x, q.y).map_or(Ground::Dirt, Ground::of))
+        let mut mix = [0.0; 6];
+        for o in [Vec2::new(-1.5, -1.5), Vec2::new(1.5, -1.5), Vec2::new(-1.5, 1.5), Vec2::new(1.5, 1.5)] {
+            let q = p + warp + o;
+            let g = file.class_at(q.x, q.y).map_or(Ground::Dirt, Ground::of);
+            mix[g as usize] += 0.25;
+        }
+        Some(mix)
     }
 
     /// Steepness of the rendered ground at `p` (rise per unit run).
@@ -281,22 +299,24 @@ impl<'a> Layout<'a> {
         let big = fbm(p.x * 0.012, p.y * 0.012, 4, 21);
         let fine = fbm(p.x * 0.25, p.y * 0.25, 3, 31);
         let grass = ochre.lerp(olive, fbm(p.x * 0.04, p.y * 0.04, 3, 41).powf(0.8));
-        let mut c = match self.ground(p) {
+        let mut c = match self.ground_mix(p) {
             // Mostly dry grass, with large dirt patches and fine breakup.
             None => {
                 let grass_amt = ((big - 0.18) * 4.0 + (fine - 0.5) * 1.4).clamp(0.0, 1.0);
                 dirt.lerp(grass, grass_amt)
             }
             // Imported map: the original painting, re-coloured in our palette with our breakup.
-            Some(g) => {
-                let base = match g {
-                    Ground::Grass => grass,
-                    Ground::Dirt => dirt.lerp(grass, ((big - 0.45) * 2.0).clamp(0.0, 0.5)),
-                    Ground::Sand => sand,
-                    Ground::Rock => rock * (0.8 + fine * 0.5),
-                    Ground::Snow => snow,
-                    Ground::Paved => paved,
-                };
+            // Sand sits close to dirt so desert/grass edges read as savanna, not camouflage.
+            Some(mix) => {
+                let colours = [
+                    grass,
+                    dirt.lerp(grass, ((big - 0.45) * 2.0).clamp(0.0, 0.5)),
+                    sand.lerp(dirt, 0.35),
+                    rock * (0.8 + fine * 0.5),
+                    snow,
+                    paved,
+                ];
+                let base = mix.iter().zip(colours).fold(Vec3::ZERO, |acc, (&w, col)| acc + col * w);
                 // Steep faces read as cliffs whatever was painted on them.
                 let cliff = ((self.slope(p) - 0.6) * 2.0).clamp(0.0, 1.0);
                 base.lerp(rock * (0.7 + fine * 0.6), cliff)

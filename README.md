@@ -17,7 +17,7 @@ What works:
   - Constructors place foundations that must be worked on, production queues with full refunds on cancel, and surrender/defeat.
 - **Three factions** (`crates/g2-rules`): EU, APA and GLA. Command center, constructor, supply center, collector, power plant and oil derrick each. Sourced numbers are tagged `// src:`, everything else is a placeholder.
 - **Built-in AI** that plays the economy. It runs inside the sim and issues ordinary commands, so AI matches replay exactly.
-- **Replays**: setup + human commands + a state hash every second. `g2-tools verify` re-simulates a replay and names the first tick that diverges. A committed golden replay fails the test suite on any unintended behaviour change.
+- **Replays**: setup + human commands + a state hash every second, plus a fingerprint of the map, so a replay whose map file has since changed is reported as such instead of as a divergence. `g2-tools verify` re-simulates a replay and names the first tick that diverges. A committed golden replay fails the test suite on any unintended behaviour change.
 - **Bevy 0.20 client** (`crates/g2-client`):
   - RTS camera, selection, and context orders (move, gather, help build).
   - Build placement with validity preview (derricks snap to wells).
@@ -52,8 +52,8 @@ Not yet:
 
 - Both frames above were rendered on this host, and the mirror check passed for each (30/30 and 31/31 entities, none misplaced). Their HUD totals match `g2-tools record --seed 1` for the same matches: EU at 5,400 ticks shows `$2250`, oil 1045, power 40/210; APA at 9,000 ticks shows `$6500`, oil 2240, power 40/210.
 - A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
-- Imported maps: all 174 official maps parse in a test; a recorded AI match on `zh:Tournament Desert` round-trips through a replay and verifies to the same hash; terrain tests check that starts sit on the battlefield level, original scenery stays off bases and water, the ridge past the edge has no steps, and water surfaces stay inside the map. Tournament Desert, Alpine Assault, Golden Oasis, Defcon6 and Winding River were rendered headless with the mirror check passing (models on terrain, none misplaced). The built-in Crater Ridge frame is byte-identical to before.
-- The **interactive** window (mouse, keyboard, camera) has not been exercised. The build host has no display.
+- Imported maps: all 174 official maps parse in a test; a recorded AI match on `zh:Tournament Desert` round-trips through a replay and verifies to the same hash, and a moved resource is caught as a changed map; terrain tests check that starts sit on the battlefield level, original scenery stays off bases and water, the ridge past the edge has no steps, and water surfaces stay inside the map; a test aims camera rays at 361 points on Defcon6's terraces and checks each lands within 0.5 units. Tournament Desert, Alpine Assault, Golden Oasis, Defcon6 and Winding River were rendered headless with the mirror check passing (models on terrain, none misplaced): Tournament Desert 37/37, Winding River 27/27 for the frames above.
+- The **interactive** window (mouse, keyboard, camera) has not been exercised; the build host has no display. That now includes code added for imported maps that only the window runs: clicking onto hills (the ray march itself is unit-tested) and the camera easing up and down terrain while panning.
 - **GPU on the build host:** the discrete amdgpu device (`c7:00.0`, MI50) is wedged; opening it hangs the process in D state. Run every GPU command through `scripts/igpu-only/run.sh`. It hides the MI50's DRM nodes with an `LD_PRELOAD` shim, so only the integrated Radeon (`c8:00.0`, `renderD128`) is enumerated. strace confirms `renderD128` is the only device node opened:
 
   ```
@@ -135,4 +135,4 @@ The difference: Strong Hold reimplements an existing game and checks it against 
 
 ## Legal
 
-`vendor/` contains GPL-3.0 code; the EA release carries GPL §7 additional terms (no trademark use, no claims of EA affiliation, modifications must be marked). `archive/` bulk data is local-only and never committed or redistributed. `archive/docs/` (wiki text, press pages, concept art) **is** committed for research, so this repository must stay private, or that directory must be removed from history, before any public push.
+`vendor/` contains GPL-3.0 code; the EA release carries GPL §7 additional terms (no trademark use, no claims of EA affiliation, modifications must be marked). No code from it is in `crates/`; `crates/g2-maps` is our own reader written from the file format. Imported map data is read from `vendor/ea/CnC_Modding_Support` (or `$G2_MAPS_DIR`, for a binary run outside this tree) at runtime and never copied into the repository. `archive/` bulk data is local-only and never committed or redistributed. `archive/docs/` (wiki text, press pages, concept art) **is** committed for research, so this repository must stay private, or that directory must be removed from history, before any public push.
