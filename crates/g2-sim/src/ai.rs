@@ -142,11 +142,13 @@ impl Ai {
             out.push(CommandKind::Gather { units: idle, pile });
         }
 
-        // 5. Army: defend first, then attack in waves.
+        // 5. Army: defend first, then attack in waves. Only armed intruders call the defence: a
+        //    passing harvester or dozer is no threat, and idle guards shoot it anyway if it
+        //    comes within range.
         let army: Vec<_> = mine.iter().filter(|e| rules.def(e.def).weapon().is_some()).collect();
         let intruder = world.entities().find(|e| {
             e.owner.is_some_and(|o| o != me)
-                && rules.def(e.def).is_unit()
+                && rules.def(e.def).weapon().is_some()
                 && mine.iter().any(|b| rules.def(b.def).is_building() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
         });
         if let Some(intruder) = intruder {

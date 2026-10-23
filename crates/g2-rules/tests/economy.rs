@@ -101,23 +101,25 @@ fn harvesters_carry_supplies_from_pile_to_center() {
     assert_eq!(delivered, earned, "every credit earned is reported as a delivery");
 }
 
-/// The AI packs its first buildings tightly around the command center. Every one of its
-/// collectors must still reach the pile and come back: none may sit still for 20 seconds while
-/// it has a gather order. (Before pathfinding, EU harvesters wedged between buildings; with
-/// routes but unit-unit pushing, two APA harvesters met head-on in a gap and blocked each other.)
-/// The opponent is passive, so no attack raids the measured economy.
+/// Collectors must route between tightly packed buildings: none may sit still for 20 seconds
+/// on a gather run. The layout is pinned to the one that exposed two bugs, the AI's original
+/// placement around Crater Ridge's first start: supply center (60,60), power plant (80,64),
+/// command center (80,80), pile at (130,60), so every trip passes the 6.4-unit gap between
+/// supply center and power plant. Before pathfinding, EU harvesters wedged in it; with routes
+/// but unit-unit pushing, APA harvesters met head-on there and blocked each other. (The AI no
+/// longer builds this layout, so the test places the buildings itself.)
 #[test]
-fn ai_collectors_route_between_tightly_packed_buildings() {
-    for faction in Faction::ALL {
-        let setup = MatchSetup {
-            map: crater_ridge(),
-            seed: 1,
-            players: vec![
-                PlayerSetup { faction, starting_credits: 5_000, ai: true, general: None },
-                PlayerSetup { faction: Faction::Gla, starting_credits: 5_000, ai: false, general: None },
-            ],
-        };
-        let mut w = World::new(&setup, rules());
+fn collectors_route_between_tightly_packed_buildings() {
+    for (faction, ctor, depot_def, power, collector, count) in [
+        (Faction::Eu, EU_DOZER, EU_SUPPLY, EU_POWER, EU_HARVESTER, 3),
+        (Faction::Apa, APA_CRANE, APA_SUPPLY, APA_POWER, APA_HARVESTER, 5),
+    ] {
+        let mut w = world(faction, 100_000);
+        let depot = build(&mut w, ctor, depot_def, Vec2::from_int(60, 60));
+        build(&mut w, ctor, power, Vec2::from_int(80, 64));
+        for _ in 0..count {
+            assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: collector }), vec![]);
+        }
         let mut still: std::collections::BTreeMap<EntityId, (Vec2, u32)> = Default::default();
         let mut delivered = 0;
         for t in 0..30 * 300 {
@@ -715,4 +717,22 @@ fn destroying_every_building_and_constructor_defeats_a_player() {
     }
     assert!(w.player(PlayerId(1)).defeated);
     assert_eq!(w.winner(), Some(P0));
+    // The whole match, attack orders included, survives encoding and replays to the same state.
+    let setup = MatchSetup {
+        map: crater_ridge(),
+        seed: 1,
+        players: w
+            .players()
+            .iter()
+            .map(|p| PlayerSetup { faction: p.faction, starting_credits: 100_000, ai: false, general: None })
+            .collect(),
+    };
+    w.submit(P0, CommandKind::AttackMove { units: vec![tank], target: Vec2::from_int(200, 200) });
+    run(&mut w, g2_sim::world::INPUT_DELAY + 1);
+    let replay = w.replay(&setup);
+    assert!(replay.commands.iter().any(|c| matches!(c.kind, CommandKind::Attack { .. })));
+    assert!(replay.commands.iter().any(|c| matches!(c.kind, CommandKind::AttackMove { .. })));
+    let decoded = g2_sim::Replay::decode(&replay.encode()).unwrap();
+    assert_eq!(decoded, replay);
+    assert_eq!(g2_sim::verify_replay(&decoded, crater_ridge(), rules()), Ok(w.state_hash()));
 }
