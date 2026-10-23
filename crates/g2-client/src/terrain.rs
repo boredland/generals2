@@ -11,7 +11,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::sim::Sim;
+use crate::sim::{Sim, to_world};
 
 /// Vertex spacing in world units.
 const CELL: f32 = 2.0;
@@ -23,8 +23,38 @@ pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_terrain);
+        app.add_systems(Startup, spawn_terrain).add_systems(Update, clear_under_buildings);
     }
+}
+
+/// A scatter prop with its ground footprint, so buildings placed later can hide it.
+#[derive(Component)]
+struct Scenery {
+    at: Vec2,
+    radius: f32,
+}
+
+/// Props are placed once from the map; players build anywhere. Hide every prop that overlaps a
+/// building footprint. Props never move, so this only reruns when the set of footprints changes.
+fn clear_under_buildings(
+    sim: Res<Sim>,
+    mut seen: Local<Vec<(Vec2, f32)>>,
+    mut props: Query<(&Scenery, &mut Visibility)>,
+) {
+    let world = &sim.world;
+    let buildings: Vec<(Vec2, f32)> = world
+        .entities()
+        .filter(|e| world.rules.def(e.def).is_building())
+        .map(|e| (to_world(e.pos).xz(), world.rules.def(e.def).radius.to_f32()))
+        .collect();
+    if buildings == *seen {
+        return;
+    }
+    for (prop, mut vis) in &mut props {
+        let covered = buildings.iter().any(|&(c, r)| c.distance(prop.at) < r + prop.radius);
+        vis.set_if_neq(if covered { Visibility::Hidden } else { Visibility::Inherited });
+    }
+    *seen = buildings;
 }
 
 // ---- deterministic value noise ------------------------------------------------------------
@@ -333,7 +363,11 @@ fn spawn_terrain(
             Prop::Acacia => {
                 let h = 4.0 * scale;
                 commands
-                    .spawn((Transform::from_translation(base).with_rotation(rot), Visibility::default()))
+                    .spawn((
+                        Scenery { at: p, radius: 3.6 * scale },
+                        Transform::from_translation(base).with_rotation(rot),
+                        Visibility::default(),
+                    ))
                     .with_children(|t| {
                         t.spawn((
                             Mesh3d(trunk.clone()),
@@ -355,6 +389,7 @@ fn spawn_terrain(
             }
             Prop::Bush => {
                 commands.spawn((
+                    Scenery { at: p, radius: 1.8 * scale },
                     Mesh3d(crown.clone()),
                     MeshMaterial3d(canopy_dark.clone()),
                     Transform::from_translation(base + Vec3::Y * 0.6 * scale)
@@ -364,6 +399,7 @@ fn spawn_terrain(
             }
             Prop::Rock => {
                 commands.spawn((
+                    Scenery { at: p, radius: 2.4 * scale },
                     Mesh3d(rock.clone()),
                     MeshMaterial3d(stone.clone()),
                     Transform::from_translation(base + Vec3::Y * 0.3)
@@ -438,5 +474,29 @@ mod tests {
                 assert!(c.distance(p) > r);
             }
         }
+    }
+
+    #[test]
+    fn props_under_a_building_are_hidden_and_return_when_it_is_gone() {
+        let sim = Sim::new(1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true);
+        let cc = sim.world.entities().find(|e| sim.world.rules.def(e.def).is_building()).unwrap();
+        let (at, owner) = (to_world(cc.pos).xz(), cc.owner.unwrap());
+        let mut app = App::new();
+        app.insert_resource(sim).add_systems(Update, clear_under_buildings);
+        let under = app.world_mut().spawn((Scenery { at, radius: 1.0 }, Visibility::default())).id();
+        let far =
+            app.world_mut().spawn((Scenery { at: at + Vec2::splat(200.0), radius: 1.0 }, Visibility::default())).id();
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(under), Some(&Visibility::Hidden));
+        assert_eq!(app.world().get::<Visibility>(far), Some(&Visibility::Inherited));
+        // Surrender removes all of that player's buildings at the next cleanup.
+        let mut sim = app.world_mut().resource_mut::<Sim>();
+        sim.world.submit(owner, g2_sim::CommandKind::Surrender);
+        for _ in 0..10 {
+            sim.world.step();
+        }
+        assert!(sim.world.entities().all(|e| e.owner != Some(owner)));
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(under), Some(&Visibility::Inherited));
     }
 }

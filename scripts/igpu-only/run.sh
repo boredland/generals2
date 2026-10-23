@@ -14,10 +14,12 @@ fi
 hide_pci=0000:c7:00.0
 use_pci=0000:c8:00.0
 hide=()
-for n in /sys/class/drm/card[0-9]* /sys/class/drm/renderD*; do
+for n in /sys/class/drm/card[0-9] /sys/class/drm/card[0-9][0-9] /sys/class/drm/renderD*; do
   [ -e "$n/device" ] || continue
   [ "$(basename "$(readlink -f "$n/device")")" = "$hide_pci" ] && hide+=("$(basename "$n")")
 done
+# An empty list would hide nothing and let the driver reach the wedged card again.
+[ ${#hide[@]} -gt 0 ] || { echo "no DRM nodes found for $hide_pci; refusing to run unshielded" >&2; exit 1; }
 [ "$(basename "$(readlink -f /sys/class/drm/renderD128/device)")" = "$use_pci" ] \
   || { echo "renderD128 is not $use_pci; refusing to guess" >&2; exit 1; }
 
