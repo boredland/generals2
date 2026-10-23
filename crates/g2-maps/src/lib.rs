@@ -253,9 +253,12 @@ impl MapFile {
             }
             // The template name may carry a "Faction/Sub/" path prefix. Amounts are
             // `StartingBoxes` × `ValuePerSupplyBox` (75) from GamePatch2's INI, not retail 1.04.
+            // `SupplyWarehouseAirport` only exists in the pre-release "Alpha 98" build: 500 boxes
+            // at that build's 250 per box (its CivilianBuilding.ini and GameData.ini).
             let template = o.name.rsplit('/').next().unwrap_or(&o.name);
             let supply = match template {
                 "SupplyDock" | "SupplyWarehouse" | "ToxinRepository" => Some(30_000),
+                "SupplyWarehouseAirport" => Some(125_000),
                 "SupplyPile" => Some(11_250),
                 "SupplyPileSmall" => Some(3_750),
                 _ => None,
@@ -314,7 +317,8 @@ impl MapFile {
 
     /// Base tiles and texture class table. Blend layers, cliff UVs and flags are skipped.
     fn read_blend_tiles(&mut self, c: &mut Cursor, version: u16) -> Result<(), Error> {
-        if !(6..=8).contains(&version) {
+        // v4/v5 appear in pre-release Generals maps (the 2002 "Alpha 98" build); retail is v6-v8.
+        if !(4..=8).contains(&version) {
             return Err(Error::UnknownVersion("BlendTileData", version));
         }
         let n = self.heights.len();
@@ -323,8 +327,10 @@ impl MapFile {
         }
         let raw = c.bytes(n * 2)?;
         self.tiles = raw.as_chunks::<2>().0.iter().map(|&b| u16::from_le_bytes(b)).collect();
-        // Blend, extra blend and cliff info indices: three more arrays of i16 per cell.
-        c.bytes(n * 2 * 3)?;
+        // Per-cell i16 arrays after the base tiles: blend (always), extra blend (v6+), cliff
+        // info (v5+).
+        let arrays = 1 + usize::from(version >= 6) + usize::from(version >= 5);
+        c.bytes(n * 2 * arrays)?;
         // Passability bits per cell (version 7+); version 7 was saved with a short row width.
         let row = match version {
             7 => (self.grid_w as usize + 1) / 8,
@@ -334,7 +340,9 @@ impl MapFile {
         c.bytes(row * self.grid_h as usize)?;
         c.i32()?; // bitmap tiles
         c.i32()?; // blended tiles
-        c.i32()?; // cliff infos
+        if version >= 5 {
+            c.i32()?; // cliff infos
+        }
         let classes = c.i32()?;
         if !(0..1024).contains(&classes) {
             return Err(Error::BadChunk("texture class count"));
@@ -823,5 +831,25 @@ mod tests {
             assert!(err.contains("not a map name"), "{bad}: {err}");
         }
         assert!(load_file_named(&root, "zh:Tournament Desert").is_ok());
+    }
+
+    /// Pre-release maps (BlendTileData v4/v5) from a local pre-release archive.
+    /// The archive is not in the repository, so the test is skipped when it is absent.
+    #[test]
+    fn pre_release_maps_parse_when_present() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../local/pre-release-maps");
+        let Ok(dirs) = std::fs::read_dir(&root) else { return };
+        let mut parsed = 0;
+        for d in dirs.flatten() {
+            for f in std::fs::read_dir(d.path()).into_iter().flatten().flatten() {
+                if f.path().extension().is_some_and(|x| x.eq_ignore_ascii_case("map")) {
+                    let map = load(&std::fs::read(f.path()).unwrap()).unwrap_or_else(|e| panic!("{:?}: {e}", f.path()));
+                    assert!(!map.texture_classes.is_empty(), "{:?}", f.path());
+                    parsed += 1;
+                }
+            }
+        }
+        assert!(parsed > 0);
     }
 }
