@@ -57,8 +57,9 @@ struct QueueRow;
 #[derive(Component)]
 struct WorldLabel;
 
+/// Per-frame world overlays (health bars, cargo pips), despawned and rebuilt every frame.
 #[derive(Component)]
-struct HealthBar;
+struct Overlay;
 
 /// A "+credits" pop-up over a supply center: rises and fades over `POPUP_SECS`.
 #[derive(Component)]
@@ -435,7 +436,7 @@ fn overlays(
     sel: Res<Selection>,
     cam: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     labels: Query<Entity, With<WorldLabel>>,
-    bars: Query<Entity, With<HealthBar>>,
+    bars: Query<Entity, With<Overlay>>,
 ) {
     for e in labels.iter().chain(bars.iter()) {
         commands.entity(e).despawn();
@@ -472,7 +473,7 @@ fn overlays(
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
-                    HealthBar,
+                    Overlay,
                 ))
                 .with_children(|row| {
                     for i in 0..5 {
@@ -504,7 +505,7 @@ fn overlays(
                         ..default()
                     },
                     BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
-                    HealthBar,
+                    Overlay,
                 ))
                 .with_children(|b| {
                     b.spawn((

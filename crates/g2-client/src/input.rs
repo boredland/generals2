@@ -297,6 +297,17 @@ fn draw_overlays(
 mod tests {
     use super::*;
 
+    #[test]
+    fn tab_cycles_in_order_and_wraps() {
+        let ids: Vec<EntityId> = (0..3).map(|i| EntityId { index: i, generation: 0 }).collect();
+        assert_eq!(next_after(&ids, None), Some(ids[0]), "nothing selected: first");
+        assert_eq!(next_after(&ids, Some(ids[0])), Some(ids[1]));
+        assert_eq!(next_after(&ids, Some(ids[2])), Some(ids[0]), "wraps");
+        let gone = EntityId { index: 9, generation: 0 };
+        assert_eq!(next_after(&ids, Some(gone)), Some(ids[0]), "selection isn't a collector: first");
+        assert_eq!(next_after(&[], Some(ids[0])), None);
+    }
+
     /// A camera ray aimed at a point lands on that point, on the high and low ground of an
     /// imported map, not on the Y = 0 plane below or above it.
     #[test]
