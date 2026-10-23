@@ -13,15 +13,35 @@ pub struct Command {
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum CommandKind {
-    Move { units: Vec<EntityId>, target: Vec2 },
-    Gather { units: Vec<EntityId>, pile: EntityId },
+    Move {
+        units: Vec<EntityId>,
+        target: Vec2,
+    },
+    Gather {
+        units: Vec<EntityId>,
+        pile: EntityId,
+    },
     /// Place a foundation and send `builder` to construct it.
-    Build { builder: EntityId, def: DefId, pos: Vec2 },
+    Build {
+        builder: EntityId,
+        def: DefId,
+        pos: Vec2,
+    },
     /// Send constructors to help finish an existing foundation.
-    Construct { units: Vec<EntityId>, site: EntityId },
-    Train { producer: EntityId, def: DefId },
-    CancelTrain { producer: EntityId },
-    Stop { units: Vec<EntityId> },
+    Construct {
+        units: Vec<EntityId>,
+        site: EntityId,
+    },
+    Train {
+        producer: EntityId,
+        def: DefId,
+    },
+    CancelTrain {
+        producer: EntityId,
+    },
+    Stop {
+        units: Vec<EntityId>,
+    },
     /// Concede: the player is defeated and all their assets are removed.
     Surrender,
 }

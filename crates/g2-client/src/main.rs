@@ -1,10 +1,11 @@
 //! Generals 2 client.
 //!
-//!   g2-client [--faction eu|apa|gla] [--enemy eu|apa|gla] [--seed N] [--spectate]
+//!   g2-client [--faction eu|apa|gla] [--enemy eu|apa|gla] [--seed N] [--spectate] [--record FILE]
 //!   g2-client --screenshot out.png [--ticks N] [...]   headless: simulate N ticks, render one frame
 //!
-//! `--spectate` lets the AI play your side too (AI vs AI). Screenshot mode needs a working GPU
-//! adapter but no window or display server.
+//! `--spectate` lets the AI play your side too (AI vs AI). `--record` saves the match as a replay
+//! on exit; check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no
+//! window or display server.
 
 mod camera;
 mod hud;
@@ -22,11 +23,19 @@ struct Args {
     seed: u64,
     spectate: bool,
     screenshot: Option<String>,
+    record: Option<String>,
     ticks: u32,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut a = Args { factions: [Faction::Eu, Faction::Gla], seed: 1, spectate: false, screenshot: None, ticks: 900 };
+    let mut a = Args {
+        factions: [Faction::Eu, Faction::Gla],
+        seed: 1,
+        spectate: false,
+        screenshot: None,
+        record: None,
+        ticks: 900,
+    };
     let mut it = std::env::args().skip(1);
     let faction = |v: Option<String>| match v.as_deref() {
         Some("eu") => Ok(Faction::Eu),
@@ -41,6 +50,7 @@ fn parse_args() -> Result<Args, String> {
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()).ok_or("--seed needs a number")?,
             "--spectate" => a.spectate = true,
             "--screenshot" => a.screenshot = Some(it.next().ok_or("--screenshot needs a path")?),
+            "--record" => a.record = Some(it.next().ok_or("--record needs a path")?),
             "--ticks" => a.ticks = it.next().and_then(|v| v.parse().ok()).ok_or("--ticks needs a number")?,
             other => return Err(format!("unknown argument {other:?}")),
         }
@@ -59,20 +69,35 @@ fn main() -> AppExit {
     let sim = Sim::new(args.seed, args.factions, args.spectate || args.screenshot.is_some());
     match args.screenshot {
         Some(path) => headless::run(sim, args.ticks, path),
-        None => windowed(sim),
+        None => windowed(sim, args.record),
     }
 }
 
-fn windowed(sim: Sim) -> AppExit {
-    App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window { title: "Generals 2 (open-source recreation)".into(), ..default() }),
-            ..default()
-        }))
-        .insert_resource(sim)
-        .add_plugins((SimPlugin, view::ViewPlugin, camera::CameraPlugin, input::InputPlugin, hud::HudPlugin))
-        .add_systems(Startup, spawn_camera)
-        .run()
+#[derive(Resource)]
+struct RecordTo(String);
+
+fn windowed(sim: Sim, record: Option<String>) -> AppExit {
+    let mut app = App::new();
+    app.add_plugins(DefaultPlugins.set(WindowPlugin {
+        primary_window: Some(Window { title: "Generals 2 (open-source recreation)".into(), ..default() }),
+        ..default()
+    }))
+    .insert_resource(sim)
+    .add_plugins((SimPlugin, view::ViewPlugin, camera::CameraPlugin, input::InputPlugin, hud::HudPlugin))
+    .add_systems(Startup, spawn_camera);
+    if let Some(path) = record {
+        app.insert_resource(RecordTo(path)).add_systems(Last, save_replay_on_exit);
+    }
+    app.run()
+}
+
+fn save_replay_on_exit(mut exits: MessageReader<AppExit>, sim: Res<Sim>, to: Res<RecordTo>) {
+    if exits.read().next().is_some() {
+        match sim.save_replay(&to.0) {
+            Ok(()) => info!("replay saved to {} ({} ticks)", to.0, sim.world.tick()),
+            Err(e) => error!("could not save replay to {}: {e}", to.0),
+        }
+    }
 }
 
 fn spawn_camera(mut commands: Commands, sim: Res<Sim>) {
@@ -158,12 +183,32 @@ mod headless {
                 break;
             }
         }
-        if std::path::Path::new(&path).exists() {
-            println!("wrote {path}");
-            AppExit::Success
-        } else {
+        if !std::path::Path::new(&path).exists() {
             eprintln!("screenshot was not written to {path}");
-            AppExit::error()
+            return AppExit::error();
         }
+        // Every sim entity must have exactly one mesh, at its sim position (ground plane x/z).
+        let world = apps.main.world_mut();
+        let mirrored: Vec<(g2_sim::EntityId, Vec3)> = world
+            .query::<(&crate::view::SimRef, &Transform)>()
+            .iter(world)
+            .map(|(r, tf)| (r.0, tf.translation))
+            .collect();
+        let sim = &world.resource::<Sim>().world;
+        let total = sim.entities().count();
+        let misplaced = sim
+            .entities()
+            .filter(|e| {
+                let want = crate::sim::to_world(e.pos);
+                let hits: Vec<_> = mirrored.iter().filter(|(id, _)| *id == e.id).collect();
+                hits.len() != 1 || Vec2::new(hits[0].1.x - want.x, hits[0].1.z - want.z).length() > 0.01
+            })
+            .count();
+        println!("wrote {path}; sim entities {total}, meshes {}, misplaced {misplaced}", mirrored.len());
+        if mirrored.len() != total || misplaced > 0 {
+            eprintln!("render mirror does not match the simulation");
+            return AppExit::error();
+        }
+        AppExit::Success
     }
 }

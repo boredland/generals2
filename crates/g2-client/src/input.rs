@@ -72,7 +72,12 @@ fn selected_building(sim: &Sim, sel: &Selection) -> Option<EntityId> {
     }
 }
 
-fn keyboard(keys: Res<ButtonInput<KeyCode>>, mut sim: ResMut<Sim>, sel: Res<Selection>, mut placing: ResMut<Placement>) {
+fn keyboard(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut sim: ResMut<Sim>,
+    sel: Res<Selection>,
+    mut placing: ResMut<Placement>,
+) {
     if keys.just_pressed(KeyCode::Space) {
         sim.speed = if sim.speed == 0 { 1 } else { 0 };
     }
@@ -174,8 +179,12 @@ fn mouse(
     }
 
     if buttons.just_pressed(MouseButton::Right) && !sel.0.is_empty() {
-        let units: Vec<EntityId> =
-            sel.0.iter().copied().filter(|&id| sim.world.entity(id).is_some_and(|e| sim.world.rules.def(e.def).is_unit())).collect();
+        let units: Vec<EntityId> = sel
+            .0
+            .iter()
+            .copied()
+            .filter(|&id| sim.world.entity(id).is_some_and(|e| sim.world.rules.def(e.def).is_unit()))
+            .collect();
         if units.is_empty() {
             return;
         }
@@ -183,7 +192,9 @@ fn mouse(
         let target = pick(&sim, here, |e| e.owner.is_none() || e.owner == Some(LOCAL));
         let kind = match target.and_then(|t| sim.world.entity(t)) {
             Some(t) if matches!(rules.def(t.def).class, Class::SupplyPile) => CommandKind::Gather { units, pile: t.id },
-            Some(t) if t.owner == Some(LOCAL) && t.construction.is_some() => CommandKind::Construct { units, site: t.id },
+            Some(t) if t.owner == Some(LOCAL) && t.construction.is_some() => {
+                CommandKind::Construct { units, site: t.id }
+            }
             _ => CommandKind::Move { units, target: here },
         };
         sim.order(kind);

@@ -11,6 +11,7 @@ pub const LOCAL: PlayerId = PlayerId(0);
 #[derive(Resource)]
 pub struct Sim {
     pub world: World,
+    pub setup: MatchSetup,
     /// Sim ticks per fixed step: 0 = paused, 1 = normal, up to 8× fast-forward.
     pub speed: u32,
 }
@@ -25,13 +26,18 @@ impl Sim {
                 PlayerSetup { faction: factions[1], starting_credits: 5_000, ai: true },
             ],
         };
-        Sim { world: World::new(&setup, rules()), speed: 1 }
+        Sim { world: World::new(&setup, rules()), setup, speed: 1 }
     }
 
     pub fn order(&mut self, kind: CommandKind) {
         if !self.world.is_ai(LOCAL) {
             self.world.submit(LOCAL, kind);
         }
+    }
+
+    /// Writes the match so far as a replay that `g2-tools verify` can re-simulate.
+    pub fn save_replay(&self, path: &str) -> std::io::Result<()> {
+        std::fs::write(path, self.world.replay(&self.setup).encode())
     }
 }
 
@@ -40,10 +46,10 @@ pub fn to_world(p: g2_sim::Vec2) -> Vec3 {
     Vec3::new(p.x.to_f32(), 0.0, p.y.to_f32())
 }
 
-/// Bevy ground point → sim position, rounded to the sim's fixed-point grid.
+/// Bevy ground point → sim position, snapped to whole world units. Snapping keeps recorded
+/// commands independent of float rounding in the camera ray.
 pub fn to_sim(p: Vec3) -> g2_sim::Vec2 {
-    let fx = |v: f32| g2_sim::Fx((v * (1u32 << g2_sim::Fx::FRAC_BITS) as f32).round() as i64);
-    g2_sim::Vec2::new(fx(p.x), fx(p.z))
+    g2_sim::Vec2::from_int(p.x.round() as i64, p.z.round() as i64)
 }
 
 /// Sim positions at the start of the current tick, for interpolating between ticks.
@@ -61,11 +67,17 @@ impl Plugin for SimPlugin {
 }
 
 fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>) {
+    if sim.speed == 0 {
+        return;
+    }
+    // Snapshot once per fixed step, so with fast-forward the render interpolates across all of
+    // this step's sim ticks instead of only the last one.
+    prev.0 = sim.world.entities().map(|e| (e.id, e.pos)).collect();
     for _ in 0..sim.speed {
-        prev.0 = sim.world.entities().map(|e| (e.id, e.pos)).collect();
         sim.world.step();
         if sim.world.winner().is_some() {
             sim.speed = 0;
+            break;
         }
     }
 }
@@ -75,9 +87,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ground_conversion_round_trips_on_the_fixed_grid() {
-        let p = g2_sim::Vec2::new(g2_sim::Fx::from_ratio(1234, 10), g2_sim::Fx::from_int(77));
-        assert_eq!(to_sim(to_world(p)), p);
+    fn clicks_snap_to_whole_units() {
+        assert_eq!(to_sim(Vec3::new(123.4, 0.0, 76.6)), g2_sim::Vec2::from_int(123, 77));
+    }
+
+    /// Plays through the real Bevy schedule with human orders issued between frames and a speed
+    /// change mid-match, then checks the client's saved replay re-simulates to the same state.
+    #[test]
+    fn a_match_played_through_the_client_replays_exactly() {
+        use bevy::time::TimeUpdateStrategy;
+        use g2_rules::ids::*;
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(16)))
+            .insert_resource(Sim::new(4, [Faction::Gla, Faction::Apa], false))
+            .add_plugins(SimPlugin);
+        let run = |app: &mut App, frames: u32| {
+            for _ in 0..frames {
+                app.update();
+            }
+        };
+        run(&mut app, 20);
+        {
+            let mut sim = app.world_mut().resource_mut::<Sim>();
+            let worker = sim.world.entities().find(|e| e.owner == Some(LOCAL) && e.def == GLA_WORKER).unwrap().id;
+            sim.order(CommandKind::Build { builder: worker, def: GLA_STASH, pos: to_sim(Vec3::new(110.3, 0.0, 79.8)) });
+            sim.speed = 4;
+        }
+        run(&mut app, 600);
+        {
+            let mut sim = app.world_mut().resource_mut::<Sim>();
+            let stash = sim.world.entities().find(|e| e.owner == Some(LOCAL) && e.def == GLA_STASH).unwrap();
+            assert!(stash.is_complete(), "stash finished during the x4 burst");
+            let stash = stash.id;
+            sim.order(CommandKind::Train { producer: stash, def: GLA_WORKER });
+            sim.order(CommandKind::Train { producer: stash, def: GLA_WORKER });
+            sim.speed = 1;
+        }
+        run(&mut app, 60);
+        let sim = app.world().resource::<Sim>();
+        let stash = sim.world.entities().find(|e| e.owner == Some(LOCAL) && e.def == GLA_STASH).unwrap();
+        assert_eq!(stash.queue.len(), 2, "both training orders were accepted");
+        let path = std::env::temp_dir().join(format!("g2-client-test-{}.g2rp", std::process::id()));
+        sim.save_replay(path.to_str().unwrap()).unwrap();
+        let replay = g2_sim::Replay::decode(&std::fs::read(&path).unwrap()).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(replay.commands.len(), 3);
+        assert_eq!(g2_sim::verify_replay(&replay, crater_ridge(), rules()), Ok(sim.world.state_hash()));
     }
 
     /// Runs the real Bevy schedule (no renderer) for `secs` of virtual time.

@@ -27,8 +27,6 @@ pub use map::{MapDef, MatchSetup, PlayerSetup};
 pub use replay::Replay;
 pub use world::{Event, Player, TICKS_PER_SECOND, World};
 
-use replay::HASH_INTERVAL;
-
 /// Runs a replay from its setup and reports the first checkpoint whose hash differs.
 pub fn verify_replay(replay: &Replay, map: MapDef, rules: &'static Rules) -> Result<u64, Divergence> {
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
@@ -59,30 +57,18 @@ pub struct Divergence {
     pub actual: u64,
 }
 
-/// Records a match: steps `world` to `length_ticks`, collecting hash checkpoints, and packs the
-/// result with the human command log. `drive` runs before every step to inject live input.
+/// Steps `world` to `length_ticks` and returns it with the recorded replay. `drive` runs before
+/// every step to inject live input.
 pub fn record(
     mut world: World,
-    map_name: &str,
     setup: &MatchSetup,
     length_ticks: u32,
     mut drive: impl FnMut(&mut World),
 ) -> (World, Replay) {
-    let mut hashes = Vec::new();
     while world.tick() < length_ticks {
-        if world.tick().is_multiple_of(HASH_INTERVAL) {
-            hashes.push((world.tick(), world.state_hash()));
-        }
         drive(&mut world);
         world.step();
     }
-    let replay = Replay {
-        map: map_name.to_owned(),
-        seed: setup.seed,
-        players: setup.players.clone(),
-        length_ticks,
-        commands: world.command_log().to_vec(),
-        hashes,
-    };
+    let replay = world.replay(setup);
     (world, replay)
 }

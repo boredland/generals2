@@ -34,10 +34,7 @@ const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--se
 fn flag<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> Result<T, String> {
     match args.iter().position(|a| a == name) {
         None => Ok(default),
-        Some(i) => args
-            .get(i + 1)
-            .and_then(|v| v.parse().ok())
-            .ok_or_else(|| format!("{name} needs a valid value")),
+        Some(i) => args.get(i + 1).and_then(|v| v.parse().ok()).ok_or_else(|| format!("{name} needs a valid value")),
     }
 }
 
@@ -88,7 +85,7 @@ fn record_cmd(args: &[String]) -> Result<(), String> {
     let out = args.first().filter(|a| !a.starts_with("--")).ok_or(USAGE)?;
     let setup = ai_setup(&args[1..])?;
     let ticks = flag(&args[1..], "--ticks", 30 * 600u32)?;
-    let (world, replay) = record(World::new(&setup, rules()), crater_ridge().name, &setup, ticks, |_| {});
+    let (world, replay) = record(World::new(&setup, rules()), &setup, ticks, |_| {});
     std::fs::write(out, replay.encode()).map_err(|e| format!("{out}: {e}"))?;
     println!("wrote {out}: {ticks} ticks, final hash {:016x}", world.state_hash());
     print_economy(&world);

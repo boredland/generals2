@@ -42,6 +42,8 @@ pub struct World {
     /// Every human command processed so far, in processing order. AI commands are excluded:
     /// replays re-run the AI, so recording them would apply them twice.
     log: Vec<Command>,
+    /// `(tick, state_hash)` taken before stepping every `HASH_INTERVAL`-th tick.
+    checkpoints: Vec<(u32, u64)>,
 }
 
 impl World {
@@ -58,6 +60,7 @@ impl World {
             events: Vec::new(),
             ai: Vec::new(),
             log: Vec::new(),
+            checkpoints: Vec::new(),
         };
         for &(pos, amount) in &setup.map.supply_piles {
             world.spawn_neutral(rules.supply_pile(), pos, amount);
@@ -144,9 +147,17 @@ impl World {
         &self.events
     }
 
-    /// Human commands applied so far; together with the setup this is a complete replay.
-    pub fn command_log(&self) -> &[Command] {
-        &self.log
+    /// The match so far as a replay: setup, human commands and hash checkpoints. Any driver
+    /// (client, tools, tests) can save this; `verify_replay` re-simulates it to `tick()`.
+    pub fn replay(&self, setup: &MatchSetup) -> crate::replay::Replay {
+        crate::replay::Replay {
+            map: self.map.name.to_owned(),
+            seed: setup.seed,
+            players: setup.players.clone(),
+            length_ticks: self.tick,
+            commands: self.log.clone(),
+            hashes: self.checkpoints.clone(),
+        }
     }
 
     pub fn is_ai(&self, player: PlayerId) -> bool {
@@ -163,9 +174,10 @@ impl World {
     /// Collectors bound to `center` plus collectors queued there.
     pub fn depot_load(&self, center: EntityId) -> u32 {
         let bound = self.entities.iter().filter(|e| e.home == Some(center)).count();
-        let queued = self.entities.get(center).map_or(0, |c| {
-            c.queue.iter().filter(|p| self.rules.def(p.def).collector().is_some()).count()
-        });
+        let queued = self
+            .entities
+            .get(center)
+            .map_or(0, |c| c.queue.iter().filter(|p| self.rules.def(p.def).collector().is_some()).count());
         (bound + queued) as u32
     }
 
@@ -240,6 +252,9 @@ impl World {
     // ---- simulation ----------------------------------------------------------------------
 
     pub fn step(&mut self) {
+        if self.tick.is_multiple_of(crate::replay::HASH_INTERVAL) {
+            self.checkpoints.push((self.tick, self.state_hash()));
+        }
         self.events.clear();
         self.think_ai();
         self.apply_due_commands();
@@ -282,7 +297,8 @@ impl World {
         due.sort_by_key(|c| c.player);
         for cmd in due {
             if !self.is_ai(cmd.player) {
-                self.log.push(cmd.clone());
+                // Log the tick it actually ran on: a late command (due tick already past) runs now.
+                self.log.push(Command { tick: self.tick, ..cmd.clone() });
             }
             if let Err(reason) = self.apply(&cmd) {
                 self.events.push(Event::Rejected { player: cmd.player, reason });
@@ -607,9 +623,14 @@ impl World {
         owner: PlayerId,
     ) -> (Vec2, Order) {
         let spec = self.rules.def(self.entities.get(id).unwrap().def).collector().unwrap();
-        let live_pile = |w: &World, p: EntityId| w.entities.get(p).filter(|e| e.resource > 0).map(|e| (e.pos, w.rules.def(e.def).radius));
+        let live_pile = |w: &World, p: EntityId| {
+            w.entities.get(p).filter(|e| e.resource > 0).map(|e| (e.pos, w.rules.def(e.def).radius))
+        };
         let live_depot = |w: &World, d: EntityId| {
-            w.entities.get(d).filter(|e| e.owner == Some(owner) && e.is_complete()).map(|e| (e.pos, w.rules.def(e.def).radius))
+            w.entities
+                .get(d)
+                .filter(|e| e.owner == Some(owner) && e.is_complete())
+                .map(|e| (e.pos, w.rules.def(e.def).radius))
         };
         match phase {
             GatherPhase::ToPile => {
@@ -621,7 +642,8 @@ impl World {
                     },
                 };
                 let (p, arrived) = Self::approach(pos, ppos, prad + radius, speed);
-                let phase = if arrived { GatherPhase::Loading { ticks_left: spec.load_ticks } } else { GatherPhase::ToPile };
+                let phase =
+                    if arrived { GatherPhase::Loading { ticks_left: spec.load_ticks } } else { GatherPhase::ToPile };
                 (p, Order::Gather { pile, phase })
             }
             GatherPhase::Loading { ticks_left } if ticks_left > 1 => {

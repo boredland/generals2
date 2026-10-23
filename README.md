@@ -23,7 +23,8 @@ What works:
   - Build placement with validity preview (derricks snap to wells).
   - Production hotkeys, a HUD, pause and ×1–×8 speed.
   - Interpolated movement between sim ticks.
-  - A headless `--screenshot` mode.
+  - `--record FILE` saves the match as a replay on exit, for `g2-tools verify`.
+  - A headless `--screenshot` mode that renders one frame and checks that every sim entity has exactly one mesh at its sim position.
 
 Not yet:
 
@@ -38,7 +39,8 @@ Not yet:
 
 **Verification status.**
 
-- The headless frame above was rendered, and its HUD numbers match `g2-tools record` for the same match.
+- The headless frame above was rendered. Its HUD numbers match `g2-tools record` for the same match, and the mirror check passed: 31 sim entities, 31 meshes, 0 misplaced.
+- A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
 - The **interactive** window (mouse, keyboard, camera) has not been exercised. The build host has no display, and its amdgpu device (`c7:00.0`) was already failing before this work started, according to the kernel log.
 - To render on the CPU without touching a GPU:
 
@@ -67,7 +69,8 @@ cargo test --workspace                               # unit, economy, determinis
 cargo run -p g2-client --release                     # play EU vs GLA AI
 cargo run -p g2-client --release -- --faction gla --enemy apa --seed 4
 cargo run -p g2-client --release -- --spectate       # AI vs AI
-cargo run -p g2-client --release -- --screenshot shot.png --ticks 1800
+cargo run -p g2-client --release -- --record my.g2rp # then: cargo run -p g2-tools --release -- verify my.g2rp
+cargo run -p g2-client --release -- --screenshot shot.png --ticks 1800   # on this host, prefix the lavapipe env above
 cargo run -p g2-tools --release -- bench
 cargo run -p g2-tools --release -- record match.g2rp --factions apa,gla --ticks 18000
 cargo run -p g2-tools --release -- verify match.g2rp

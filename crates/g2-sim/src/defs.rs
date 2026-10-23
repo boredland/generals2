@@ -62,10 +62,14 @@ pub enum Class {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BuildingRole {
     CommandCenter,
-    SupplyCenter { collector_cap: u32 },
+    SupplyCenter {
+        collector_cap: u32,
+    },
     PowerPlant,
     /// Must be placed on a free oil well; yields `oil_per_second` until the well runs dry.
-    OilDerrick { oil_per_second: i64 },
+    OilDerrick {
+        oil_per_second: i64,
+    },
     Factory,
 }
 

@@ -5,8 +5,6 @@ use g2_rules::{crater_ridge, map_by_name, rules};
 use g2_sim::replay::Replay;
 use g2_sim::{CommandKind, Faction, MatchSetup, PlayerId, PlayerSetup, Vec2, World, record, verify_replay};
 
-const MAP: &str = "Crater Ridge";
-
 fn setup(seed: u64, ai: [bool; 2], factions: [Faction; 2]) -> MatchSetup {
     MatchSetup {
         map: crater_ridge(),
@@ -23,7 +21,7 @@ fn setup(seed: u64, ai: [bool; 2], factions: [Faction; 2]) -> MatchSetup {
 fn scripted_match(seed: u64, ticks: u32) -> (World, Replay) {
     let s = setup(seed, [false, true], [Faction::Eu, Faction::Gla]);
     let world = World::new(&s, rules());
-    record(world, MAP, &s, ticks, |w| {
+    record(world, &s, ticks, |w| {
         let me = PlayerId(0);
         let mine = |def| w.entities().find(|e| e.owner == Some(me) && e.def == def).map(|e| e.id);
         match w.tick() {
@@ -76,11 +74,46 @@ fn a_changed_command_is_caught_at_the_first_checkpoint_after_it() {
 }
 
 #[test]
+fn a_corrupted_checkpoint_is_reported_at_exactly_that_tick() {
+    let (_, mut replay) = scripted_match(11, 4_000);
+    let (tick, hash) = &mut replay.hashes[50];
+    *hash ^= 1;
+    let tick = *tick;
+    assert_eq!(verify_replay(&replay, crater_ridge(), rules()).unwrap_err().tick, tick);
+}
+
+/// The client submits between fixed steps, sometimes after a command's due tick has passed (for
+/// example right after a fast-forward burst). Such commands run on the next step, and the log
+/// must record that tick so the replay applies them at the same point.
+#[test]
+fn late_commands_replay_at_the_tick_they_actually_ran() {
+    let s = setup(21, [false, true], [Faction::Apa, Faction::Eu]);
+    let mut world = World::new(&s, rules());
+    let me = PlayerId(0);
+    for _ in 0..50 {
+        world.step();
+    }
+    let crane = world.entities().find(|e| e.owner == Some(me) && e.def == APA_CRANE).unwrap().id;
+    world.schedule(g2_sim::Command {
+        tick: 3,
+        player: me,
+        kind: CommandKind::Move { units: vec![crane], target: Vec2::from_int(200, 200) },
+    });
+    for _ in 0..400 {
+        world.step();
+    }
+    let replay = world.replay(&s);
+    assert_eq!(replay.commands.len(), 1);
+    assert_eq!(replay.commands[0].tick, 50, "logged at the tick it ran, not the stale due tick");
+    assert_eq!(verify_replay(&replay, crater_ridge(), rules()), Ok(world.state_hash()));
+}
+
+#[test]
 fn ai_vs_ai_is_deterministic_for_every_faction_pairing() {
     for f0 in Faction::ALL {
         for f1 in Faction::ALL {
             let s = setup(3, [true, true], [f0, f1]);
-            let (a, ra) = record(World::new(&s, rules()), MAP, &s, 3_000, |_| {});
+            let (a, ra) = record(World::new(&s, rules()), &s, 3_000, |_| {});
             let end = verify_replay(&ra, crater_ridge(), rules()).unwrap();
             assert_eq!(end, a.state_hash());
             assert!(ra.commands.is_empty());
@@ -92,12 +125,10 @@ fn ai_vs_ai_is_deterministic_for_every_faction_pairing() {
 fn ai_builds_an_economy() {
     for f in Faction::ALL {
         let s = setup(5, [true, true], [f, Faction::Eu]);
-        let (w, _) = record(World::new(&s, rules()), MAP, &s, 30 * 300, |_| {});
+        let (w, _) = record(World::new(&s, rules()), &s, 30 * 300, |_| {});
         let p = w.player(PlayerId(0));
-        let collectors = w
-            .entities()
-            .filter(|e| e.owner == Some(PlayerId(0)) && rules().def(e.def).collector().is_some())
-            .count();
+        let collectors =
+            w.entities().filter(|e| e.owner == Some(PlayerId(0)) && rules().def(e.def).collector().is_some()).count();
         assert!(collectors >= 2, "{f:?}: {collectors} collectors after 5 min");
         assert!(p.oil > 0, "{f:?}: no oil derrick income after 5 min");
     }
@@ -116,6 +147,9 @@ fn golden_replay_still_matches() {
     let bytes = std::fs::read(path).expect("golden replay missing; run with G2_BLESS=1 once");
     let replay = Replay::decode(&bytes).unwrap();
     if let Err(d) = verify_replay(&replay, crater_ridge(), rules()) {
-        panic!("simulation changed: first divergence at tick {} (expected {:016x}, got {:016x})", d.tick, d.expected, d.actual);
+        panic!(
+            "simulation changed: first divergence at tick {} (expected {:016x}, got {:016x})",
+            d.tick, d.expected, d.actual
+        );
     }
 }

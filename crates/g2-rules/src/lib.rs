@@ -124,32 +124,92 @@ static DEFS: [Def; 18] = [
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
-    building("EU Command Center", Faction::Eu, BuildingRole::CommandCenter, 110, 1751, credits(1000), 28, 10, &[EU_DOZER]),
+    building(
+        "EU Command Center",
+        Faction::Eu,
+        BuildingRole::CommandCenter,
+        110,
+        1751,
+        credits(1000),
+        28,
+        10,
+        &[EU_DOZER],
+    ),
     // src: Bulldozer hp 250, land speed 14.
     unit("EU Bulldozer", Faction::Eu, 250, credits(500), 12, 14, true, None, &[EU_SUPPLY, EU_POWER, EU_DERRICK]),
     // src: Supply center collector cap EU 3.
-    building("EU Supply Center", Faction::Eu, BuildingRole::SupplyCenter { collector_cap: 3 }, -20, 1200, credits(800), 20, 8, &[EU_HARVESTER, EU_DOZER]),
+    building(
+        "EU Supply Center",
+        Faction::Eu,
+        BuildingRole::SupplyCenter { collector_cap: 3 },
+        -20,
+        1200,
+        credits(800),
+        20,
+        8,
+        &[EU_HARVESTER, EU_DOZER],
+    ),
     // src: EU harvester $450, 0:20, airborne collector (flying is not modelled yet).
     unit("EU Harvester", Faction::Eu, 300, credits(450), 20, 24, false, Some(HARVEST), NONE),
     building("EU Power Plant", Faction::Eu, BuildingRole::PowerPlant, 100, 800, credits(600), 15, 6, NONE),
     building("EU Oil Derrick", Faction::Eu, DERRICK, -10, 600, credits(500), 15, 5, NONE),
     // ---- Asia-Pacific Alliance -----------------------------------------------------------
-    building("APA Command Center", Faction::Apa, BuildingRole::CommandCenter, 110, 1751, credits(1000), 28, 10, &[APA_CRANE]),
+    building(
+        "APA Command Center",
+        Faction::Apa,
+        BuildingRole::CommandCenter,
+        110,
+        1751,
+        credits(1000),
+        28,
+        10,
+        &[APA_CRANE],
+    ),
     // src: Crane hp 280, $150, 11 s.
     unit("APA Crane", Faction::Apa, 280, credits(150), 11, 13, true, None, &[APA_SUPPLY, APA_POWER, APA_DERRICK]),
     // src: Supply center collector cap APA 5.
-    building("APA Supply Center", Faction::Apa, BuildingRole::SupplyCenter { collector_cap: 5 }, -20, 1200, credits(800), 20, 8, &[APA_HARVESTER, APA_CRANE]),
+    building(
+        "APA Supply Center",
+        Faction::Apa,
+        BuildingRole::SupplyCenter { collector_cap: 5 },
+        -20,
+        1200,
+        credits(800),
+        20,
+        8,
+        &[APA_HARVESTER, APA_CRANE],
+    ),
     // src: APA harvester $300, 0:19.
     unit("APA Harvester", Faction::Apa, 350, credits(300), 19, 18, false, Some(HARVEST), NONE),
     building("APA Power Plant", Faction::Apa, BuildingRole::PowerPlant, 100, 800, credits(600), 15, 6, NONE),
     building("APA Oil Derrick", Faction::Apa, DERRICK, -10, 600, credits(500), 15, 5, NONE),
     // ---- Global Liberation Army ----------------------------------------------------------
     // src: GLA command center gives 0 power; the GLA has no power grid.
-    building("GLA Command Center", Faction::Gla, BuildingRole::CommandCenter, 0, 1751, credits(1000), 28, 10, &[GLA_WORKER]),
+    building(
+        "GLA Command Center",
+        Faction::Gla,
+        BuildingRole::CommandCenter,
+        0,
+        1751,
+        credits(1000),
+        28,
+        10,
+        &[GLA_WORKER],
+    ),
     // src: workers construct and gather supplies.
     unit("GLA Worker", Faction::Gla, 120, credits(200), 8, 16, true, Some(HARVEST_WORKER), &[GLA_STASH, GLA_DERRICK]),
     // src: Supply center collector cap GLA 8.
-    building("GLA Supply Stash", Faction::Gla, BuildingRole::SupplyCenter { collector_cap: 8 }, 0, 1000, credits(600), 18, 8, &[GLA_WORKER]),
+    building(
+        "GLA Supply Stash",
+        Faction::Gla,
+        BuildingRole::SupplyCenter { collector_cap: 8 },
+        0,
+        1000,
+        credits(600),
+        18,
+        8,
+        &[GLA_WORKER],
+    ),
     building("GLA Oil Derrick", Faction::Gla, DERRICK, 0, 500, credits(400), 12, 5, NONE),
 ];
 
@@ -170,12 +230,7 @@ pub fn crater_ridge() -> MapDef {
         width: Fx::from_int(400),
         height: Fx::from_int(400),
         spawns: vec![v(80, 80), v(320, 320)],
-        supply_piles: vec![
-            (v(130, 60), 6000),
-            (v(270, 340), 6000),
-            (v(200, 140), 10000),
-            (v(200, 260), 10000),
-        ],
+        supply_piles: vec![(v(130, 60), 6000), (v(270, 340), 6000), (v(200, 140), 10000), (v(200, 260), 10000)],
         oil_wells: vec![(v(60, 150), 3000), (v(340, 250), 3000), (v(120, 280), 5000), (v(280, 120), 5000)],
     }
 }

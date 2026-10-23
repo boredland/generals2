@@ -101,7 +101,11 @@ fn collector_cap_is_per_faction_and_enforced() {
             run(&mut w, rules().def(harvester).build_ticks + 1);
         }
         assert_eq!(w.depot_load(depot), cap);
-        assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: harvester }), vec![Reject::DepotFull], "{faction:?}");
+        assert_eq!(
+            order(&mut w, CommandKind::Train { producer: depot, def: harvester }),
+            vec![Reject::DepotFull],
+            "{faction:?}"
+        );
     }
 }
 
@@ -158,7 +162,8 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
     };
     let mut w = World::new(&setup, rules());
     let worker = first(&w, P0, GLA_WORKER).unwrap();
-    let off_well = order(&mut w, CommandKind::Build { builder: worker, def: GLA_DERRICK, pos: Vec2::from_int(100, 150) });
+    let off_well =
+        order(&mut w, CommandKind::Build { builder: worker, def: GLA_DERRICK, pos: Vec2::from_int(100, 150) });
     assert_eq!(off_well, vec![Reject::InvalidPlacement]);
     // Slightly off-centre still snaps onto the well.
     let derrick = build(&mut w, GLA_WORKER, GLA_DERRICK, Vec2::from_int(62, 151));
@@ -208,7 +213,10 @@ fn power_drain_and_supply_are_reported_per_player() {
 fn foundations_cost_up_front_and_need_a_constructor_on_site() {
     let mut w = world(Faction::Eu, 1_000);
     let dozer = first(&w, P0, EU_DOZER).unwrap();
-    assert_eq!(order(&mut w, CommandKind::Build { builder: dozer, def: EU_SUPPLY, pos: Vec2::from_int(150, 100) }), vec![]);
+    assert_eq!(
+        order(&mut w, CommandKind::Build { builder: dozer, def: EU_SUPPLY, pos: Vec2::from_int(150, 100) }),
+        vec![]
+    );
     assert_eq!(w.player(P0).credits, 1_000 - rules().def(EU_SUPPLY).cost.credits);
     let site = first(&w, P0, EU_SUPPLY).unwrap();
     order(&mut w, CommandKind::Stop { units: vec![dozer] });

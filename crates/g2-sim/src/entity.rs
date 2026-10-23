@@ -15,11 +15,18 @@ pub struct PlayerId(pub u8);
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Order {
     Idle,
-    Move { target: Vec2 },
+    Move {
+        target: Vec2,
+    },
     /// Collector loop: walk to `pile`, load, walk to a supply center, unload, repeat.
-    Gather { pile: EntityId, phase: GatherPhase },
+    Gather {
+        pile: EntityId,
+        phase: GatherPhase,
+    },
     /// Constructor walking to (then working on) a placed foundation.
-    Construct { site: EntityId },
+    Construct {
+        site: EntityId,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -41,7 +41,11 @@ impl Ai {
         if let (Some(builder), Some(cc)) = (idle_constructor, cc) {
             let builder_def = rules.def(world.entity(builder).unwrap().def);
             let want = if !has(|r| matches!(r, BuildingRole::SupplyCenter { .. })) {
-                builder_def.builds.iter().copied().find(|&b| matches!(rules.def(b).role(), Some(BuildingRole::SupplyCenter { .. })))
+                builder_def
+                    .builds
+                    .iter()
+                    .copied()
+                    .find(|&b| matches!(rules.def(b).role(), Some(BuildingRole::SupplyCenter { .. })))
             } else if world.player(me).faction.uses_power() && !has(|r| r == BuildingRole::PowerPlant) {
                 builder_def.builds.iter().copied().find(|&b| rules.def(b).role() == Some(BuildingRole::PowerPlant))
             } else {
@@ -54,8 +58,11 @@ impl Ai {
                 out.push(CommandKind::Build { builder, def, pos });
                 return;
             }
-            let derrick =
-                builder_def.builds.iter().copied().find(|&b| matches!(rules.def(b).role(), Some(BuildingRole::OilDerrick { .. })));
+            let derrick = builder_def
+                .builds
+                .iter()
+                .copied()
+                .find(|&b| matches!(rules.def(b).role(), Some(BuildingRole::OilDerrick { .. })));
             if let Some(def) = derrick
                 && world.player(me).credits >= rules.def(def).cost.credits
                 && let Some(well) = self.free_well(world, def, cc.pos)
@@ -70,7 +77,9 @@ impl Ai {
             let d = rules.def(depot.def);
             let Some(BuildingRole::SupplyCenter { collector_cap }) = d.role() else { continue };
             let Some(&collector) = d.produces.iter().find(|&&u| rules.def(u).collector().is_some()) else { continue };
-            if world.depot_load(depot.id) < collector_cap && world.player(me).credits >= rules.def(collector).cost.credits {
+            if world.depot_load(depot.id) < collector_cap
+                && world.player(me).credits >= rules.def(collector).cost.credits
+            {
                 out.push(CommandKind::Train { producer: depot.id, def: collector });
             }
         }

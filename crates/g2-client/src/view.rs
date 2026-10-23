@@ -171,12 +171,7 @@ fn sync_entities(
 
 /// Units are drawn between their previous and current sim positions, so motion is smooth at any
 /// display rate even though the sim runs at 30 Hz.
-fn interpolate(
-    sim: Res<Sim>,
-    prev: Res<Previous>,
-    fixed: Res<Time<Fixed>>,
-    mut q: Query<(&SimRef, &mut Transform)>,
-) {
+fn interpolate(sim: Res<Sim>, prev: Res<Previous>, fixed: Res<Time<Fixed>>, mut q: Query<(&SimRef, &mut Transform)>) {
     let alpha = if sim.speed == 0 { 1.0 } else { fixed.overstep_fraction() };
     for (r, mut tf) in &mut q {
         let Some(e) = sim.world.entity(r.0) else { continue };
