@@ -560,12 +560,53 @@ fn detail_image() -> Image {
         TextureFormat::Rgba8Unorm,
         RenderAssetUsages::RENDER_WORLD,
     );
-    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+    mip_chain(&mut image);
+    // The ground is seen at a steep angle across a wide depth range: without mips the detail
+    // rings and shimmers in the distance, and without anisotropy it smears near the camera.
+    let mut sampler = ImageSamplerDescriptor {
         address_mode_u: ImageAddressMode::Repeat,
         address_mode_v: ImageAddressMode::Repeat,
         ..ImageSamplerDescriptor::linear()
-    });
+    };
+    sampler.set_anisotropic_filter(16);
+    image.sampler = ImageSampler::Descriptor(sampler);
     image
+}
+
+/// Appends a box-filtered mip chain to a level-0 image (wgpu wants the levels concatenated).
+fn mip_chain(image: &mut Image) {
+    let mut data = image.data.clone().expect("level 0");
+    let (mut w, mut h) = (image.texture_descriptor.size.width as usize, image.texture_descriptor.size.height as usize);
+    let mut prev = data.clone();
+    let mut levels = 1;
+    while w > 1 || h > 1 {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = Vec::with_capacity(nw * nh * 4);
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut acc = [0u32; 4];
+                let mut count = 0u32;
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let (sx, sy) = ((x * 2 + dx).min(w - 1), (y * 2 + dy).min(h - 1));
+                        let i = (sy * w + sx) * 4;
+                        for c in 0..4 {
+                            acc[c] += prev[i + c] as u32;
+                        }
+                        count += 1;
+                    }
+                }
+                next.extend(acc.iter().map(|&a| (a / count) as u8));
+            }
+        }
+        data.extend_from_slice(&next);
+        prev = next;
+        w = nw;
+        h = nh;
+        levels += 1;
+    }
+    image.data = Some(data);
+    image.texture_descriptor.mip_level_count = levels;
 }
 #[derive(Clone, Copy)]
 enum Prop {

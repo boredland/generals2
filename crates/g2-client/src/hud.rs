@@ -305,6 +305,7 @@ pub(crate) fn clock(ticks: u32) -> String {
 fn update_fields(
     sim: Res<Sim>,
     ui: Option<Res<crate::menu::Ui>>,
+    frozen: Option<Res<crate::view::FreezeEffects>>,
     sel: Res<Selection>,
     placing: Res<Placement>,
     mut fields: Query<(&Field, &mut Text, Option<&mut Node>), Without<QueueRow>>,
@@ -347,7 +348,8 @@ fn update_fields(
                 t.0 = match (world.winner(), sim.speed, placing.0) {
                     (Some(_), _, _) => String::new(),
                     (_, _, Some(def)) => format!("Place {}  -  Esc cancels", rules.def(def).name),
-                    (_, 0, _) if !menu_open => "PAUSED".into(),
+                    // Screenshot mode freezes the frame; a "PAUSED" label there would be a lie.
+                    (_, 0, _) if !menu_open && frozen.is_none() => "PAUSED".into(),
                     (_, 0 | 1, _) => String::new(),
                     (_, s, _) => format!("x{s}"),
                 }
@@ -522,10 +524,19 @@ fn overlays(
         commands.entity(e).despawn();
     }
     let Ok((camera, cam_tf)) = cam.single() else { return };
+    let view = camera.logical_viewport_size().unwrap_or(Vec2::ZERO);
+    // Overlays are absolutely placed, so an anchor near an edge would cut one off: pull the
+    // anchor just inside the viewport before placing anything on it.
+    let on_screen = |screen: Vec2, half_w: f32| {
+        let lo = (half_w + 2.0).min(view.x / 2.0);
+        let hi = (view.x - half_w - 2.0).max(view.x / 2.0);
+        Vec2::new(screen.x.clamp(lo, hi), screen.y.clamp(48.0, (view.y - 16.0).max(48.0)))
+    };
     let world = &sim.world;
     for e in world.entities().filter(|e| sim.shows(e)) {
         let anchor = crate::view::overlay_anchor(&sim, e);
         let Ok(screen) = camera.world_to_viewport(cam_tf, anchor) else { continue };
+        let screen = on_screen(screen, 52.0);
         if let Some((n, cap)) = crate::view::depot_label(&sim, e) {
             let color = if n >= cap { Color::srgb(0.95, 0.25, 0.2) } else { Color::srgb(0.3, 0.95, 0.3) };
             commands.spawn((
@@ -542,6 +553,7 @@ fn overlays(
             && let Some(spec) = def.collector()
         {
             let filled = cargo_pips(e.cargo, spec.capacity);
+            let screen = on_screen(screen, 22.0);
             commands
                 .spawn((
                     Node {
@@ -574,6 +586,7 @@ fn overlays(
             } else {
                 Color::srgb(0.95, 0.25, 0.2)
             };
+            let screen = on_screen(screen, w / 2.0);
             commands
                 .spawn((
                     Node {
