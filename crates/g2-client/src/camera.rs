@@ -95,5 +95,8 @@ fn control(
     let map = &sim.world.map;
     cam.pivot.x = cam.pivot.x.clamp(0.0, map.width.to_f32());
     cam.pivot.z = cam.pivot.z.clamp(0.0, map.height.to_f32());
+    // Ride the terrain; eased so panning over a cliff edge doesn't jolt the view.
+    let ground = sim.ground_y(cam.pivot.x, cam.pivot.z);
+    cam.pivot.y += (ground - cam.pivot.y) * (1.0 - (-8.0 * dt).exp());
     *tf = cam.transform();
 }

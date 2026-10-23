@@ -11,7 +11,7 @@ use bevy::window::PrimaryWindow;
 use g2_sim::{Class, CommandKind, DefId, EntityId};
 
 use crate::camera::RtsCamera;
-use crate::sim::{LOCAL, Sim, to_sim, to_world};
+use crate::sim::{LOCAL, Sim, to_sim};
 
 #[derive(Resource, Default)]
 pub struct Selection(pub Vec<EntityId>);
@@ -45,15 +45,30 @@ impl Plugin for InputPlugin {
     }
 }
 
-/// Cursor ray → ground plane (Y = 0).
-fn cursor_ground(window: &Window, cam: (&Camera, &GlobalTransform)) -> Option<Vec3> {
+/// Cursor ray → rendered ground. Marches the ray against the terrain height (flat at Y = 0
+/// on the built-in map), then refines the crossing by bisection.
+fn cursor_ground(sim: &Sim, window: &Window, cam: (&Camera, &GlobalTransform)) -> Option<Vec3> {
     let ray = cam.0.viewport_to_world(cam.1, window.cursor_position()?).ok()?;
-    let denom = ray.direction.y;
-    if denom.abs() < 1e-6 {
-        return None;
+    let dir = *ray.direction;
+    let above = |t: f32| {
+        let p = ray.origin + dir * t;
+        p.y - sim.ground_y(p.x, p.z)
+    };
+    let step = 2.0;
+    let (mut lo, mut t) = (0.0, step);
+    while t < 4000.0 {
+        if above(t) <= 0.0 {
+            for _ in 0..12 {
+                let mid = (lo + t) / 2.0;
+                if above(mid) > 0.0 { lo = mid } else { t = mid }
+            }
+            let p = ray.origin + dir * t;
+            return Some(Vec3::new(p.x, sim.ground_y(p.x, p.z), p.z));
+        }
+        lo = t;
+        t += step;
     }
-    let t = -ray.origin.y / denom;
-    (t > 0.0).then(|| ray.origin + *ray.direction * t)
+    None
 }
 
 fn prune_selection(sim: Res<Sim>, mut sel: ResMut<Selection>) {
@@ -132,7 +147,7 @@ fn mouse(
     mut drag: ResMut<Drag>,
 ) {
     let (Ok(window), Ok(cam)) = (window.single(), cam.single()) else { return };
-    let Some(ground) = cursor_ground(window, cam) else { return };
+    let Some(ground) = cursor_ground(&sim, window, cam) else { return };
     let here = to_sim(ground);
 
     if let Some(def) = placing.0 {
@@ -167,7 +182,7 @@ fn mouse(
         } else {
             let (lo, hi) = (start.min(end), start.max(end));
             for e in sim.world.entities().filter(|e| e.owner == Some(LOCAL) && sim.world.rules.def(e.def).is_unit()) {
-                if let Ok(p) = cam.0.world_to_viewport(cam.1, to_world(e.pos))
+                if let Ok(p) = cam.0.world_to_viewport(cam.1, sim.to_world(e.pos))
                     && p.cmpge(lo).all()
                     && p.cmple(hi).all()
                 {
@@ -220,23 +235,23 @@ fn draw_overlays(
     window: Query<&Window, With<PrimaryWindow>>,
     cam: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
 ) {
-    let flat = |p: Vec3| Isometry3d::new(p + Vec3::Y * 0.2, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
+    let flat = |p: Vec3| Isometry3d::new(p + Vec3::Y * 0.4, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2));
     for &id in &sel.0 {
         let Some(e) = sim.world.entity(id) else { continue };
         let def = sim.world.rules.def(e.def);
-        gizmos.circle(flat(to_world(e.pos)), def.radius.to_f32() + 1.0, Color::srgb(0.3, 1.0, 0.4));
+        gizmos.circle(flat(sim.to_world(e.pos)), def.radius.to_f32() + 1.0, Color::srgb(0.3, 1.0, 0.4));
         if let Class::Building { power, power_radius, .. } = def.class
             && power > 0
         {
-            gizmos.circle(flat(to_world(e.pos)), power_radius.to_f32(), Color::srgba(1.0, 0.9, 0.2, 0.5));
+            gizmos.circle(flat(sim.to_world(e.pos)), power_radius.to_f32(), Color::srgba(1.0, 0.9, 0.2, 0.5));
         }
     }
     if let (Some(def), Ok(window), Ok(cam)) = (placing.0, window.single(), cam.single())
-        && let Some(ground) = cursor_ground(window, cam)
+        && let Some(ground) = cursor_ground(&sim, window, cam)
     {
         let ok = sim.world.check_placement(def, to_sim(ground));
         let (pos, color) = match ok {
-            Ok((snapped, _)) => (to_world(snapped), Color::srgb(0.3, 1.0, 0.4)),
+            Ok((snapped, _)) => (sim.to_world(snapped), Color::srgb(0.3, 1.0, 0.4)),
             Err(_) => (ground, Color::srgb(1.0, 0.25, 0.2)),
         };
         gizmos.circle(flat(pos), sim.world.rules.def(def).radius.to_f32(), color);

@@ -1,6 +1,6 @@
 //! Replay = match setup + every applied command + periodic state hashes.
-//! Binary, little-endian, versioned. The map is stored by name and resolved by the caller,
-//! because maps are code-defined in this milestone.
+//! Binary, little-endian, versioned. The map is stored by name and resolved by the caller:
+//! "Crater Ridge" is built in; `<gen|zh>:<name>` is imported from the original game's map.
 
 use crate::command::{Command, CommandKind};
 use crate::defs::{DefId, Faction};

@@ -2,8 +2,9 @@
 //! Bevy only mirrors it for rendering and turns input into `CommandKind`s.
 
 use bevy::prelude::*;
-use g2_rules::{crater_ridge, rules};
-use g2_sim::{CommandKind, Faction, MatchSetup, PlayerId, PlayerSetup, TICKS_PER_SECOND, World};
+use g2_maps::MapFile;
+use g2_rules::rules;
+use g2_sim::{CommandKind, Faction, MapDef, MatchSetup, PlayerId, PlayerSetup, TICKS_PER_SECOND, World};
 
 /// The local human player.
 pub const LOCAL: PlayerId = PlayerId(0);
@@ -14,19 +15,22 @@ pub struct Sim {
     pub setup: MatchSetup,
     /// Sim ticks per fixed step: 0 = paused, 1 = normal, up to 8× fast-forward.
     pub speed: u32,
+    /// The parsed source map when playing an imported Generals / Zero Hour map; terrain, roads,
+    /// water and trees are drawn from it. `None` for the built-in procedural map.
+    pub source: Option<MapFile>,
 }
 
 impl Sim {
-    pub fn new(seed: u64, factions: [Faction; 2], spectate: bool) -> Sim {
+    pub fn new(map: MapDef, source: Option<MapFile>, seed: u64, factions: [Faction; 2], spectate: bool) -> Sim {
         let setup = MatchSetup {
-            map: crater_ridge(),
+            map,
             seed,
             players: vec![
                 PlayerSetup { faction: factions[0], starting_credits: 5_000, ai: spectate },
                 PlayerSetup { faction: factions[1], starting_credits: 5_000, ai: true },
             ],
         };
-        Sim { world: World::new(&setup, rules()), setup, speed: 1 }
+        Sim { world: World::new(&setup, rules()), setup, speed: 1, source }
     }
 
     pub fn order(&mut self, kind: CommandKind) {
@@ -39,9 +43,22 @@ impl Sim {
     pub fn save_replay(&self, path: &str) -> std::io::Result<()> {
         std::fs::write(path, self.world.replay(&self.setup).encode())
     }
+
+    /// Rendered ground height at world `(x, z)`: the imported map's terrain, or 0 on the
+    /// built-in map. The sim itself is flat; this only places models and the cursor.
+    pub fn ground_y(&self, x: f32, z: f32) -> f32 {
+        self.source.as_ref().map_or(0.0, |m| m.ground_y(x, z))
+    }
+
+    /// Sim position → rendered position on the ground.
+    pub fn to_world(&self, p: g2_sim::Vec2) -> Vec3 {
+        let flat = to_world(p);
+        Vec3::new(flat.x, self.ground_y(flat.x, flat.z), flat.z)
+    }
 }
 
-/// Fixed-point sim position → Bevy world (sim x → +X, sim y → +Z, ground at Y = 0).
+/// Fixed-point sim position → Bevy world on the flat sim plane (sim x → +X, sim y → +Z, Y = 0).
+/// Use `Sim::to_world` to place things on the rendered terrain.
 pub fn to_world(p: g2_sim::Vec2) -> Vec3 {
     Vec3::new(p.x.to_f32(), 0.0, p.y.to_f32())
 }
@@ -85,6 +102,7 @@ fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use g2_rules::crater_ridge;
 
     #[test]
     fn clicks_snap_to_whole_units() {
@@ -100,7 +118,7 @@ mod tests {
         let mut app = App::new();
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(16)))
-            .insert_resource(Sim::new(4, [Faction::Gla, Faction::Apa], false))
+            .insert_resource(Sim::new(crater_ridge(), None, 4, [Faction::Gla, Faction::Apa], false))
             .add_plugins(SimPlugin);
         let run = |app: &mut App, frames: u32| {
             for _ in 0..frames {
@@ -141,7 +159,7 @@ mod tests {
         use bevy::time::TimeUpdateStrategy;
         let frame = std::time::Duration::from_millis(10);
         let mut app = App::new();
-        let mut sim = Sim::new(1, [Faction::Eu, Faction::Gla], true);
+        let mut sim = Sim::new(crater_ridge(), None, 1, [Faction::Eu, Faction::Gla], true);
         sim.speed = speed;
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(frame))

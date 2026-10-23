@@ -3,7 +3,7 @@ use crate::fixed::{Fx, Vec2};
 
 #[derive(Clone, Debug)]
 pub struct MapDef {
-    pub name: &'static str,
+    pub name: String,
     /// World size: `0..width` × `0..height`.
     pub width: Fx,
     pub height: Fx,

@@ -143,7 +143,8 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     let def = sim.world.rules.def(e.def);
     let faction = e.owner.map(|o| sim.world.player(o).faction);
     let parts = models::parts_for(def, faction);
-    let mut root = commands.spawn((SimRef(e.id), Transform::from_translation(to_world(e.pos)), Visibility::default()));
+    let mut root =
+        commands.spawn((SimRef(e.id), Transform::from_translation(sim.to_world(e.pos)), Visibility::default()));
     root.with_children(|c| {
         c.spawn((Body, Transform::default(), Visibility::default()))
             .with_children(|b| spawn_parts(b, assets, faction, &parts));
@@ -182,7 +183,7 @@ fn sync_entities(
         if !def.is_unit()
             && let Ok(mut tf) = root_tf.get_mut(root)
         {
-            tf.translation = to_world(e.pos);
+            tf.translation = sim.to_world(e.pos);
         }
         let Ok(children) = roots.get(root) else { continue };
         // Foundations: the finished model rises inside the scaffold; supply piles shrink as they deplete.
@@ -211,9 +212,13 @@ fn interpolate(sim: Res<Sim>, prev: Res<Previous>, fixed: Res<Time<Fixed>>, mut 
         if !sim.world.rules.def(e.def).is_unit() {
             continue;
         }
+        // Lerp on the flat sim plane, then sample the ground once, so a unit follows the
+        // terrain between ticks instead of cutting through it.
         let now = to_world(e.pos);
         let before = prev.0.get(&r.0).map_or(now, |&p| to_world(p));
-        tf.translation = before.lerp(now, alpha);
+        let mut at = before.lerp(now, alpha);
+        at.y = sim.ground_y(at.x, at.z);
+        tf.translation = at;
         let heading = now - before;
         if heading.length_squared() > 1e-6 {
             tf.rotation = Quat::from_rotation_y(heading.x.atan2(heading.z));
@@ -240,7 +245,7 @@ pub fn overlay_anchor(sim: &Sim, e: &g2_sim::Entity) -> Vec3 {
         }
         _ => 4.0,
     };
-    to_world(e.pos) + Vec3::Y * height
+    sim.to_world(e.pos) + Vec3::Y * height
 }
 
 /// Whether the local player should see a collector-count label on this entity.

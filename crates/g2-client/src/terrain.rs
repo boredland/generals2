@@ -1,20 +1,26 @@
-//! Procedural savanna terrain (docs/STYLE.md): ochre and olive grass
-//! over tan dirt, worn light dirt roads linking bases, piles and wells, dark rocky ridges at the
-//! map edge, acacia-like trees and bushes. All generated here; no textures or game assets.
+//! Terrain in the look of docs/STYLE.md: ochre and olive grass over tan dirt, worn light dirt
+//! roads, dark rocky ridges past the map edge, acacia-like trees and bushes. All generated
+//! here; no textures or game assets.
 //!
-//! Terrain is purely visual: the sim's ground is flat, so the playable area stays (nearly) flat
-//! and relief is confined to the border ridges.
+//! On the built-in map the layout is procedural and the playable area stays flat. On an
+//! imported Generals / Zero Hour map, the original's relief, painted ground classes, roads,
+//! water areas and tree positions drive the same procedural look. Terrain is visual only: the
+//! sim stays flat and models are lifted onto the ground (`Sim::to_world`).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use g2_maps::MapFile;
 
 use crate::sim::{Sim, to_world};
 
-/// Vertex spacing in world units.
-const CELL: f32 = 2.0;
+/// Vertex spacing in world units. Imported maps are larger, so they use a coarser grid; the
+/// source height map has one sample per 10/6 world units anyway.
+fn cell_size(layout: &Layout) -> f32 {
+    if layout.source.is_some() { 3.0 } else { 2.0 }
+}
 /// Extra ground beyond the playable area, so the camera never sees the edge of the world.
 const APRON: f32 = 120.0;
 const ROAD_HALF_WIDTH: f32 = 5.0;
@@ -119,7 +125,7 @@ impl Road {
     }
 }
 
-struct Layout {
+struct Layout<'a> {
     width: f32,
     height: f32,
     roads: Vec<Road>,
@@ -128,10 +134,43 @@ struct Layout {
     clearings: Vec<(Vec2, f32)>,
     /// Trampled dirt painted around bases and resources; larger than the scenery clearings.
     pads: Vec<(Vec2, f32)>,
+    /// The original map when one is imported: heights, painted ground and water come from it.
+    source: Option<&'a MapFile>,
 }
 
-impl Layout {
-    fn from_sim(sim: &Sim) -> Layout {
+/// What a retail terrain texture class reads as, for our own palette.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Ground {
+    Grass,
+    Dirt,
+    Sand,
+    Rock,
+    Snow,
+    Paved,
+}
+
+impl Ground {
+    /// Classifies by the texture class name (`GrassMediumType3`, `CliffLargeType1snow`, ...).
+    fn of(class: &str) -> Ground {
+        let c = class.to_ascii_lowercase();
+        if c.contains("snow") {
+            Ground::Snow
+        } else if c.contains("cliff") || c.contains("rock") || c.contains("mountain") {
+            Ground::Rock
+        } else if ["asphalt", "concrete", "parking", "cobble", "wood", "bridge"].iter().any(|k| c.contains(k)) {
+            Ground::Paved
+        } else if c.contains("grass") || c.contains("crops") || c.contains("field") {
+            Ground::Grass
+        } else if c.contains("sand") || c.contains("desert") || c.contains("beach") {
+            Ground::Sand
+        } else {
+            Ground::Dirt
+        }
+    }
+}
+
+impl<'a> Layout<'a> {
+    fn from_sim(sim: &'a Sim) -> Layout<'a> {
         let map = &sim.world.map;
         let p = |v: g2_sim::Vec2| Vec2::new(v.x.to_f32(), v.y.to_f32());
         let spawns: Vec<Vec2> = map.spawns.iter().map(|&s| p(s)).collect();
@@ -139,19 +178,41 @@ impl Layout {
         // Just past the command center (radius 10); everything else at a base is built later.
         let mut clearings: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, 13.0)).collect();
         let mut pads: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, 38.0)).collect();
-        // Main road between the bases, plus a spur from each resource to the nearest base.
-        if let [a, b, ..] = spawns.as_slice() {
-            roads.push(Road::new(*a, *b, 60.0));
+        for &(pos, _) in map.supply_piles.iter().chain(map.oil_wells.iter()) {
+            clearings.push((p(pos), 8.0));
+            pads.push((p(pos), 16.0));
         }
-        for (i, &(pos, _)) in map.supply_piles.iter().chain(map.oil_wells.iter()).enumerate() {
-            let q = p(pos);
-            clearings.push((q, 8.0));
-            pads.push((q, 16.0));
-            let nearest = spawns.iter().copied().min_by(|x, y| x.distance(q).total_cmp(&y.distance(q))).unwrap_or(q);
-            let bend = if i % 2 == 0 { 18.0 } else { -18.0 };
-            roads.push(Road::new(nearest, q, bend));
+        match &sim.source {
+            // The original road network, as straight segments between road points.
+            Some(file) => {
+                for r in file.roads() {
+                    let a = Vec2::from(file.to_world(r.a.0, r.a.1));
+                    let b = Vec2::from(file.to_world(r.b.0, r.b.1));
+                    roads.push(Road::new(a, b, 0.0));
+                }
+            }
+            // Built-in map: a main road between the bases, plus a spur from each resource.
+            None => {
+                if let [a, b, ..] = spawns.as_slice() {
+                    roads.push(Road::new(*a, *b, 60.0));
+                }
+                for (i, &(pos, _)) in map.supply_piles.iter().chain(map.oil_wells.iter()).enumerate() {
+                    let q = p(pos);
+                    let nearest =
+                        spawns.iter().copied().min_by(|x, y| x.distance(q).total_cmp(&y.distance(q))).unwrap_or(q);
+                    let bend = if i % 2 == 0 { 18.0 } else { -18.0 };
+                    roads.push(Road::new(nearest, q, bend));
+                }
+            }
         }
-        Layout { width: map.width.to_f32(), height: map.height.to_f32(), roads, clearings, pads }
+        Layout {
+            width: map.width.to_f32(),
+            height: map.height.to_f32(),
+            roads,
+            clearings,
+            pads,
+            source: sim.source.as_ref(),
+        }
     }
 
     fn road(&self, p: Vec2) -> f32 {
@@ -168,9 +229,44 @@ impl Layout {
     fn height(&self, p: Vec2) -> f32 {
         let b = self.border(p);
         let ridge = b * b * (14.0 + fbm(p.x * 0.05, p.y * 0.05, 4, 11) * 22.0);
+        if let Some(file) = self.source {
+            // Inside: the original relief. Outside: the relief around the nearest edge point,
+            // averaged over a window that widens with distance (5×5 samples, clamped into the
+            // map), plus our ridge. Continuous at the edge and at corners, and the source's
+            // border cliffs soften instead of streaking outward.
+            let size = Vec2::new(self.width, self.height);
+            let edge = p.clamp(Vec2::ZERO, size);
+            let spread = p.distance(edge) * 0.5;
+            let mut sum = 0.0;
+            for j in -2..=2 {
+                for i in -2..=2 {
+                    let q = (edge + Vec2::new(i as f32, j as f32) * spread).clamp(Vec2::ZERO, size);
+                    sum += file.ground_y(q.x, q.y);
+                }
+            }
+            return sum / 25.0 + ridge;
+        }
         // Gentle undulation only; the sim ground is flat, so keep it within ±0.3.
         let undulate = (fbm(p.x * 0.02, p.y * 0.02, 3, 5) - 0.5) * 0.6 * (1.0 - b);
         ridge + undulate
+    }
+
+    /// Painted ground under `p`: the imported map's texture class, or `None` for procedural.
+    /// The lookup is warped by a few units of noise, so class boundaries come out ragged and
+    /// organic instead of following the source's square cells (we don't read its blend tiles).
+    fn ground(&self, p: Vec2) -> Option<Ground> {
+        let file = self.source?;
+        let warp = Vec2::new(fbm(p.x * 0.09, p.y * 0.09, 3, 71) - 0.5, fbm(p.x * 0.09, p.y * 0.09, 3, 73) - 0.5) * 9.0;
+        let q = p + warp;
+        Some(file.class_at(q.x, q.y).map_or(Ground::Dirt, Ground::of))
+    }
+
+    /// Steepness of the rendered ground at `p` (rise per unit run).
+    fn slope(&self, p: Vec2) -> f32 {
+        let e = 1.0;
+        let dx = self.height(p + Vec2::X * e) - self.height(p - Vec2::X * e);
+        let dz = self.height(p + Vec2::Y * e) - self.height(p - Vec2::Y * e);
+        Vec2::new(dx, dz).length() / (2.0 * e)
     }
 
     fn color(&self, p: Vec2) -> [f32; 4] {
@@ -179,12 +275,33 @@ impl Layout {
         let ochre = Vec3::new(0.52, 0.44, 0.20);
         let olive = Vec3::new(0.34, 0.33, 0.13);
         let rock = Vec3::new(0.20, 0.18, 0.15);
-        // Mostly dry grass, with large dirt patches and fine breakup.
+        let sand = Vec3::new(0.70, 0.60, 0.42);
+        let snow = Vec3::new(0.86, 0.88, 0.90);
+        let paved = Vec3::new(0.42, 0.41, 0.39);
         let big = fbm(p.x * 0.012, p.y * 0.012, 4, 21);
         let fine = fbm(p.x * 0.25, p.y * 0.25, 3, 31);
-        let grass_amt = ((big - 0.18) * 4.0 + (fine - 0.5) * 1.4).clamp(0.0, 1.0);
         let grass = ochre.lerp(olive, fbm(p.x * 0.04, p.y * 0.04, 3, 41).powf(0.8));
-        let mut c = dirt.lerp(grass, grass_amt);
+        let mut c = match self.ground(p) {
+            // Mostly dry grass, with large dirt patches and fine breakup.
+            None => {
+                let grass_amt = ((big - 0.18) * 4.0 + (fine - 0.5) * 1.4).clamp(0.0, 1.0);
+                dirt.lerp(grass, grass_amt)
+            }
+            // Imported map: the original painting, re-coloured in our palette with our breakup.
+            Some(g) => {
+                let base = match g {
+                    Ground::Grass => grass,
+                    Ground::Dirt => dirt.lerp(grass, ((big - 0.45) * 2.0).clamp(0.0, 0.5)),
+                    Ground::Sand => sand,
+                    Ground::Rock => rock * (0.8 + fine * 0.5),
+                    Ground::Snow => snow,
+                    Ground::Paved => paved,
+                };
+                // Steep faces read as cliffs whatever was painted on them.
+                let cliff = ((self.slope(p) - 0.6) * 2.0).clamp(0.0, 1.0);
+                base.lerp(rock * (0.7 + fine * 0.6), cliff)
+            }
+        };
         // Worn road: bright centre, soft shoulders, tyre-track streaks.
         let d = self.road(p);
         let edge = fbm(p.x * 0.15, p.y * 0.15, 2, 51) * 3.0;
@@ -195,6 +312,11 @@ impl Layout {
         for &(centre, r) in &self.pads {
             let k = (1.0 - (centre.distance(p) - r * 0.25) / (r * 0.35)).clamp(0.0, 1.0);
             c = c.lerp(dirt * 1.05, k * 0.45);
+        }
+        // Water: wet dark shore and deep blue-green beds; the surface is a separate mesh.
+        if let Some(depth) = self.water_depth(p) {
+            let bed = Vec3::new(0.18, 0.20, 0.16);
+            c = c.lerp(bed, (depth / 3.0 + 0.4).clamp(0.0, 1.0));
         }
         // Ridges go dark and rocky.
         let b = self.border(p);
@@ -210,21 +332,49 @@ impl Layout {
         self.road(p) > ROAD_HALF_WIDTH + margin
             && self.clearings.iter().all(|&(c, r)| c.distance(p) > r + margin)
             && self.border(p) < 0.05
+            && self.water_depth(p).is_none()
+            && self.slope(p) < 0.5
     }
+
+    /// Depth below the nearest water surface, if `p` is inside a water polygon.
+    fn water_depth(&self, p: Vec2) -> Option<f32> {
+        let file = self.source?;
+        let (sx, sy) = file.to_sage(p.x, p.y);
+        file.water.iter().find(|w| inside(&w.outline, sx, sy)).map(|w| {
+            let surface = (w.z - file.base_height) / g2_maps::SAGE_PER_WORLD as f32;
+            (surface - self.height(p)).max(0.0)
+        })
+    }
+}
+
+/// Even-odd point-in-polygon test.
+fn inside(poly: &[(f32, f32)], x: f32, y: f32) -> bool {
+    let mut hit = false;
+    let mut j = poly.len() - 1;
+    for i in 0..poly.len() {
+        let (xi, yi) = poly[i];
+        let (xj, yj) = poly[j];
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+            hit = !hit;
+        }
+        j = i;
+    }
+    hit
 }
 
 // ---- meshes ---------------------------------------------------------------------------------
 
 fn ground_mesh(layout: &Layout) -> Mesh {
+    let cell = cell_size(layout);
     let (x0, z0) = (-APRON, -APRON);
-    let nx = ((layout.width + 2.0 * APRON) / CELL) as usize + 1;
-    let nz = ((layout.height + 2.0 * APRON) / CELL) as usize + 1;
+    let nx = ((layout.width + 2.0 * APRON) / cell) as usize + 1;
+    let nz = ((layout.height + 2.0 * APRON) / cell) as usize + 1;
     let mut positions = Vec::with_capacity(nx * nz);
     let mut colors = Vec::with_capacity(nx * nz);
     let mut uvs = Vec::with_capacity(nx * nz);
     for j in 0..nz {
         for i in 0..nx {
-            let p = Vec2::new(x0 + i as f32 * CELL, z0 + j as f32 * CELL);
+            let p = Vec2::new(x0 + i as f32 * cell, z0 + j as f32 * cell);
             positions.push([p.x, layout.height(p), p.y]);
             colors.push(layout.color(p));
             uvs.push([p.x / DETAIL_TILE, p.y / DETAIL_TILE]);
@@ -303,8 +453,12 @@ enum Prop {
     Rock,
 }
 
-/// Deterministic scatter on a jittered grid, avoiding roads, bases and resources.
+/// Scenery placement. Imported maps keep the original positions of every tree, bush and rock
+/// (drawn as our own shapes); the built-in map uses a deterministic jittered-grid scatter.
 fn scatter(layout: &Layout) -> Vec<(Prop, Vec2, f32, f32)> {
+    if let Some(file) = layout.source {
+        return imported_scenery(layout, file);
+    }
     let mut out = Vec::new();
     let step = 6.5;
     let (nx, nz) = ((layout.width / step) as i32, (layout.height / step) as i32);
@@ -332,6 +486,33 @@ fn scatter(layout: &Layout) -> Vec<(Prop, Vec2, f32, f32)> {
     out
 }
 
+fn imported_scenery(layout: &Layout, file: &MapFile) -> Vec<(Prop, Vec2, f32, f32)> {
+    let mut out = Vec::new();
+    for (k, o) in file.objects.iter().enumerate() {
+        let template = o.name.rsplit('/').next().unwrap_or(&o.name).to_ascii_lowercase();
+        let kind = if template.starts_with("tree") || template.starts_with("cinetree") {
+            Prop::Acacia
+        } else if template.starts_with("bush") {
+            Prop::Bush
+        } else if template.starts_with("rock") {
+            Prop::Rock
+        } else {
+            continue;
+        };
+        let p = Vec2::from(file.to_world(o.x, o.y));
+        // The original map already keeps scenery off roads and slopes; only bases and
+        // resources (our footprints differ) and the outer ridge need clearing.
+        let clear = layout.clearings.iter().all(|&(c, r)| c.distance(p) > r + 2.0)
+            && layout.border(p) < 0.05
+            && layout.water_depth(p).is_none();
+        if clear {
+            let r = |n: u32| hash(k as i32, 0, 950 + n);
+            out.push((kind, p, 0.75 + r(0) * 0.6, -o.angle));
+        }
+    }
+    out
+}
+
 fn spawn_terrain(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -349,6 +530,20 @@ fn spawn_terrain(
         ..default()
     });
     commands.spawn((Mesh3d(meshes.add(ground_mesh(&layout))), MeshMaterial3d(ground)));
+    if let Some(file) = layout.source {
+        let water = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.16, 0.30, 0.32, 0.78),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.08,
+            reflectance: 0.6,
+            ..default()
+        });
+        for w in &file.water {
+            if let Some(mesh) = water_mesh(file, w) {
+                commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(water.clone())));
+            }
+        }
+    }
 
     let mat = |m: &mut Assets<StandardMaterial>, c: Color| {
         m.add(StandardMaterial { base_color: c, perceptual_roughness: 0.9, ..default() })
@@ -441,6 +636,60 @@ fn spawn_terrain(
     }
 }
 
+/// Flat water surface over a polygon, clipped to the playable area (fan from the centroid; the
+/// retail water areas are close enough to convex for this, and the ground under any overhang is
+/// dark bed colour).
+fn water_mesh(file: &MapFile, w: &g2_maps::Water) -> Option<Mesh> {
+    let y = (w.z - file.base_height) / g2_maps::SAGE_PER_WORLD as f32;
+    let pts: Vec<Vec2> = w.outline.iter().map(|&(x, z)| Vec2::from(file.to_world(x, z))).collect();
+    let pts = clip_to_rect(&pts, Vec2::ZERO, Vec2::from(file.world_size()));
+    if pts.len() < 3 {
+        return None;
+    }
+    let centre = pts.iter().copied().sum::<Vec2>() / pts.len() as f32;
+    let mut positions = vec![[centre.x, y, centre.y]];
+    positions.extend(pts.iter().map(|p| [p.x, y, p.y]));
+    let n = pts.len() as u32;
+    let mut indices = Vec::with_capacity(pts.len() * 3);
+    for i in 0..n {
+        let (a, b) = (1 + i, 1 + (i + 1) % n);
+        // Both windings, so the surface shows whatever direction the outline runs.
+        indices.extend_from_slice(&[0, a, b, 0, b, a]);
+    }
+    let normals = vec![[0.0, 1.0, 0.0]; positions.len()];
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_indices(Indices::U32(indices));
+    Some(mesh)
+}
+
+/// Sutherland–Hodgman clip of a polygon against an axis-aligned rectangle.
+fn clip_to_rect(poly: &[Vec2], lo: Vec2, hi: Vec2) -> Vec<Vec2> {
+    // Each edge: (inside test, intersection of segment a→b with the edge line).
+    type Edge<'f> = (&'f dyn Fn(Vec2) -> bool, &'f dyn Fn(Vec2, Vec2) -> Vec2);
+    let edges: [Edge; 4] = [
+        (&|p| p.x >= lo.x, &|a, b| a.lerp(b, (lo.x - a.x) / (b.x - a.x))),
+        (&|p| p.x <= hi.x, &|a, b| a.lerp(b, (hi.x - a.x) / (b.x - a.x))),
+        (&|p| p.y >= lo.y, &|a, b| a.lerp(b, (lo.y - a.y) / (b.y - a.y))),
+        (&|p| p.y <= hi.y, &|a, b| a.lerp(b, (hi.y - a.y) / (b.y - a.y))),
+    ];
+    let mut out = poly.to_vec();
+    for (inside, cross) in edges {
+        let input = std::mem::take(&mut out);
+        for (i, &b) in input.iter().enumerate() {
+            let a = input[(i + input.len() - 1) % input.len()];
+            match (inside(a), inside(b)) {
+                (true, true) => out.push(b),
+                (true, false) => out.push(cross(a, b)),
+                (false, true) => out.extend([cross(a, b), b]),
+                (false, false) => {}
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,9 +704,13 @@ mod tests {
         }
     }
 
+    fn built_in() -> Sim {
+        Sim::new(g2_rules::crater_ridge(), None, 1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true)
+    }
+
     #[test]
     fn playable_area_stays_flat_enough_for_the_flat_sim_ground() {
-        let sim = Sim::new(1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true);
+        let sim = built_in();
         let layout = Layout::from_sim(&sim);
         for j in 0..40 {
             for i in 0..40 {
@@ -469,7 +722,7 @@ mod tests {
 
     #[test]
     fn props_never_block_roads_bases_or_resources() {
-        let sim = Sim::new(1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true);
+        let sim = built_in();
         let layout = Layout::from_sim(&sim);
         let props = scatter(&layout);
         assert!(props.len() > 50, "{} props", props.len());
@@ -483,7 +736,7 @@ mod tests {
 
     #[test]
     fn props_under_a_building_are_hidden_and_return_when_it_is_gone() {
-        let sim = Sim::new(1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true);
+        let sim = built_in();
         let cc = sim.world.entities().find(|e| sim.world.rules.def(e.def).is_building()).unwrap();
         let (at, owner) = (to_world(cc.pos).xz(), cc.owner.unwrap());
         let mut app = App::new();
@@ -503,5 +756,54 @@ mod tests {
         assert!(sim.world.entities().all(|e| e.owner != Some(owner)));
         app.update();
         assert_eq!(app.world().get::<Visibility>(under), Some(&Visibility::Inherited));
+    }
+
+    fn imported(name: &str) -> Sim {
+        let file = g2_maps::load_file_named(&g2_maps::vendored_root(), name).unwrap();
+        let map = file.to_map_def(name);
+        Sim::new(map, Some(file), 1, [g2_sim::Faction::Eu, g2_sim::Faction::Gla], true)
+    }
+
+    /// Imported terrain: bases sit on the ground they were designed for, original trees are
+    /// placed but never on a base or in water, and the edge ridge continues smoothly.
+    #[test]
+    fn imported_terrain_keeps_the_original_layout() {
+        let sim = imported("zh:Tournament Desert");
+        let layout = Layout::from_sim(&sim);
+        // Start positions are on the battlefield level (base_height), not on a hill or in a pit.
+        for &s in &sim.world.map.spawns {
+            let p = to_world(s).xz();
+            assert!(layout.height(p).abs() < 4.0, "start at {p} is at height {}", layout.height(p));
+        }
+        let props = scatter(&layout);
+        assert!(props.len() > 100, "{} props from the original placements", props.len());
+        for (_, p, _, _) in &props {
+            assert!(layout.water_depth(*p).is_none() && layout.border(*p) < 0.05);
+            assert!(layout.clearings.iter().all(|&(c, r)| c.distance(*p) > r));
+        }
+        // Past the edge the ridge rises smoothly: no steps between neighbouring vertices.
+        for i in 0..200 {
+            let x = i as f32 * layout.width / 200.0;
+            let (a, b) = (layout.height(Vec2::new(x, -30.0)), layout.height(Vec2::new(x + 1.5, -30.0)));
+            assert!((a - b).abs() < 3.0, "apron step {a} -> {b} at x {x}");
+        }
+    }
+
+    #[test]
+    fn water_surfaces_stay_inside_the_map() {
+        let sim = imported("gen:Golden Oasis");
+        let file = sim.source.as_ref().unwrap();
+        assert!(!file.water.is_empty());
+        let (w, h) = file.world_size();
+        for water in &file.water {
+            let Some(mesh) = water_mesh(file, water) else { continue };
+            let Some(bevy::mesh::VertexAttributeValues::Float32x3(pos)) = mesh.attribute(Mesh::ATTRIBUTE_POSITION)
+            else {
+                panic!("no positions")
+            };
+            for p in pos {
+                assert!((-0.01..=w + 0.01).contains(&p[0]) && (-0.01..=h + 0.01).contains(&p[2]), "{p:?}");
+            }
+        }
     }
 }

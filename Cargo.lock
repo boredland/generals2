@@ -2428,8 +2428,18 @@ name = "g2-client"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "g2-maps",
  "g2-rules",
  "g2-sim",
+]
+
+[[package]]
+name = "g2-maps"
+version = "0.1.0"
+dependencies = [
+ "g2-rules",
+ "g2-sim",
+ "miniz_oxide 0.8.9",
 ]
 
 [[package]]
@@ -2447,6 +2457,7 @@ version = "0.1.0"
 name = "g2-tools"
 version = "0.1.0"
 dependencies = [
+ "g2-maps",
  "g2-rules",
  "g2-sim",
 ]

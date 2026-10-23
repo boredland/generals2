@@ -1,0 +1,15 @@
+[package]
+name = "g2-maps"
+description = "Importer for Generals / Zero Hour .map files (SAGE chunky format)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+g2-sim.workspace = true
+g2-rules.workspace = true
+miniz_oxide = "0.8"
+
+[lints]
+workspace = true

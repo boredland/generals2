@@ -226,7 +226,7 @@ pub fn rules() -> &'static Rules {
 pub fn crater_ridge() -> MapDef {
     let v = Vec2::from_int;
     MapDef {
-        name: "Crater Ridge",
+        name: "Crater Ridge".to_owned(),
         width: Fx::from_int(400),
         height: Fx::from_int(400),
         spawns: vec![v(80, 80), v(320, 320)],

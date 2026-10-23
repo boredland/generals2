@@ -2,7 +2,7 @@
 
 Open-source recreation of the cancelled *Command & Conquer: Generals 2*, as a new engine written in Rust. Not affiliated with or endorsed by EA. All trademarks are the property of their respective owners.
 
-The engine needs no game files. EA's GPL release of *Generals/Zero Hour* in `vendor/` is reading material only; nothing from it is ported or copied into `crates/`. All art is original and procedural: meshes built from primitives, generated terrain and textures, our own HUD design. The archived 2013 footage sets the target mood (warm hard light, steep camera, savanna ground); `docs/STYLE.md` describes it as requirements, not as elements to copy.
+The engine needs no game files. EA's GPL release of *Generals/Zero Hour* in `vendor/` is reference for the engine: no code from it is ported or copied into `crates/`. The one runtime use of `vendor/` is map data: the original Generals and Zero Hour **maps** can be played, read at runtime from EA's GPL map sources (`vendor/ea/CnC_Modding_Support`, a git submodule) and never copied into this repository. All art is original and procedural: meshes built from primitives, generated terrain and textures, our own HUD design. The archived 2013 footage sets the target mood (warm hard light, steep camera, savanna ground); `docs/STYLE.md` describes it as requirements, not as elements to copy.
 
 ## Status: milestone 1, economy slice
 
@@ -26,6 +26,7 @@ What works:
   - `--record FILE` saves the match as a replay on exit, for `g2-tools verify`.
   - A headless `--screenshot` mode that renders one frame and checks that every sim entity has exactly one model at its sim position. `--view base|map` picks the in-game camera or a whole-map overview.
 - **Visuals** (`look.rs`, `terrain.rs`, `models.rs`, `hud.rs`): narrow-FOV steep camera, a low warm sun with cascaded shadows, AgX tonemapping with a warm grade, distance haze and a vignette. The terrain is procedural savanna with dirt roads, a tiling detail texture, trees, bushes and rocky rims. As in the 2013 footage, scenery grows right up to the bases: only the command center and resource spots start clear, and a building hides any scenery it covers while it stands. Each faction has its own procedural models: EU grey panels with hazard trim and a ducted-fan collector, APA dark steel with red accents, GLA scrap walls and crate yards. Construction sites have grey scaffolding, team-coloured netting and a tower crane. The HUD shows live data only: match bar, resources, a minimap with team dots and neutral resources, a selection panel with a training queue and a 3×3 production grid, plus collector counts and health bars in the world.
+- **Original Generals / Zero Hour maps** (`crates/g2-maps`): a reader for the SAGE `.map` format (RefPack and zlib compression, the `CkMp` chunk container). It turns a map into a match: player starts, supply docks and piles with their retail amounts (boxes × 75 credits), and tech oil derricks as oil wells. All 174 official maps in `vendor/ea/CnC_Modding_Support` parse; 85 of them have two or more player starts and can host a skirmish. In the client the original relief, painted ground (grass, sand, rock, snow, paved), road network, water areas and tree, bush and rock positions are drawn in our own procedural style; models, the cursor and the camera follow the rendered ground. `g2-tools maps` lists them; `--map zh:Tournament Desert` picks one. Map names in replays are checked so they cannot name paths outside the map folder. Scale: 6 SAGE units = 1 world unit, so a retail command center matches ours.
 
 Not yet:
 
@@ -33,6 +34,7 @@ Not yet:
 - The generals/perk system, the Onslaught PvE mode, networking, real art, audio.
 - The **"base proxy" rule**: Wikipedia says a faction "must have 'captured' a resource stash before letting its harvesters in". The archived sources don't say how capture works, so for now any player can gather from any pile.
 - Rules are const Rust tables, not data files.
+- On imported maps the **sim is still flat**: hills, cliffs and water are drawn, but units drive straight across them, and buildings can be placed on slopes and in water. Retail tech buildings, civilian structures, bridges, cliff textures, blended ground edges and scripts are ignored. Oil wells are finite (10,000 oil each), unlike retail derricks. Water surfaces are flat fans over each area's outline, so a strongly concave lake can overhang its shore. Only 2-player matches are supported, even on 4-, 6- and 8-start maps.
 
 ![EU base at 3 minutes, in-game camera](docs/img/m1-eu-base-3min.png)
 
@@ -40,10 +42,17 @@ Not yet:
 
 *Above: an EU base at 3:00 (EU vs GLA AI), and APA (red) vs GLA (sand) after 5 minutes of AI vs AI with `--view map`. Both rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150).*
 
+![Zero Hour's Tournament Desert, EU base at 3 minutes](docs/img/m2-zh-tournament-desert-base.png)
+
+![Zero Hour's Winding River, whole-map view](docs/img/m2-zh-winding-river-map.png)
+
+*Above: original maps, read from EA's map sources and drawn in this project's style: `--map "zh:Tournament Desert"` (base view) and `--map "zh:Winding River"` (`--view map`).*
+
 **Verification status.**
 
 - Both frames above were rendered on this host, and the mirror check passed for each (30/30 and 31/31 entities, none misplaced). Their HUD totals match `g2-tools record --seed 1` for the same matches: EU at 5,400 ticks shows `$2250`, oil 1045, power 40/210; APA at 9,000 ticks shows `$6500`, oil 2240, power 40/210.
 - A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
+- Imported maps: all 174 official maps parse in a test; a recorded AI match on `zh:Tournament Desert` round-trips through a replay and verifies to the same hash; terrain tests check that starts sit on the battlefield level, original scenery stays off bases and water, the ridge past the edge has no steps, and water surfaces stay inside the map. Tournament Desert, Alpine Assault, Golden Oasis, Defcon6 and Winding River were rendered headless with the mirror check passing (models on terrain, none misplaced). The built-in Crater Ridge frame is byte-identical to before.
 - The **interactive** window (mouse, keyboard, camera) has not been exercised. The build host has no display.
 - **GPU on the build host:** the discrete amdgpu device (`c7:00.0`, MI50) is wedged; opening it hangs the process in D state. Run every GPU command through `scripts/igpu-only/run.sh`. It hides the MI50's DRM nodes with an `LD_PRELOAD` shim, so only the integrated Radeon (`c8:00.0`, `renderD128`) is enumerated. strace confirms `renderD128` is the only device node opened:
 
@@ -63,7 +72,8 @@ Not yet:
 crates/g2-sim      deterministic simulation (no deps): fixed point, RNG, entities, economy, AI, replays
 crates/g2-rules    faction/unit/building tables, the built-in map; economy + determinism tests
 crates/g2-client   Bevy 0.20 app: look (camera/light/grade), terrain, models, view, input, HUD, headless screenshot
-crates/g2-tools    CLI: verify / record / bench / summary
+crates/g2-maps     reader for Generals / Zero Hour .map files: chunks, heights, textures, objects, water
+crates/g2-tools    CLI: verify / record / bench / summary / maps
 scripts/igpu-only/ LD_PRELOAD shim + wrapper that restricts Vulkan to the integrated GPU on the build host
 archive/           research material (manifests committed, media local-only), see archive/README.md
 vendor/            upstream source as git submodules (reference only), see vendor/README.md
@@ -80,10 +90,12 @@ cargo test --workspace                               # unit, economy, determinis
 cargo run -p g2-client --release                     # play EU vs GLA AI
 cargo run -p g2-client --release -- --faction gla --enemy apa --seed 4
 cargo run -p g2-client --release -- --spectate       # AI vs AI
+cargo run -p g2-tools --release -- maps             # list the original maps that can host a skirmish
+cargo run -p g2-client --release -- --map "zh:Tournament Desert" --faction apa
 cargo run -p g2-client --release -- --record my.g2rp # then: cargo run -p g2-tools --release -- verify my.g2rp
 cargo run -p g2-client --release -- --screenshot shot.png --ticks 1800   # on this host, wrap with scripts/igpu-only/run.sh
 cargo run -p g2-tools --release -- bench
-cargo run -p g2-tools --release -- record match.g2rp --factions apa,gla --ticks 18000
+cargo run -p g2-tools --release -- record match.g2rp --factions apa,gla --ticks 18000 --map "gen:Alpine Assault"
 cargo run -p g2-tools --release -- verify match.g2rp
 ```
 

@@ -1,14 +1,18 @@
 //! Headless tooling for the simulation.
 //!
 //!   g2-tools verify <file.g2rp>                       re-simulate a replay, report the first divergence
-//!   g2-tools record <out.g2rp> [--ticks N] [--seed S] [--factions eu,gla]   AI-vs-AI match → replay
-//!   g2-tools bench [--ticks N]                        ticks per second for an AI-vs-AI match
+//!   g2-tools record <out.g2rp> [--ticks N] [--seed S] [--factions eu,gla] [--map NAME]   AI match → replay
+//!   g2-tools bench [--ticks N] [--map NAME]           ticks per second for an AI-vs-AI match
 //!   g2-tools summary <file.g2rp>                      print the final economy of a replay
+//!   g2-tools maps                                     list importable Generals / Zero Hour maps
+//!
+//! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` from `maps`.
 
 use std::process::ExitCode;
 use std::time::Instant;
 
-use g2_rules::{crater_ridge, map_by_name, rules};
+use g2_maps::resolve;
+use g2_rules::rules;
 use g2_sim::{Faction, MatchSetup, PlayerId, PlayerSetup, Replay, TICKS_PER_SECOND, World, record, verify_replay};
 
 fn main() -> ExitCode {
@@ -18,6 +22,7 @@ fn main() -> ExitCode {
         Some("record") => record_cmd(&args[1..]),
         Some("bench") => bench(&args[1..]),
         Some("summary") => summary(&args[1..]),
+        Some("maps") => maps(),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -29,7 +34,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] | bench [--ticks N] | summary FILE>";
+const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] [--map NAME] | bench [--ticks N] [--map NAME] | summary FILE | maps>";
 
 fn flag<T: std::str::FromStr>(args: &[String], name: &str, default: T) -> Result<T, String> {
     match args.iter().position(|a| a == name) {
@@ -53,7 +58,39 @@ fn ai_setup(args: &[String]) -> Result<MatchSetup, String> {
         .split(',')
         .map(|f| Ok(PlayerSetup { faction: faction(f)?, starting_credits: 5_000, ai: true }))
         .collect::<Result<Vec<_>, String>>()?;
-    Ok(MatchSetup { map: crater_ridge(), seed: flag(args, "--seed", 1u64)?, players })
+    let map = resolve(&flag(args, "--map", "Crater Ridge".to_owned())?)?;
+    if map.spawns.len() < players.len() {
+        return Err(format!("{} has {} player starts, need {}", map.name, map.spawns.len(), players.len()));
+    }
+    Ok(MatchSetup { map, seed: flag(args, "--seed", 1u64)?, players })
+}
+
+fn maps() -> Result<(), String> {
+    let root = g2_maps::vendored_root();
+    let entries = g2_maps::catalogue(&root);
+    if entries.is_empty() {
+        return Err(format!("no maps under {}: git submodule update --init", root.display()));
+    }
+    println!("Crater Ridge  (built in, 2 starts)");
+    for e in entries {
+        let map = std::fs::read(&e.path)
+            .map_err(|err| err.to_string())
+            .and_then(|b| g2_maps::load(&b).map(|m| m.to_map_def(&e.name)).map_err(|err| err.to_string()));
+        match map {
+            Ok(m) if m.spawns.len() >= 2 => println!(
+                "{}  ({} starts, {:.0}x{:.0}, {} supplies, {} oil)",
+                e.name,
+                m.spawns.len(),
+                m.width.to_f32(),
+                m.height.to_f32(),
+                m.supply_piles.len(),
+                m.oil_wells.len()
+            ),
+            Ok(_) => {} // campaign and test maps: no skirmish starts
+            Err(err) => println!("{}  (unreadable: {err})", e.name),
+        }
+    }
+    Ok(())
 }
 
 fn load(path: Option<&String>) -> Result<Replay, String> {
@@ -64,7 +101,7 @@ fn load(path: Option<&String>) -> Result<Replay, String> {
 
 fn verify(args: &[String]) -> Result<(), String> {
     let replay = load(args.first())?;
-    let map = map_by_name(&replay.map).ok_or_else(|| format!("unknown map {:?}", replay.map))?;
+    let map = resolve(&replay.map)?;
     let start = Instant::now();
     match verify_replay(&replay, map, rules()) {
         Ok(hash) => {
@@ -113,7 +150,7 @@ fn bench(args: &[String]) -> Result<(), String> {
 
 fn summary(args: &[String]) -> Result<(), String> {
     let replay = load(args.first())?;
-    let map = map_by_name(&replay.map).ok_or_else(|| format!("unknown map {:?}", replay.map))?;
+    let map = resolve(&replay.map)?;
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
     let mut world = World::new(&setup, rules());
     for c in &replay.commands {

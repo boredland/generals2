@@ -1,11 +1,12 @@
 //! Generals 2 client.
 //!
-//!   g2-client [--faction eu|apa|gla] [--enemy eu|apa|gla] [--seed N] [--spectate] [--record FILE]
+//!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--seed N] [--spectate] [--record FILE]
 //!   g2-client --screenshot out.png [--ticks N] [...]   headless: simulate N ticks, render one frame
 //!
-//! `--spectate` lets the AI play your side too (AI vs AI). `--record` saves the match as a replay
-//! on exit; check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no
-//! window or display server.
+//! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
+//! Generals / Zero Hour map (`g2-tools maps` lists them). `--spectate` lets the AI play your side
+//! too (AI vs AI). `--record` saves the match as a replay on exit; check it with
+//! `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no window or display server.
 
 mod camera;
 mod hud;
@@ -19,9 +20,10 @@ mod view;
 use bevy::prelude::*;
 use g2_sim::Faction;
 
-use crate::sim::{LOCAL, Sim, SimPlugin, to_world};
+use crate::sim::{LOCAL, Sim, SimPlugin};
 
 struct Args {
+    map: String,
     factions: [Faction; 2],
     seed: u64,
     spectate: bool,
@@ -34,6 +36,7 @@ struct Args {
 
 fn parse_args() -> Result<Args, String> {
     let mut a = Args {
+        map: "Crater Ridge".to_owned(),
         factions: [Faction::Eu, Faction::Gla],
         seed: 1,
         spectate: false,
@@ -52,6 +55,7 @@ fn parse_args() -> Result<Args, String> {
     };
     while let Some(flag) = it.next() {
         match flag.as_str() {
+            "--map" => a.map = it.next().ok_or("--map needs a name")?,
             "--faction" => a.factions[0] = faction(it.next())?,
             "--enemy" => a.factions[1] = faction(it.next())?,
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()).ok_or("--seed needs a number")?,
@@ -85,11 +89,38 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
-    let sim = Sim::new(args.seed, args.factions, args.spectate || args.screenshot.is_some());
+    let sim = match load_sim(&args) {
+        Ok(sim) => sim,
+        Err(e) => {
+            eprintln!("{e}");
+            return AppExit::error();
+        }
+    };
     match args.screenshot {
         Some(path) => headless::run(sim, args.ticks, path, args.view, args.size),
         None => windowed(sim, args.record),
     }
+}
+
+fn load_sim(args: &Args) -> Result<Sim, String> {
+    let spectate = args.spectate || args.screenshot.is_some();
+    let source = if args.map.contains(':') {
+        Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &args.map)?)
+    } else {
+        None
+    };
+    let map = match &source {
+        Some(file) => file.to_map_def(&args.map),
+        None => g2_maps::resolve(&args.map)?,
+    };
+    if map.spawns.len() < 2 {
+        return Err(format!(
+            "{} has {} player starts; pick a skirmish map (g2-tools maps)",
+            args.map,
+            map.spawns.len()
+        ));
+    }
+    Ok(Sim::new(map, source, args.seed, args.factions, spectate))
 }
 
 #[derive(Resource)]
@@ -127,7 +158,7 @@ fn save_replay_on_exit(mut exits: MessageReader<AppExit>, sim: Res<Sim>, to: Res
 }
 
 fn spawn_camera(mut commands: Commands, sim: Res<Sim>) {
-    let home = sim.world.entities().find(|e| e.owner == Some(LOCAL)).map_or(Vec3::ZERO, |e| to_world(e.pos));
+    let home = sim.world.entities().find(|e| e.owner == Some(LOCAL)).map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
     camera::spawn(&mut commands, home);
 }
 
@@ -147,7 +178,7 @@ mod headless {
     use bevy::winit::WinitPlugin;
 
     use crate::camera::RtsCamera;
-    use crate::sim::{LOCAL, Sim, to_world};
+    use crate::sim::{LOCAL, Sim};
 
     #[derive(Clone, Copy)]
     pub enum View {
@@ -187,10 +218,14 @@ mod headless {
         image.asset_usage = RenderAssetUsages::RENDER_WORLD;
         let target: RenderTarget = world.resource_mut::<Assets<Image>>().add(image).into();
         let cam = {
-            let sim = &world.resource::<Sim>().world;
+            let sim = world.resource::<Sim>();
             match view {
                 View::Base => {
-                    let home = sim.entities().find(|e| e.owner == Some(LOCAL)).map_or(Vec3::ZERO, |e| to_world(e.pos));
+                    let home = sim
+                        .world
+                        .entities()
+                        .find(|e| e.owner == Some(LOCAL))
+                        .map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
                     RtsCamera {
                         pivot: home + Vec3::new(12.0, 0.0, 4.0),
                         distance: crate::camera::DEFAULT_DISTANCE,
@@ -199,9 +234,9 @@ mod headless {
                     }
                 }
                 View::Map => {
-                    let (w, h) = (sim.map.width.to_f32(), sim.map.height.to_f32());
+                    let (w, h) = (sim.world.map.width.to_f32(), sim.world.map.height.to_f32());
                     RtsCamera {
-                        pivot: Vec3::new(w / 2.0, 0.0, h / 2.0),
+                        pivot: Vec3::new(w / 2.0, sim.ground_y(w / 2.0, h / 2.0), h / 2.0),
                         distance: w.max(h) * 2.4,
                         yaw: crate::look::YAW,
                         pitch: crate::look::PITCH,

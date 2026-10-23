@@ -1,0 +1,815 @@
+//! Importer for Generals / Zero Hour `.map` files.
+//!
+//! SAGE maps are "chunky" files: a `CkMp` table of contents followed by named, versioned
+//! chunks. The layout is a file format, implemented here from the field order documented by
+//! EA's GPL-3.0 source release (see `vendor/superhackers/GeneralsGameCode`: `DataChunk.cpp`,
+//! `WorldHeightMap.cpp`, `CompressionManager.cpp`, `refdecode.cpp`). No code from it is
+//! copied; nothing is read at build time — maps are loaded from the user's files or the
+//! vendored map sources.
+//!
+//! Compressed maps carry an 8-byte EA header: `EAR\0` + a RefPack stream, or `ZL1\0`..`ZL9\0`
+//! + a zlib stream. Plain `CkMp` files are accepted as-is.
+//!
+//! SAGE measures positions in units of 10 per height map cell (`MAP_XY_FACTOR`), with the
+//! origin at the corner of the playable area. `SAGE_PER_WORLD` converts them to sim units.
+
+use std::collections::BTreeMap;
+use std::fmt;
+
+use g2_sim::{Fx, MapDef, Vec2};
+
+/// SAGE units per world unit. The retail command center's footprint (about 65 SAGE units in
+/// radius) then matches ours (radius 10), so imported maps keep retail proportions at the
+/// scale the sim's speeds and radii are tuned for.
+pub const SAGE_PER_WORLD: i64 = 6;
+/// SAGE units per height map cell (`MAP_XY_FACTOR`).
+pub const SAGE_PER_CELL: i64 = 10;
+use miniz_oxide::inflate::decompress_to_vec_zlib;
+
+/// A `Dict` property value (world info, object properties).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Bool(bool),
+    Int(i32),
+    Real(f32),
+    Str(String),
+}
+
+/// Property table keyed by name (the chunk table of contents maps ids to these names).
+pub type Props = BTreeMap<String, Value>;
+
+/// One entry of `ObjectsList`: scenery, resources, waypoints, roads, and everything else a
+/// world builder placed on the map.
+#[derive(Debug, Clone)]
+pub struct MapObject {
+    pub name: String,
+    /// Position in SAGE units from the corner of the playable area.
+    pub x: f32,
+    pub y: f32,
+    pub angle: f32,
+    pub flags: i32,
+    pub props: Props,
+}
+
+/// A parsed map. Decoded chunks: `HeightMapData`, `BlendTileData` (base texture per cell),
+/// `ObjectsList`, `PolygonTriggers` (water areas) and `WorldInfo`; the rest are skipped.
+#[derive(Debug)]
+pub struct MapFile {
+    /// Height map grid, including `border` cells on every side.
+    pub grid_w: u32,
+    pub grid_h: u32,
+    /// Unplayable margin of cells around the playable area.
+    pub border: u32,
+    /// Raw heights, `grid_w * grid_h` samples, row-major. One step is `SAGE_PER_HEIGHT_STEP`.
+    pub heights: Vec<u8>,
+    /// The most common height in the playable area, in SAGE units: the main battlefield level,
+    /// which world Y = 0 is aligned to. Computed once at load.
+    pub base_height: f32,
+    /// Base terrain tile per cell (same layout as `heights`); see `texture_class`.
+    pub tiles: Vec<u16>,
+    pub texture_classes: Vec<TextureClass>,
+    pub water: Vec<Water>,
+    pub world: Props,
+    pub objects: Vec<MapObject>,
+}
+
+/// A named terrain texture (e.g. `GrassMediumType3`) covering a range of tile indices.
+#[derive(Debug, Clone)]
+pub struct TextureClass {
+    pub first_tile: i32,
+    pub num_tiles: i32,
+    pub name: String,
+}
+
+/// A water polygon: outline in SAGE units (playable-area origin), surface height in SAGE units.
+#[derive(Debug, Clone)]
+pub struct Water {
+    pub outline: Vec<(f32, f32)>,
+    pub z: f32,
+}
+
+/// One road piece between two points, in SAGE units. `name` is the road type (`DirtRoad`,
+/// `TwoLane`, `Sidewalk`, ...).
+#[derive(Debug, Clone)]
+pub struct Road {
+    pub name: String,
+    pub a: (f32, f32),
+    pub b: (f32, f32),
+}
+
+/// SAGE units per raw height step (`MAP_HEIGHT_SCALE`).
+pub const SAGE_PER_HEIGHT_STEP: f32 = 10.0 / 16.0;
+
+#[derive(Debug)]
+pub enum Error {
+    /// A compressed stream that did not decompress to its stated size.
+    Decompress,
+    BadMagic,
+    Truncated,
+    /// Structurally invalid chunk: the field values make no sense.
+    BadChunk(&'static str),
+    /// A chunk this parser supports, but not in this version.
+    UnknownVersion(&'static str, u16),
+    Missing(&'static str),
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Error::Decompress => write!(f, "decompression failed"),
+            Error::BadMagic => write!(f, "not a Generals map (bad magic)"),
+            Error::Truncated => write!(f, "truncated map data"),
+            Error::BadChunk(what) => write!(f, "invalid chunk: {what}"),
+            Error::UnknownVersion(what, v) => write!(f, "unsupported {what} version {v}"),
+            Error::Missing(what) => write!(f, "map is missing {what}"),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// Parses a `.map` file from bytes (compressed or not).
+pub fn load(bytes: &[u8]) -> Result<MapFile, Error> {
+    let data = decompress(bytes)?;
+    let mut c = Cursor::new(&data);
+    if c.bytes(4)? != b"CkMp" {
+        return Err(Error::BadMagic);
+    }
+    let count = c.i32()?;
+    if !(0..4096).contains(&count) {
+        return Err(Error::BadChunk("chunk table size"));
+    }
+    let mut toc = BTreeMap::new();
+    for _ in 0..count {
+        let len = c.u8()? as usize;
+        let name = String::from_utf8_lossy(c.bytes(len)?).into_owned();
+        toc.insert(c.u32()?, name);
+    }
+    let mut map = MapFile {
+        grid_w: 0,
+        grid_h: 0,
+        border: 0,
+        heights: Vec::new(),
+        base_height: 0.0,
+        tiles: Vec::new(),
+        texture_classes: Vec::new(),
+        water: Vec::new(),
+        world: Props::new(),
+        objects: Vec::new(),
+    };
+    while !c.at_end() {
+        let (name, version, payload) = read_chunk(&mut c, &toc)?;
+        let mut p = Cursor::new(payload);
+        match name.as_str() {
+            "HeightMapData" => map.read_heights(&mut p, version)?,
+            // Follows HeightMapData in every map; its arrays are sized by the grid.
+            "BlendTileData" if !map.heights.is_empty() => map.read_blend_tiles(&mut p, version)?,
+            "ObjectsList" => map.read_objects(&mut p, &toc)?,
+            "PolygonTriggers" => map.read_water(&mut p, version)?,
+            "WorldInfo" => map.world = read_dict(&mut p, &toc)?,
+            _ => {}
+        }
+    }
+    if map.heights.is_empty() {
+        return Err(Error::Missing("HeightMapData"));
+    }
+    map.base_height = map.most_common_height();
+    Ok(map)
+}
+
+impl MapFile {
+    /// Playable area in world units.
+    pub fn world_size(&self) -> (f32, f32) {
+        let s = |cells: u32| (cells as i64 * SAGE_PER_CELL) as f32 / SAGE_PER_WORLD as f32;
+        (s(self.grid_w - 2 * self.border), s(self.grid_h - 2 * self.border))
+    }
+
+    /// SAGE position (playable-area origin) → world `(x, z)`. SAGE `+y` is north, up the
+    /// screen; our camera looks down `-Z`, so `y` is flipped to keep maps unmirrored.
+    pub fn to_world(&self, x: f32, y: f32) -> (f32, f32) {
+        let per = SAGE_PER_WORLD as f32;
+        (x / per, self.world_size().1 - y / per)
+    }
+
+    /// World `(x, z)` → SAGE position; inverse of `to_world`.
+    pub fn to_sage(&self, x: f32, z: f32) -> (f32, f32) {
+        let per = SAGE_PER_WORLD as f32;
+        (x * per, (self.world_size().1 - z) * per)
+    }
+
+    /// Terrain height in world units at world `(x, z)`, relative to `base_height`.
+    pub fn ground_y(&self, x: f32, z: f32) -> f32 {
+        let (sx, sy) = self.to_sage(x, z);
+        (self.height_at(sx, sy) - self.base_height) / SAGE_PER_WORLD as f32
+    }
+
+    fn most_common_height(&self) -> f32 {
+        let mut hist = [0u32; 256];
+        let (w, b) = (self.grid_w as usize, self.border as usize);
+        for j in b..self.grid_h as usize - b {
+            for &h in &self.heights[j * w + b..j * w + w - b] {
+                hist[h as usize] += 1;
+            }
+        }
+        let mode = (0..256).max_by_key(|&h| hist[h]).unwrap_or(0);
+        mode as f32 * SAGE_PER_HEIGHT_STEP
+    }
+
+    /// Texture class painted under world `(x, z)`, if any.
+    pub fn class_at(&self, x: f32, z: f32) -> Option<&str> {
+        let (sx, sy) = self.to_sage(x, z);
+        let cell = SAGE_PER_CELL as f32;
+        let i = (sx / cell + self.border as f32).floor().clamp(0.0, (self.grid_w - 1) as f32) as u32;
+        let j = (sy / cell + self.border as f32).floor().clamp(0.0, (self.grid_h - 1) as f32) as u32;
+        self.texture_class(i, j)
+    }
+
+    /// The parts of the map the sim needs: player starts, supply piles and oil wells.
+    /// `name` is the caller's (the map folder); `WorldInfo` only holds a localisation key.
+    ///
+    /// Supply amounts come from the retail objects (`SupplyWarehouseCreate` boxes ×
+    /// `ValuePerSupplyBox = 75`); oil wells hold about ten minutes of the retail derrick's
+    /// income, because our wells deplete while the retail ones pay forever. Resources outside
+    /// the playable area are dropped.
+    pub fn to_map_def(&self, name: &str) -> MapDef {
+        let width = Fx::from_ratio((self.grid_w - 2 * self.border) as i64 * SAGE_PER_CELL, SAGE_PER_WORLD);
+        let height = Fx::from_ratio((self.grid_h - 2 * self.border) as i64 * SAGE_PER_CELL, SAGE_PER_WORLD);
+        // Same mapping as `to_world`, exact in fixed point (1/1024 SAGE unit).
+        let at = |x: f32, y: f32| {
+            let f = |v: f32| Fx::from_ratio((v * 1024.0).round() as i64, 1024 * SAGE_PER_WORLD);
+            Vec2::new(f(x), height - f(y))
+        };
+        let inside = |p: Vec2| p.x >= Fx::ZERO && p.y >= Fx::ZERO && p.x <= width && p.y <= height;
+        let mut starts: Vec<(i32, &MapObject)> = Vec::new();
+        let mut supply_piles = Vec::new();
+        let mut oil_wells = Vec::new();
+        for o in &self.objects {
+            if let Some(Value::Str(w)) = o.props.get("waypointName") {
+                let n = w.strip_prefix("Player_").and_then(|r| r.strip_suffix("_Start"));
+                if let Some(n) = n.and_then(|n| n.parse::<i32>().ok()) {
+                    starts.push((n, o));
+                    continue;
+                }
+            }
+            // The template name may carry a "Faction/Sub/" path prefix.
+            let template = o.name.rsplit('/').next().unwrap_or(&o.name);
+            let supply = match template {
+                "SupplyDock" | "SupplyWarehouse" => Some(30_000),
+                "SupplyPile" => Some(11_250),
+                "SupplyPileSmall" => Some(3_750),
+                _ => None,
+            };
+            let p = at(o.x, o.y);
+            if !inside(p) {
+                continue;
+            }
+            if let Some(amount) = supply {
+                supply_piles.push((p, amount));
+            } else if template == "TechOilDerrick" {
+                oil_wells.push((p, 10_000));
+            }
+        }
+        starts.sort_by_key(|&(n, _)| n);
+        MapDef {
+            name: name.to_owned(),
+            width,
+            height,
+            spawns: starts.iter().map(|&(_, o)| at(o.x, o.y)).collect(),
+            supply_piles,
+            oil_wells,
+        }
+    }
+
+    fn read_heights(&mut self, c: &mut Cursor, version: u16) -> Result<(), Error> {
+        if !(2..=4).contains(&version) {
+            return Err(Error::UnknownVersion("HeightMapData", version));
+        }
+        let (w, h) = (c.i32()?, c.i32()?);
+        if w <= 0 || h <= 0 || w > 4096 || h > 4096 {
+            return Err(Error::BadChunk("height map size"));
+        }
+        let border = c.i32()?;
+        if border < 0 || 2 * border >= w || 2 * border >= h {
+            return Err(Error::BadChunk("height map border"));
+        }
+        if version >= 4 {
+            // Explicit playable boundaries (campaign maps can have many); the sim uses the
+            // derived box. Each is two i32s; a bad count fails as truncation.
+            let n = c.i32()?;
+            let n = usize::try_from(n).map_err(|_| Error::BadChunk("height map boundaries"))?;
+            c.bytes(n.checked_mul(8).ok_or(Error::Truncated)?)?;
+        }
+        let count = c.i32()?;
+        if count != w * h {
+            return Err(Error::BadChunk("height map sample count"));
+        }
+        self.grid_w = w as u32;
+        self.grid_h = h as u32;
+        self.border = border as u32;
+        self.heights = c.bytes(count as usize)?.to_vec();
+        Ok(())
+    }
+
+    /// Base tiles and texture class table. Blend layers, cliff UVs and flags are skipped.
+    fn read_blend_tiles(&mut self, c: &mut Cursor, version: u16) -> Result<(), Error> {
+        if !(6..=8).contains(&version) {
+            return Err(Error::UnknownVersion("BlendTileData", version));
+        }
+        let n = self.heights.len();
+        if c.i32()? as usize != n {
+            return Err(Error::BadChunk("blend tile count"));
+        }
+        let raw = c.bytes(n * 2)?;
+        self.tiles = raw.as_chunks::<2>().0.iter().map(|&b| u16::from_le_bytes(b)).collect();
+        // Blend, extra blend and cliff info indices: three more arrays of i16 per cell.
+        c.bytes(n * 2 * 3)?;
+        // Passability bits per cell (version 7+); version 7 was saved with a short row width.
+        let row = match version {
+            7 => (self.grid_w as usize + 1) / 8,
+            8 => (self.grid_w as usize).div_ceil(8),
+            _ => 0,
+        };
+        c.bytes(row * self.grid_h as usize)?;
+        c.i32()?; // bitmap tiles
+        c.i32()?; // blended tiles
+        c.i32()?; // cliff infos
+        let classes = c.i32()?;
+        if !(0..1024).contains(&classes) {
+            return Err(Error::BadChunk("texture class count"));
+        }
+        for _ in 0..classes {
+            let first_tile = c.i32()?;
+            let num_tiles = c.i32()?;
+            c.i32()?; // width in tiles
+            c.i32()?; // legacy
+            let name = c.ascii()?;
+            self.texture_classes.push(TextureClass { first_tile, num_tiles, name });
+        }
+        Ok(())
+    }
+
+    /// Water areas from `PolygonTriggers` (other triggers are script regions).
+    fn read_water(&mut self, c: &mut Cursor, version: u16) -> Result<(), Error> {
+        if !(1..=4).contains(&version) {
+            return Err(Error::UnknownVersion("PolygonTriggers", version));
+        }
+        let count = c.i32()?;
+        for _ in 0..count.max(0) {
+            c.ascii()?; // trigger name
+            if version >= 4 {
+                c.ascii()?; // layer name
+            }
+            c.i32()?; // id
+            let water = version >= 2 && c.u8()? != 0;
+            if version >= 3 {
+                c.u8()?; // river
+                c.i32()?; // river start
+            }
+            let points = c.i32()?;
+            let points = usize::try_from(points).map_err(|_| Error::BadChunk("polygon point count"))?;
+            let mut outline = Vec::with_capacity(points.min(4096));
+            let mut z = 0.0;
+            for _ in 0..points {
+                let (x, y, pz) = (c.i32()?, c.i32()?, c.i32()?);
+                outline.push((x as f32, y as f32));
+                z = pz as f32;
+            }
+            if water && outline.len() >= 3 {
+                self.water.push(Water { outline, z });
+            }
+        }
+        Ok(())
+    }
+
+    /// Terrain height in SAGE units at a playable-area position in SAGE units (bilinear).
+    pub fn height_at(&self, x: f32, y: f32) -> f32 {
+        let cell = SAGE_PER_CELL as f32;
+        let fx = (x / cell + self.border as f32).clamp(0.0, (self.grid_w - 1) as f32);
+        let fy = (y / cell + self.border as f32).clamp(0.0, (self.grid_h - 1) as f32);
+        let (x0, y0) = (fx.floor() as usize, fy.floor() as usize);
+        let (x1, y1) = ((x0 + 1).min(self.grid_w as usize - 1), (y0 + 1).min(self.grid_h as usize - 1));
+        let h = |x: usize, y: usize| self.heights[y * self.grid_w as usize + x] as f32;
+        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
+        let top = h(x0, y0) + (h(x1, y0) - h(x0, y0)) * tx;
+        let bot = h(x0, y1) + (h(x1, y1) - h(x0, y1)) * tx;
+        (top + (bot - top) * ty) * SAGE_PER_HEIGHT_STEP
+    }
+
+    /// Name of the texture class painted on grid cell `(i, j)` (border included), if any.
+    pub fn texture_class(&self, i: u32, j: u32) -> Option<&str> {
+        let tile = *self.tiles.get((j * self.grid_w + i) as usize)? as i32 >> 2;
+        self.texture_classes
+            .iter()
+            .find(|c| c.first_tile >= 0 && tile >= c.first_tile && tile < c.first_tile + c.num_tiles)
+            .map(|c| c.name.as_str())
+    }
+
+    /// Road segments: consecutive objects flagged as a road's first and second point.
+    pub fn roads(&self) -> Vec<Road> {
+        const POINT1: i32 = 0x2;
+        const POINT2: i32 = 0x4;
+        let mut out = Vec::new();
+        let mut it = self.objects.iter().peekable();
+        while let Some(o) = it.next() {
+            if o.flags & POINT1 == 0 {
+                continue;
+            }
+            if let Some(b) = it.next_if(|b| b.flags & POINT2 != 0) {
+                let short = |n: &str| n.rsplit('/').next().unwrap_or(n).to_owned();
+                out.push(Road { name: short(&o.name), a: (o.x, o.y), b: (b.x, b.y) });
+            }
+        }
+        out
+    }
+
+    fn read_objects(&mut self, c: &mut Cursor, toc: &BTreeMap<u32, String>) -> Result<(), Error> {
+        while !c.at_end() {
+            let (name, version, payload) = read_chunk(c, toc)?;
+            if name != "Object" {
+                continue;
+            }
+            let mut p = Cursor::new(payload);
+            let (x, y) = (p.f32()?, p.f32()?);
+            p.f32()?; // z: the sim ground is flat
+            let angle = p.f32()?;
+            let flags = p.i32()?;
+            let name = p.ascii()?;
+            let props = if version >= 2 { read_dict(&mut p, toc)? } else { Props::new() };
+            self.objects.push(MapObject { name, x, y, angle, flags, props });
+        }
+        Ok(())
+    }
+}
+
+// ---- container ------------------------------------------------------------------------------
+
+/// Strips the EA compression header and returns the `CkMp` stream.
+fn decompress(bytes: &[u8]) -> Result<Vec<u8>, Error> {
+    if bytes.starts_with(b"CkMp") {
+        return Ok(bytes.to_vec());
+    }
+    if bytes.len() < 8 {
+        return Err(Error::Truncated);
+    }
+    let (magic, payload) = bytes.split_at(8);
+    match &magic[..4] {
+        b"EAR\0" => refpack(payload),
+        // ZL1..ZL9: zlib at different levels, same 8-byte header.
+        [b'Z', b'L', level, 0] if level.is_ascii_digit() => {
+            decompress_to_vec_zlib(payload).map_err(|_| Error::Decompress)
+        }
+        _ => Err(Error::BadMagic),
+    }
+}
+
+/// RefPack ("EA\0" header) decoder. Overlapping copies are one byte at a time, matching the
+/// sliding-window semantics of the format.
+fn refpack(src: &[u8]) -> Result<Vec<u8>, Error> {
+    let mut c = Cursor::new(src);
+    let type_word = c.u16be()?;
+    let ulen = if type_word & 0x8000 != 0 {
+        if type_word & 0x100 != 0 {
+            c.bytes(4)?;
+        }
+        c.u32be()? as usize
+    } else {
+        if type_word & 0x100 != 0 {
+            c.bytes(3)?;
+        }
+        let b = c.bytes(3)?;
+        ((b[0] as usize) << 16) | ((b[1] as usize) << 8) | b[2] as usize
+    };
+    let mut out = Vec::with_capacity(ulen);
+    loop {
+        let first = c.u8()?;
+        let (lit, off, run) = if first & 0x80 == 0 {
+            let second = c.u8()?;
+            (
+                (first & 3) as usize,
+                (((first & 0x60) as usize) << 3) + second as usize + 1,
+                ((first & 0x1c) as usize >> 2) + 3,
+            )
+        } else if first & 0x40 == 0 {
+            let (second, third) = (c.u8()?, c.u8()?);
+            (
+                (second >> 6) as usize,
+                (((second & 0x3f) as usize) << 8) + third as usize + 1,
+                (first & 0x3f) as usize + 4,
+            )
+        } else if first & 0x20 == 0 {
+            let (second, third, forth) = (c.u8()?, c.u8()?, c.u8()?);
+            (
+                (first & 3) as usize,
+                (((first & 0x10) as usize) << 12) + ((second as usize) << 8) + third as usize + 1,
+                (((first & 0x0c) as usize) << 6) + forth as usize + 5,
+            )
+        } else {
+            let run = (((first & 0x1f) as usize) << 2) + 4;
+            if run <= 112 {
+                out.extend_from_slice(c.bytes(run)?);
+                continue;
+            }
+            out.extend_from_slice(c.bytes((first & 3) as usize)?);
+            break;
+        };
+        out.extend_from_slice(c.bytes(lit)?);
+        if off > out.len() {
+            return Err(Error::Decompress);
+        }
+        for _ in 0..run {
+            out.push(out[out.len() - off]);
+        }
+    }
+    if out.len() != ulen {
+        return Err(Error::Decompress);
+    }
+    Ok(out)
+}
+
+/// Reads one chunk header and its payload; nested chunks use the same table of contents.
+fn read_chunk<'a>(c: &mut Cursor<'a>, toc: &BTreeMap<u32, String>) -> Result<(String, u16, &'a [u8]), Error> {
+    let id = c.u32()?;
+    let version = c.u16()?;
+    let len = c.i32()?;
+    if len < 0 {
+        return Err(Error::BadChunk("chunk size"));
+    }
+    let data = c.bytes(len as usize)?;
+    let name = toc.get(&id).cloned().ok_or(Error::BadChunk("chunk id"))?;
+    Ok((name, version, data))
+}
+
+/// `u16` count, then typed key/value pairs. Keys are chunk table ids.
+fn read_dict(c: &mut Cursor, toc: &BTreeMap<u32, String>) -> Result<Props, Error> {
+    let n = c.u16()? as usize;
+    let mut props = Props::new();
+    for _ in 0..n {
+        let key_and_type = c.i32()?;
+        let key_id = ((key_and_type >> 8) & 0xff_ffff) as u32;
+        let key = toc.get(&key_id).cloned().ok_or(Error::BadChunk("dict key"))?;
+        let value = match (key_and_type & 0xff) as u8 {
+            0 => Value::Bool(c.u8()? != 0),
+            1 => Value::Int(c.i32()?),
+            2 => Value::Real(c.f32()?),
+            3 => Value::Str(c.ascii()?),
+            4 => Value::Str(c.unicode()?),
+            _ => return Err(Error::BadChunk("dict value type")),
+        };
+        props.insert(key, value);
+    }
+    Ok(props)
+}
+
+/// Bounds-checked byte cursor.
+struct Cursor<'a> {
+    data: &'a [u8],
+    pos: usize,
+}
+
+impl<'a> Cursor<'a> {
+    fn new(data: &'a [u8]) -> Self {
+        Self { data, pos: 0 }
+    }
+
+    fn at_end(&self) -> bool {
+        self.pos == self.data.len()
+    }
+
+    fn bytes(&mut self, n: usize) -> Result<&'a [u8], Error> {
+        let end = self.pos.checked_add(n).filter(|&e| e <= self.data.len()).ok_or(Error::Truncated)?;
+        let out = &self.data[self.pos..end];
+        self.pos = end;
+        Ok(out)
+    }
+
+    fn u8(&mut self) -> Result<u8, Error> {
+        Ok(self.bytes(1)?[0])
+    }
+
+    fn u16(&mut self) -> Result<u16, Error> {
+        Ok(u16::from_le_bytes(self.bytes(2)?.try_into().unwrap()))
+    }
+
+    fn u16be(&mut self) -> Result<u16, Error> {
+        Ok(u16::from_be_bytes(self.bytes(2)?.try_into().unwrap()))
+    }
+
+    fn u32(&mut self) -> Result<u32, Error> {
+        Ok(u32::from_le_bytes(self.bytes(4)?.try_into().unwrap()))
+    }
+
+    fn u32be(&mut self) -> Result<u32, Error> {
+        Ok(u32::from_be_bytes(self.bytes(4)?.try_into().unwrap()))
+    }
+
+    fn i32(&mut self) -> Result<i32, Error> {
+        Ok(i32::from_le_bytes(self.bytes(4)?.try_into().unwrap()))
+    }
+
+    fn f32(&mut self) -> Result<f32, Error> {
+        Ok(f32::from_le_bytes(self.bytes(4)?.try_into().unwrap()))
+    }
+
+    /// `u16` length-prefixed Latin-1 string.
+    fn ascii(&mut self) -> Result<String, Error> {
+        let n = self.u16()? as usize;
+        Ok(String::from_utf8_lossy(self.bytes(n)?).into_owned())
+    }
+
+    /// `u16` length-prefixed UTF-16LE string (the length is in characters).
+    fn unicode(&mut self) -> Result<String, Error> {
+        let n = self.u16()? as usize;
+        let raw = self.bytes(n * 2)?;
+        let units: Vec<u16> = raw.as_chunks::<2>().0.iter().map(|&b| u16::from_le_bytes(b)).collect();
+        Ok(String::from_utf16_lossy(&units))
+    }
+}
+
+// ---- catalogue ------------------------------------------------------------------------------
+
+/// Which retail game a map came from. Both share map names, so names carry this prefix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Game {
+    Generals,
+    ZeroHour,
+}
+
+impl Game {
+    pub const ALL: [Game; 2] = [Game::Generals, Game::ZeroHour];
+
+    pub fn prefix(self) -> &'static str {
+        match self {
+            Game::Generals => "gen",
+            Game::ZeroHour => "zh",
+        }
+    }
+
+    /// Folder name inside `CnC_Modding_Support`.
+    fn folder(self) -> &'static str {
+        match self {
+            Game::Generals => "Generals",
+            Game::ZeroHour => "Zero Hour",
+        }
+    }
+}
+
+/// A map on disk. `name` is `<game>:<folder>`, e.g. `zh:Tournament Desert`; replays store it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct Entry {
+    pub name: String,
+    pub path: std::path::PathBuf,
+}
+
+/// Root of the vendored EA map sources, relative to the workspace.
+pub fn vendored_root() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/ea/CnC_Modding_Support")
+}
+
+/// Every official multiplayer and campaign map under `root` (a `CnC_Modding_Support`
+/// checkout), as `<root>/<Game>/Maps/official/<Name>/<Name>.map`. Sorted by name.
+pub fn catalogue(root: &std::path::Path) -> Vec<Entry> {
+    let mut out = Vec::new();
+    for game in Game::ALL {
+        let dir = root.join(game.folder()).join("Maps/official");
+        let Ok(folders) = std::fs::read_dir(&dir) else { continue };
+        for folder in folders.flatten() {
+            let name = folder.file_name().to_string_lossy().into_owned();
+            let path = folder.path().join(format!("{name}.map"));
+            if path.is_file() {
+                out.push(Entry { name: format!("{}:{name}", game.prefix()), path });
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Loads and parses a map file by catalogue name (`zh:Tournament Desert`) from `root`. Names
+/// arrive from replays and the command line, so the folder must be a plain directory name.
+pub fn load_file_named(root: &std::path::Path, name: &str) -> Result<MapFile, String> {
+    let (prefix, folder) = name.split_once(':').ok_or_else(|| format!("map {name:?}: expected <gen|zh>:<name>"))?;
+    let game = Game::ALL
+        .into_iter()
+        .find(|g| g.prefix() == prefix)
+        .ok_or_else(|| format!("map {name:?}: unknown game {prefix:?} (gen, zh)"))?;
+    let plain = matches!(
+        std::path::Path::new(folder).components().collect::<Vec<_>>().as_slice(),
+        [std::path::Component::Normal(_)]
+    );
+    if !plain || folder.contains(['/', '\\']) {
+        return Err(format!("map {name:?}: not a map name"));
+    }
+    let path = root.join(game.folder()).join("Maps/official").join(folder).join(format!("{folder}.map"));
+    let bytes = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    load(&bytes).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Loads a map by catalogue name (`zh:Tournament Desert`) from `root`.
+pub fn load_named(root: &std::path::Path, name: &str) -> Result<MapDef, String> {
+    Ok(load_file_named(root, name)?.to_map_def(name))
+}
+
+/// Resolves any map name a replay or the command line can carry: a built-in map
+/// (`Crater Ridge`) or an imported one (`zh:Tournament Desert`) from the vendored sources.
+pub fn resolve(name: &str) -> Result<MapDef, String> {
+    match g2_rules::map_by_name(name) {
+        Some(map) => Ok(map),
+        None if name.contains(':') => load_named(&vendored_root(), name),
+        None => Err(format!("unknown map {name:?}: use \"Crater Ridge\" or <gen|zh>:<name> (g2-tools maps)")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test data is the vendored EA map sources (git submodules, not part of this repo).
+    fn load_official(game: &str, folder: &str, file: &str) -> MapFile {
+        let path = format!(
+            "{}/../../vendor/ea/CnC_Modding_Support/{game}/Maps/official/{folder}/{file}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let bytes = std::fs::read(&path).expect("vendored map source missing: git submodule update --init");
+        load(&bytes).unwrap_or_else(|e| panic!("failed to parse {path}: {e}"))
+    }
+
+    #[test]
+    fn every_official_map_parses() {
+        let maps = catalogue(&vendored_root());
+        assert!(maps.len() >= 170, "{} maps; is the submodule checked out?", maps.len());
+        let mut playable = 0;
+        for e in &maps {
+            let bytes = std::fs::read(&e.path).unwrap();
+            let map = load(&bytes).unwrap_or_else(|err| panic!("{}: {err}", e.name));
+            let def = map.to_map_def(&e.name);
+            assert!(def.width > Fx::ZERO && def.height > Fx::ZERO, "{}", e.name);
+            for &(p, _) in def.supply_piles.iter().chain(&def.oil_wells) {
+                assert!(def.contains(p), "{}: resource outside the map at {p:?}", e.name);
+            }
+            playable += usize::from(def.spawns.len() >= 2);
+        }
+        // Skirmish maps; the rest are campaign and test maps without player starts.
+        assert!(playable >= 80, "{playable} maps with two or more starts");
+    }
+
+    #[test]
+    fn imports_tournament_desert() {
+        let map = load_official("Zero Hour", "Tournament Desert", "Tournament Desert.map");
+        let def = map.to_map_def("Tournament Desert");
+        assert_eq!(def.name, "Tournament Desert");
+        // Grid 270x340 with a 35-cell border: 200x270 cells of 10 SAGE units, at 6 per world unit.
+        assert_eq!(def.width, Fx::from_ratio(2000, 6));
+        assert_eq!(def.height, Fx::from_ratio(2700, 6));
+        assert_eq!(def.spawns.len(), 2);
+        let docks = def.supply_piles.iter().filter(|&&(_, a)| a == 30_000).count();
+        let small = def.supply_piles.iter().filter(|&&(_, a)| a == 3_750).count();
+        assert_eq!((docks, small, def.supply_piles.len()), (4, 12, 16));
+        assert_eq!(def.oil_wells.len(), 2);
+        // Player_1_Start at SAGE (1005, 584), Player_2_Start at (1011, 2103); y is flipped.
+        let near = |p: Vec2, x: f32, y: f32| (p.x.to_f32() - x).abs() < 0.2 && (p.y.to_f32() - y).abs() < 0.2;
+        assert!(near(def.spawns[0], 1005.0 / 6.0, (2700.0 - 584.0) / 6.0), "{:?}", def.spawns[0]);
+        assert!(near(def.spawns[1], 1011.0 / 6.0, (2700.0 - 2103.0) / 6.0), "{:?}", def.spawns[1]);
+        // The fixed-point sim positions and the float render mapping agree.
+        let (x, z) = map.to_world(1005.0, 584.0);
+        assert!(near(def.spawns[0], x, z));
+    }
+
+    #[test]
+    fn parses_zlib_compressed_maps() {
+        // Woodcrest Circle is stored as ZL5 (zlib) rather than RefPack.
+        let map = load_official("Generals", "Woodcrest Circle", "Woodcrest Circle.map");
+        assert_eq!(map.heights.len() as u32, map.grid_w * map.grid_h);
+    }
+
+    /// A match on an imported map is deterministic and its replay re-resolves the map by name.
+    #[test]
+    fn imported_map_replays_resolve_and_verify() {
+        use g2_sim::{Faction, MatchSetup, PlayerSetup, Replay, World, record, verify_replay};
+        let name = "zh:Tournament Desert";
+        let setup = MatchSetup {
+            map: resolve(name).unwrap(),
+            seed: 3,
+            players: [Faction::Apa, Faction::Gla]
+                .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: true })
+                .to_vec(),
+        };
+        let (world, replay) = record(World::new(&setup, g2_rules::rules()), &setup, 3_000, |_| {});
+        let decoded = Replay::decode(&replay.encode()).unwrap();
+        assert_eq!(decoded.map, name);
+        let end = verify_replay(&decoded, resolve(&decoded.map).unwrap(), g2_rules::rules());
+        assert_eq!(end, Ok(world.state_hash()));
+        // Both AIs found resources on the imported map within 100 seconds.
+        assert!(world.players().iter().all(|p| p.credits != 5_000), "{:?}", world.players());
+    }
+
+    /// Replay files are untrusted: a map name must not escape the map folder.
+    #[test]
+    fn map_names_cannot_name_paths() {
+        let root = vendored_root();
+        for bad in ["zh:..", "zh:../Generals", "zh:Tournament Desert/../Alpine Assault", "zh:/etc", "zh:"] {
+            let err = load_file_named(&root, bad).unwrap_err();
+            assert!(err.contains("not a map name"), "{bad}: {err}");
+        }
+        assert!(load_file_named(&root, "zh:Tournament Desert").is_ok());
+    }
+}
