@@ -18,3 +18,4 @@ archive/**/extracted/
 vendor/**/build/
 /build/
 /target/
+/scripts/igpu-only/build/

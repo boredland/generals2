@@ -33,9 +33,14 @@ impl Plugin for CameraPlugin {
     }
 }
 
+/// Default framing: a command center spans about a fifth of the screen width.
+pub const DEFAULT_DISTANCE: f32 = 105.0;
+pub const MIN_DISTANCE: f32 = 65.0;
+pub const MAX_DISTANCE: f32 = 170.0;
+
 pub fn spawn(commands: &mut Commands, pivot: Vec3) {
-    let cam = RtsCamera { pivot, distance: 160.0, yaw: 0.0, pitch: 0.95 };
-    commands.spawn((Camera3d::default(), cam.transform(), cam));
+    let cam = RtsCamera { pivot, distance: DEFAULT_DISTANCE, yaw: crate::look::YAW, pitch: crate::look::PITCH };
+    commands.spawn((crate::look::camera_bundle(), cam.transform(), cam));
 }
 
 fn control(
@@ -81,7 +86,7 @@ fn control(
     if keys.pressed(KeyCode::KeyE) {
         cam.yaw -= 1.5 * dt;
     }
-    cam.distance = (cam.distance * (1.0 - scroll.delta.y * 0.1)).clamp(40.0, 400.0);
+    cam.distance = (cam.distance * (1.0 - scroll.delta.y * 0.1)).clamp(MIN_DISTANCE, MAX_DISTANCE);
     if dir != Vec2::ZERO {
         let step = dir.normalize() * PAN_SPEED * cam.distance * dt;
         let rot = Quat::from_rotation_y(cam.yaw);

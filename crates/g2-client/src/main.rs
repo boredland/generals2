@@ -10,7 +10,10 @@
 mod camera;
 mod hud;
 mod input;
+mod look;
+mod models;
 mod sim;
+mod terrain;
 mod view;
 
 use bevy::prelude::*;
@@ -25,6 +28,8 @@ struct Args {
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
+    view: headless::View,
+    size: (u32, u32),
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -35,6 +40,8 @@ fn parse_args() -> Result<Args, String> {
         screenshot: None,
         record: None,
         ticks: 900,
+        view: headless::View::Base,
+        size: (1280, 720),
     };
     let mut it = std::env::args().skip(1);
     let faction = |v: Option<String>| match v.as_deref() {
@@ -52,6 +59,18 @@ fn parse_args() -> Result<Args, String> {
             "--screenshot" => a.screenshot = Some(it.next().ok_or("--screenshot needs a path")?),
             "--record" => a.record = Some(it.next().ok_or("--record needs a path")?),
             "--ticks" => a.ticks = it.next().and_then(|v| v.parse().ok()).ok_or("--ticks needs a number")?,
+            "--view" => {
+                a.view = match it.next().as_deref() {
+                    Some("base") => headless::View::Base,
+                    Some("map") => headless::View::Map,
+                    other => return Err(format!("--view expects base|map, got {other:?}")),
+                }
+            }
+            "--size" => {
+                let v = it.next().ok_or("--size needs WxH")?;
+                let (w, h) = v.split_once('x').ok_or("--size needs WxH")?;
+                a.size = (w.parse().map_err(|_| "bad width")?, h.parse().map_err(|_| "bad height")?);
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -68,7 +87,7 @@ fn main() -> AppExit {
     };
     let sim = Sim::new(args.seed, args.factions, args.spectate || args.screenshot.is_some());
     match args.screenshot {
-        Some(path) => headless::run(sim, args.ticks, path),
+        Some(path) => headless::run(sim, args.ticks, path, args.view, args.size),
         None => windowed(sim, args.record),
     }
 }
@@ -83,7 +102,14 @@ fn windowed(sim: Sim, record: Option<String>) -> AppExit {
         ..default()
     }))
     .insert_resource(sim)
-    .add_plugins((SimPlugin, view::ViewPlugin, camera::CameraPlugin, input::InputPlugin, hud::HudPlugin))
+    .add_plugins((
+        SimPlugin,
+        terrain::TerrainPlugin,
+        view::ViewPlugin,
+        camera::CameraPlugin,
+        input::InputPlugin,
+        hud::HudPlugin,
+    ))
     .add_systems(Startup, spawn_camera);
     if let Some(path) = record {
         app.insert_resource(RecordTo(path)).add_systems(Last, save_replay_on_exit);
@@ -121,11 +147,17 @@ mod headless {
     use bevy::winit::WinitPlugin;
 
     use crate::camera::RtsCamera;
-    use crate::sim::Sim;
+    use crate::sim::{LOCAL, Sim, to_world};
 
-    const SIZE: (u32, u32) = (1280, 720);
+    #[derive(Clone, Copy)]
+    pub enum View {
+        /// The in-game camera over the local base: what a player sees.
+        Base,
+        /// The whole map from above, for checking layout.
+        Map,
+    }
 
-    pub fn run(mut sim: Sim, ticks: u32, path: String) -> AppExit {
+    pub fn run(mut sim: Sim, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
         sim.speed = 0;
         for _ in 0..ticks {
             sim.world.step();
@@ -138,7 +170,12 @@ mod headless {
                 .disable::<WinitPlugin>(),
         )
         .insert_resource(sim)
-        .add_plugins((crate::sim::SimPlugin, crate::view::ViewPlugin, crate::hud::HudPlugin))
+        .add_plugins((
+            crate::sim::SimPlugin,
+            crate::terrain::TerrainPlugin,
+            crate::view::ViewPlugin,
+            crate::hud::HudPlugin,
+        ))
         .init_resource::<crate::input::Selection>()
         .init_resource::<crate::input::Placement>();
         app.finish();
@@ -146,18 +183,44 @@ mod headless {
         let mut apps: SubApps = std::mem::take(app.sub_apps_mut());
 
         let world = apps.main.world_mut();
-        let mut image = Image::new_target_texture(SIZE.0, SIZE.1, TextureFormat::Rgba8UnormSrgb, None);
+        let mut image = Image::new_target_texture(size.0, size.1, TextureFormat::Rgba8UnormSrgb, None);
         image.asset_usage = RenderAssetUsages::RENDER_WORLD;
         let target: RenderTarget = world.resource_mut::<Assets<Image>>().add(image).into();
-        // Frame the whole map so both bases, piles and wells are in one verification shot.
-        let (pivot, span) = {
-            let map = &world.resource::<Sim>().world.map;
-            let (w, h) = (map.width.to_f32(), map.height.to_f32());
-            (Vec3::new(w / 2.0, 0.0, h / 2.0), w.max(h))
+        let cam = {
+            let sim = &world.resource::<Sim>().world;
+            match view {
+                View::Base => {
+                    let home = sim.entities().find(|e| e.owner == Some(LOCAL)).map_or(Vec3::ZERO, |e| to_world(e.pos));
+                    RtsCamera {
+                        pivot: home + Vec3::new(12.0, 0.0, 4.0),
+                        distance: crate::camera::DEFAULT_DISTANCE,
+                        yaw: crate::look::YAW,
+                        pitch: crate::look::PITCH,
+                    }
+                }
+                View::Map => {
+                    let (w, h) = (sim.map.width.to_f32(), sim.map.height.to_f32());
+                    RtsCamera {
+                        pivot: Vec3::new(w / 2.0, 0.0, h / 2.0),
+                        distance: w.max(h) * 2.4,
+                        yaw: crate::look::YAW,
+                        pitch: crate::look::PITCH,
+                    }
+                }
+            }
         };
-        let cam = RtsCamera { pivot, distance: span * 1.05, yaw: 0.0, pitch: 1.05 };
         // An image-target camera is not picked as the UI camera automatically; the HUD must be in the shot.
-        world.spawn((Camera3d::default(), target.clone(), cam.transform(), cam, bevy::ui::IsDefaultUiCamera));
+        let mut camera = world.spawn((
+            crate::look::camera_bundle(),
+            target.clone(),
+            cam.transform(),
+            cam,
+            bevy::ui::IsDefaultUiCamera,
+        ));
+        // The overview sits far beyond the haze distance tuned for play; fog would hide the whole map.
+        if matches!(view, View::Map) {
+            camera.remove::<bevy::pbr::DistanceFog>();
+        }
 
         let wait = |apps: &mut SubApps| {
             apps.update();
@@ -204,7 +267,7 @@ mod headless {
                 hits.len() != 1 || Vec2::new(hits[0].1.x - want.x, hits[0].1.z - want.z).length() > 0.01
             })
             .count();
-        println!("wrote {path}; sim entities {total}, meshes {}, misplaced {misplaced}", mirrored.len());
+        println!("wrote {path}; sim entities {total}, models {}, misplaced {misplaced}", mirrored.len());
         if mirrored.len() != total || misplaced > 0 {
             eprintln!("render mirror does not match the simulation");
             return AppExit::error();

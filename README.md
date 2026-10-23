@@ -2,7 +2,7 @@
 
 Open-source recreation of the cancelled *Command & Conquer: Generals 2*, as a new engine written in Rust. Not affiliated with or endorsed by EA. All trademarks are the property of their respective owners.
 
-The engine needs no game files. EA's GPL release of *Generals/Zero Hour* in `vendor/` is reading material only; nothing from it is ported or copied into `crates/`. All art is original (placeholder primitives for now).
+The engine needs no game files. EA's GPL release of *Generals/Zero Hour* in `vendor/` is reading material only; nothing from it is ported or copied into `crates/`. All art is original and procedural: meshes built from primitives, generated terrain and textures, our own HUD design. The archived 2013 footage sets the target mood (warm hard light, steep camera, savanna ground); `docs/STYLE.md` describes it as requirements, not as elements to copy.
 
 ## Status: milestone 1, economy slice
 
@@ -24,7 +24,8 @@ What works:
   - Production hotkeys, a HUD, pause and ×1–×8 speed.
   - Interpolated movement between sim ticks.
   - `--record FILE` saves the match as a replay on exit, for `g2-tools verify`.
-  - A headless `--screenshot` mode that renders one frame and checks that every sim entity has exactly one mesh at its sim position.
+  - A headless `--screenshot` mode that renders one frame and checks that every sim entity has exactly one model at its sim position. `--view base|map` picks the in-game camera or a whole-map overview.
+- **Visuals** (`look.rs`, `terrain.rs`, `models.rs`, `hud.rs`): narrow-FOV steep camera, a low warm sun with cascaded shadows, AgX tonemapping with a warm grade, distance haze and a vignette. The terrain is procedural savanna with dirt roads, a tiling detail texture, trees, bushes and rocky rims. Each faction has its own procedural models: EU grey panels with hazard trim and a ducted-fan collector, APA dark steel with red accents, GLA scrap walls and crate yards. Construction sites have grey scaffolding, team-coloured netting and a tower crane. The HUD shows live data only: match bar, resources, a minimap with team dots and neutral resources, a selection panel with a training queue and a 3×3 production grid, plus collector counts and health bars in the world.
 
 Not yet:
 
@@ -33,16 +34,24 @@ Not yet:
 - The **"base proxy" rule**: Wikipedia says a faction "must have 'captured' a resource stash before letting its harvesters in". The archived sources don't say how capture works, so for now any player can gather from any pile.
 - Rules are const Rust tables, not data files.
 
-![APA vs GLA after 5 minutes, AI vs AI, rendered headless](docs/img/m1-apa-vs-gla-5min.png)
+![EU base at 3 minutes, in-game camera](docs/img/m1-eu-base-3min.png)
 
-*Above: APA (red) vs GLA (sand) after 5 minutes, AI vs AI. Rendered with `--screenshot` on Mesa llvmpipe (CPU Vulkan).*
+![APA vs GLA after 5 minutes, whole-map view](docs/img/m1-apa-vs-gla-5min.png)
+
+*Above: an EU base at 3:00 (EU vs GLA AI), and APA (red) vs GLA (sand) after 5 minutes of AI vs AI with `--view map`. Both rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150).*
 
 **Verification status.**
 
-- The headless frame above was rendered. Its HUD numbers match `g2-tools record` for the same match, and the mirror check passed: 31 sim entities, 31 meshes, 0 misplaced.
+- Both frames above were rendered on this host, and the mirror check passed for each (every sim entity has one model, none misplaced). HUD numbers match `g2-tools record` for the same match.
 - A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
-- The **interactive** window (mouse, keyboard, camera) has not been exercised. The build host has no display, and its amdgpu device (`c7:00.0`) was already failing before this work started, according to the kernel log.
-- To render on the CPU without touching a GPU:
+- The **interactive** window (mouse, keyboard, camera) has not been exercised. The build host has no display.
+- **GPU on the build host:** the discrete amdgpu device (`c7:00.0`, MI50) is wedged; opening it hangs the process in D state. Run every GPU command through `scripts/igpu-only/run.sh`. It hides the MI50's DRM nodes with an `LD_PRELOAD` shim, so only the integrated Radeon (`c8:00.0`, `renderD128`) is enumerated. strace confirms `renderD128` is the only device node opened:
+
+  ```
+  scripts/igpu-only/run.sh target/release/g2-client --screenshot shot.png --ticks 5400 --view base
+  ```
+
+- To render on the CPU instead (Mesa lavapipe):
 
   ```
   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json WGPU_BACKEND=vulkan cargo run -p g2-client --release -- --screenshot shot.png
@@ -53,11 +62,13 @@ Not yet:
 ```
 crates/g2-sim      deterministic simulation (no deps): fixed point, RNG, entities, economy, AI, replays
 crates/g2-rules    faction/unit/building tables, the built-in map; economy + determinism tests
-crates/g2-client   Bevy 0.20 app: rendering, camera, input, HUD, headless screenshot
+crates/g2-client   Bevy 0.20 app: look (camera/light/grade), terrain, models, view, input, HUD, headless screenshot
 crates/g2-tools    CLI: verify / record / bench / summary
+scripts/igpu-only/ LD_PRELOAD shim + wrapper that restricts Vulkan to the integrated GPU on the build host
 archive/           research material (manifests committed, media local-only), see archive/README.md
 vendor/            upstream source as git submodules (reference only), see vendor/README.md
 the local field notes   annotated index of everything archived
+docs/STYLE.md      visual target: mood and readability requirements
 ```
 
 ## Build and run
@@ -70,7 +81,7 @@ cargo run -p g2-client --release                     # play EU vs GLA AI
 cargo run -p g2-client --release -- --faction gla --enemy apa --seed 4
 cargo run -p g2-client --release -- --spectate       # AI vs AI
 cargo run -p g2-client --release -- --record my.g2rp # then: cargo run -p g2-tools --release -- verify my.g2rp
-cargo run -p g2-client --release -- --screenshot shot.png --ticks 1800   # on this host, prefix the lavapipe env above
+cargo run -p g2-client --release -- --screenshot shot.png --ticks 1800   # on this host, wrap with scripts/igpu-only/run.sh
 cargo run -p g2-tools --release -- bench
 cargo run -p g2-tools --release -- record match.g2rp --factions apa,gla --ticks 18000
 cargo run -p g2-tools --release -- verify match.g2rp
