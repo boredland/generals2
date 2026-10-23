@@ -56,6 +56,11 @@ pub struct World {
     log: Vec<Command>,
     /// `(tick, state_hash)` taken before stepping every `HASH_INTERVAL`-th tick.
     checkpoints: Vec<(u32, u64)>,
+    /// Blocked cells, rebuilt whenever the set of statics changes. A pure function of hashed
+    /// state (static entities and the map), so it needs no hash of its own.
+    nav: crate::nav::Grid,
+    /// Hash of the statics the grid was built from; when it changes, every unit replans.
+    nav_key: u64,
 }
 
 impl World {
@@ -83,6 +88,8 @@ impl World {
             events: Vec::new(),
             ai: Vec::new(),
             log: Vec::new(),
+            nav: crate::nav::Grid::default(),
+            nav_key: u64::MAX,
             checkpoints: Vec::new(),
         };
         for &(pos, amount) in &setup.map.supply_piles {
@@ -131,6 +138,8 @@ impl World {
             home: None,
             powered: false,
             income_ticks: 0,
+            route: Vec::new(),
+            route_key: 0,
         }
     }
 
@@ -254,7 +263,7 @@ impl World {
             let od = self.rules.def(e.def);
             !od.is_unit() && e.pos.distance(pos) < od.radius + r
         });
-        if !inside || blocked {
+        if !inside || blocked || self.map.terrain_within(pos, r) {
             return Err(Reject::InvalidPlacement);
         }
         Ok((pos, None))
@@ -287,6 +296,7 @@ impl World {
         self.update_construction();
         // After construction, so a building finished this tick is powered (or not) immediately.
         self.update_power();
+        self.refresh_nav();
         for id in self.entities.ids() {
             if self.entities.get(id).is_some_and(|e| self.rules.def(e.def).is_unit()) {
                 self.update_unit(id);
@@ -609,40 +619,120 @@ impl World {
         }
     }
 
-    /// Moves toward a point `contact` away from `target`. Returns the new position and whether
-    /// the unit is in contact.
-    fn approach(pos: Vec2, target: Vec2, contact: Fx, speed: Fx) -> (Vec2, bool) {
+    /// Rebuilds the blocked-cell grid when the set of statics (buildings, foundations, piles,
+    /// wells) changed since the last build. Units notice through `route_key`.
+    fn refresh_nav(&mut self) {
+        let statics: Vec<(Vec2, Fx)> = self
+            .entities
+            .iter()
+            .filter(|e| !self.rules.def(e.def).is_unit())
+            .map(|e| (e.pos, self.rules.def(e.def).radius))
+            .collect();
+        let key = statics.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &(p, r)| {
+            [p.x.0, p.y.0, r.0].iter().fold(h, |h, &v| (h ^ v as u64).wrapping_mul(0x0000_0100_0000_01b3))
+        });
+        if key != self.nav_key {
+            self.nav = crate::nav::Grid::new(self.map.width, self.map.height, &statics, &self.map.terrain);
+            self.nav_key = key;
+        }
+    }
+
+    /// Moves unit `id` toward a point `contact` away from `target`, routing around statics.
+    /// Returns the new position and whether the unit is in contact.
+    ///
+    /// A unit walks straight while nothing blocks the straight line (the common case, and the
+    /// pre-pathfinding behaviour); otherwise it plans a route once and follows its waypoints,
+    /// replanning when the grid changes or the goal moves.
+    fn approach(&mut self, id: EntityId, target: Vec2, contact: Fx, speed: Fx) -> (Vec2, bool) {
+        let e = self.entities.get(id).unwrap();
+        let pos = e.pos;
         let delta = pos - target;
         let dist = delta.length();
         if dist <= contact + SLACK {
+            self.entities.get_mut(id).unwrap().route.clear();
             return (pos, true);
         }
         let stop = target + delta.scale(contact / dist);
-        let next = pos.step_toward(stop, speed);
-        (next, next.distance(target) <= contact + SLACK)
+        // A plan is kept while the grid is unchanged and it still ends near the goal (the
+        // contact point drifts as the unit moves, so compare against the target).
+        let planned = !e.route.is_empty()
+            && e.route_key == self.nav_key
+            && e.route[0].distance(target) <= contact + Fx::from_int(4);
+        if !planned {
+            let route = if self.straight_is_free(pos, stop) {
+                Vec::new()
+            } else {
+                let reach = contact + SLACK;
+                let mut r = self.nav.find(pos, stop, |c| c.distance(target) <= reach + Fx::ONE).unwrap_or_default();
+                r.reverse();
+                r
+            };
+            let u = self.entities.get_mut(id).unwrap();
+            u.route = route;
+            u.route_key = self.nav_key;
+        }
+        let u = self.entities.get_mut(id).unwrap();
+        let mut left = speed;
+        let mut p = pos;
+        // Waypoints are stored goal-first, so the next one is `last()`.
+        while let Some(&wp) = u.route.last() {
+            let d = p.distance(wp);
+            if d > left {
+                p = p.step_toward(wp, left);
+                left = Fx::ZERO;
+                break;
+            }
+            p = wp;
+            left -= d;
+            u.route.pop();
+        }
+        if u.route.is_empty() && left > Fx::ZERO {
+            let delta = p - target;
+            let dist = delta.length();
+            if dist > contact {
+                p = p.step_toward(target + delta.scale(contact / dist), left);
+            }
+        }
+        (p, p.distance(target) <= contact + SLACK)
+    }
+
+    /// Whether the straight segment `a`→`b` crosses only free cells, apart from the cells at
+    /// its ends (a unit may stand at, and arrive at, an obstacle's edge).
+    fn straight_is_free(&self, a: Vec2, b: Vec2) -> bool {
+        let steps = (a.distance(b).floor_int() / crate::nav::CELL).max(1);
+        let (ca, cb) = (self.nav.cell(a), self.nav.cell(b));
+        (1..steps).all(|k| {
+            let c = self.nav.cell(a + (b - a).scale(Fx::from_ratio(k, steps)));
+            c == ca || c == cb || !self.nav.blocked(c.0, c.1)
+        })
     }
 
     fn update_unit(&mut self, id: EntityId) {
         let e = self.entities.get(id).unwrap();
         let d = self.rules.def(e.def);
-        let (pos, speed, radius, owner) = (e.pos, d.speed(), d.radius, e.owner.unwrap());
-        let (new_pos, new_order) = match e.order {
+        let (pos, speed, radius, owner, order) = (e.pos, d.speed(), d.radius, e.owner.unwrap(), e.order);
+        let (new_pos, new_order) = match order {
             Order::Idle => (pos, Order::Idle),
             Order::Move { target } => {
-                let (p, arrived) = Self::approach(pos, target, Fx::ZERO, speed);
-                (p, if arrived { Order::Idle } else { e.order })
+                let (p, arrived) = self.approach(id, target, Fx::ZERO, speed);
+                (p, if arrived { Order::Idle } else { order })
             }
             Order::Construct { site } => match self.entities.get(site).filter(|s| s.construction.is_some()) {
                 None => (pos, Order::Idle),
                 Some(s) => {
-                    let (p, _) = Self::approach(pos, s.pos, self.rules.def(s.def).radius + radius, speed);
-                    (p, e.order)
+                    let (site_pos, site_r) = (s.pos, self.rules.def(s.def).radius);
+                    let (p, _) = self.approach(id, site_pos, site_r + radius, speed);
+                    (p, order)
                 }
             },
             Order::Gather { pile, phase } => self.gather_step(id, pile, phase, pos, speed, radius, owner),
         };
         let e = self.entities.get_mut(id).unwrap();
         e.pos = self.map.clamp(new_pos);
+        // A route belongs to one goal; a new order or gather phase plans its own.
+        if new_order != order {
+            e.route.clear();
+        }
         e.order = new_order;
         if new_order == Order::Idle {
             e.home = None;
@@ -679,7 +769,7 @@ impl World {
                         None => return (pos, Order::Idle),
                     },
                 };
-                let (p, arrived) = Self::approach(pos, ppos, prad + radius, speed);
+                let (p, arrived) = self.approach(id, ppos, prad + radius, speed);
                 let phase =
                     if arrived { GatherPhase::Loading { ticks_left: spec.load_ticks } } else { GatherPhase::ToPile };
                 (p, Order::Gather { pile, phase })
@@ -714,7 +804,7 @@ impl World {
                     None => (pos, Order::Idle),
                 },
                 Some((dpos, drad)) => {
-                    let (p, arrived) = Self::approach(pos, dpos, drad + radius, speed);
+                    let (p, arrived) = self.approach(id, dpos, drad + radius, speed);
                     let phase = if arrived {
                         GatherPhase::Unloading { depot, ticks_left: spec.unload_ticks }
                     } else {
@@ -737,6 +827,10 @@ impl World {
     }
 
     /// Pushes overlapping units apart and out of structures. Pairwise in index order.
+    ///
+    /// Collectors are exempt from unit-unit pushing: they shuttle the same narrow lanes between
+    /// a pile and a depot in both directions, and two of them meeting head-on in a gap between
+    /// buildings would otherwise block each other for good.
     fn separate_units(&mut self) {
         let ids = self.entities.ids();
         let units: Vec<EntityId> =
@@ -752,7 +846,11 @@ impl World {
         for i in 0..units.len() {
             for j in i + 1..units.len() {
                 let (a, b) = (self.entities.get(units[i]).unwrap(), self.entities.get(units[j]).unwrap());
-                let min = self.rules.def(a.def).radius + self.rules.def(b.def).radius;
+                let (ad, bd) = (self.rules.def(a.def), self.rules.def(b.def));
+                if ad.collector().is_some() || bd.collector().is_some() {
+                    continue;
+                }
+                let min = ad.radius + bd.radius;
                 let delta = b.pos - a.pos;
                 let dist = delta.length();
                 if dist >= min {

@@ -15,6 +15,7 @@ pub mod entity;
 pub mod fixed;
 mod hash;
 pub mod map;
+pub mod nav;
 pub mod replay;
 pub mod rng;
 pub mod world;

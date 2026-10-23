@@ -68,6 +68,9 @@ pub struct MapFile {
     /// Base terrain tile per cell (same layout as `heights`); see `texture_class`.
     pub tiles: Vec<u16>,
     pub texture_classes: Vec<TextureClass>,
+    /// Impassable (cliff) flag per cell, same layout as `heights`. Saved by version 7+ of
+    /// `BlendTileData`; older maps get the engine's own rule (`cliffs_from_heights`).
+    pub cliffs: Vec<bool>,
     pub water: Vec<Water>,
     pub world: Props,
     pub objects: Vec<MapObject>,
@@ -153,6 +156,7 @@ pub fn load(bytes: &[u8]) -> Result<MapFile, Error> {
         base_height: 0.0,
         tiles: Vec::new(),
         texture_classes: Vec::new(),
+        cliffs: Vec::new(),
         water: Vec::new(),
         world: Props::new(),
         objects: Vec::new(),
@@ -172,6 +176,9 @@ pub fn load(bytes: &[u8]) -> Result<MapFile, Error> {
     }
     if map.heights.is_empty() {
         return Err(Error::Missing("HeightMapData"));
+    }
+    if map.cliffs.len() != map.heights.len() {
+        map.cliffs = map.cliffs_from_heights();
     }
     map.base_height = map.most_common_height();
     Ok(map)
@@ -281,7 +288,52 @@ impl MapFile {
             spawns: starts.iter().map(|&(_, o)| at(o.x, o.y)).collect(),
             supply_piles,
             oil_wells,
+            terrain: self.impassable_nav_cells(width, height),
         }
+    }
+
+    /// Engine rule for maps saved without cliff bits (`BlendTileData` before v7): a cell is a
+    /// cliff when its four corner heights span more than `PATHFIND_CLIFF_SLOPE_LIMIT_F` (9.8
+    /// SAGE units; `WorldHeightMap::setCellCliffFlagFromHeights`).
+    fn cliffs_from_heights(&self) -> Vec<bool> {
+        let (w, h) = (self.grid_w as usize, self.grid_h as usize);
+        let z = |x: usize, y: usize| self.heights[y * w + x];
+        (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                if x + 1 >= w || y + 1 >= h {
+                    return false;
+                }
+                let c = [z(x, y), z(x + 1, y), z(x, y + 1), z(x + 1, y + 1)];
+                let span = c.iter().max().unwrap() - c.iter().min().unwrap();
+                span as f32 * SAGE_PER_HEIGHT_STEP > 9.8
+            })
+            .collect()
+    }
+
+    /// Ground units can't enter a nav cell (`g2_sim::nav` layout) that overlaps a cliff cell
+    /// or has a corner under water, like the engine's `CELL_CLIFF` / `CELL_WATER`.
+    fn impassable_nav_cells(&self, width: Fx, height: Fx) -> Vec<bool> {
+        let (nw, nh) = g2_sim::nav::Grid::dims(width, height);
+        let per = SAGE_PER_WORLD as f32;
+        let (cell, half) = (SAGE_PER_CELL as f32, g2_sim::nav::CELL as f32 / 2.0);
+        let world_h = height.to_f32();
+        let w = self.grid_w as usize;
+        let hcell = |v: f32, n: u32| (v / cell + self.border as f32).floor().clamp(0.0, (n - 1) as f32) as usize;
+        let underwater = |sx: f32, sy: f32| {
+            self.water.iter().any(|wa| wa.z > self.height_at(sx, sy) && in_polygon(&wa.outline, sx, sy))
+        };
+        (0..nw * nh)
+            .map(|i| {
+                let c = g2_sim::nav::Grid::centre((i % nw) as i32, (i / nw) as i32);
+                // Cell square in SAGE units; world y is flipped (see `to_world`).
+                let (x0, x1) = ((c.x.to_f32() - half) * per, (c.x.to_f32() + half) * per);
+                let (y0, y1) = ((world_h - c.y.to_f32() - half) * per, (world_h - c.y.to_f32() + half) * per);
+                let cliff = (hcell(y0, self.grid_h)..=hcell(y1 - 0.01, self.grid_h))
+                    .any(|j| (hcell(x0, self.grid_w)..=hcell(x1 - 0.01, self.grid_w)).any(|k| self.cliffs[j * w + k]));
+                cliff || [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].iter().any(|&(x, y)| underwater(x, y))
+            })
+            .collect()
     }
 
     fn read_heights(&mut self, c: &mut Cursor, version: u16) -> Result<(), Error> {
@@ -331,13 +383,24 @@ impl MapFile {
         // info (v5+).
         let arrays = 1 + usize::from(version >= 6) + usize::from(version >= 5);
         c.bytes(n * 2 * arrays)?;
-        // Passability bits per cell (version 7+); version 7 was saved with a short row width.
+        // Passability bits per cell (version 7+), one bit per cell, rows padded to whole bytes.
+        // Version 7 was saved with a short row width, so the last cells of each row read as
+        // passable, as they do in the engine.
+        let w = self.grid_w as usize;
         let row = match version {
-            7 => (self.grid_w as usize + 1) / 8,
-            8 => (self.grid_w as usize).div_ceil(8),
+            7 => (w + 1) / 8,
+            8 => w.div_ceil(8),
             _ => 0,
         };
-        c.bytes(row * self.grid_h as usize)?;
+        let bits = c.bytes(row * self.grid_h as usize)?;
+        if row > 0 {
+            self.cliffs = (0..n)
+                .map(|i| {
+                    let (x, y) = (i % w, i / w);
+                    x / 8 < row && bits[y * row + x / 8] >> (x % 8) & 1 == 1
+                })
+                .collect();
+        }
         c.i32()?; // bitmap tiles
         c.i32()?; // blended tiles
         if version >= 5 {
@@ -449,6 +512,20 @@ impl MapFile {
         }
         Ok(())
     }
+}
+
+/// Even-odd point-in-polygon test.
+fn in_polygon(outline: &[(f32, f32)], x: f32, y: f32) -> bool {
+    let mut inside = false;
+    let mut j = outline.len() - 1;
+    for (i, &(xi, yi)) in outline.iter().enumerate() {
+        let (xj, yj) = outline[j];
+        if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
 }
 
 // ---- container ------------------------------------------------------------------------------
@@ -761,9 +838,29 @@ mod tests {
                 assert!(def.contains(p), "{}: resource outside the map at {p:?}", e.name);
             }
             playable += usize::from(def.spawns.len() >= 2);
+            if def.spawns.len() >= 2 {
+                assert_skirmish_terrain(&e.name, &def);
+            }
         }
         // Skirmish maps; the rest are campaign and test maps without player starts.
         assert!(playable >= 80, "{playable} maps with two or more starts");
+    }
+
+    /// Cliffs and water must leave a skirmish map playable: every start is on free ground and
+    /// can walk to a supply source. (Coverage varies a lot: Dark Mountain is a plateau in a
+    /// lake that fills most of the playable square.)
+    fn assert_skirmish_terrain(name: &str, def: &MapDef) {
+        let grid = g2_sim::nav::Grid::new(def.width, def.height, &[], &def.terrain);
+        assert!(def.terrain.iter().any(|&b| b), "{name}: no cliffs or water at all");
+        for &s in &def.spawns {
+            let c = grid.cell(s);
+            assert!(!grid.blocked(c.0, c.1), "{name}: start {s:?} is on a cliff or in water");
+            let reach = def.supply_piles.iter().any(|&(p, _)| {
+                let route = grid.find(s, p, |c| c.distance(p) <= Fx::from_int(8)).unwrap();
+                route.last().unwrap().distance(p) <= Fx::from_int(8)
+            });
+            assert!(reach, "{name}: start {s:?} cannot reach any supply");
+        }
     }
 
     #[test]

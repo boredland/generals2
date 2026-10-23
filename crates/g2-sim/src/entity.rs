@@ -66,6 +66,10 @@ pub struct Entity {
     pub powered: bool,
     /// Fractional oil income accumulator (ticks into the current second).
     pub income_ticks: u32,
+    /// Remaining waypoints toward the current order's goal, nearest first, and the grid key
+    /// they were planned on. Empty when walking straight. Part of the state hash.
+    pub route: Vec<Vec2>,
+    pub route_key: u64,
 }
 
 impl Entity {
@@ -180,6 +184,8 @@ mod tests {
             home: None,
             powered: false,
             income_ticks: 0,
+            route: Vec::new(),
+            route_key: 0,
         }
     }
 

@@ -18,6 +18,7 @@ What works:
 - **Three factions** (`crates/g2-rules`): EU, APA and GLA. Command center, constructor, supply center, collector, power plant and oil derrick each. Sourced numbers are tagged `// src:`, everything else is a placeholder.
 - **Generals as data**: a player may pick a general of their faction; its modifiers change the cost and build time of specific units and buildings (integer percent, deterministic, refunded at the price paid). One per faction so far: **Bulldog** (EU), **Taskmaster** (APA), **Junkyard** (GLA). The names are documented Generals 2 generals; their effects are placeholders, mod-style sub-generals (per-unit cost and time changes). The general is part of the state hash and of replays (format v3; v1/v2 still load), and replay files naming an unknown or wrong-faction general are refused with an error.
 - **Built-in AI** that plays the economy. It runs inside the sim and issues ordinary commands, so AI matches replay exactly.
+- **Pathfinding** (`crates/g2-sim/src/nav.rs`): units route around buildings, foundations, resources and, on imported maps, cliffs and water. A 2-unit grid; a cell is blocked when it lies within a static's radius plus a unit's radius, or overlaps terrain the original engine marks impassable (the map's own cliff bits, or for pre-v7 maps the engine's 9.8-unit height-span rule, and cells under a water area). Integer A* with fixed tie-breaking and line-of-sight smoothing; an unreachable goal routes to the closest reachable cell. A unit walks straight while the line is clear and plans only when it isn't. Routes are entity state and part of the hash. Buildings can't be placed on cliffs or water. Collectors don't push each other (two meeting head-on in a gap between buildings blocked each other for good), and a test checks that no AI collector of any faction stands still for 20 s on a gather run.
 - **Replays**: setup + human commands + a state hash every second, plus a fingerprint of the map, so a replay whose map file has since changed is reported as such instead of as a divergence. `g2-tools verify` re-simulates a replay and names the first tick that diverges. A committed golden replay fails the test suite on any unintended behaviour change.
 - **Bevy 0.20 client** (`crates/g2-client`):
   - RTS camera, selection, and context orders (move, gather, help build).
@@ -32,14 +33,13 @@ What works:
 
 Not yet:
 
-- Combat, fog of war, pathfinding around obstacles.
+- Combat, fog of war. Units still push through each other (except collectors, which pass through); there is no local avoidance.
 - Generals' unique units, player powers and the per-general perk progression (rank, perk slots; archived patch preview #2). Only cost/time modifiers exist.
 - The Onslaught PvE mode, networking, real art, audio.
 - The AI doesn't rebuild a lost constructor. Nothing can destroy one yet, so it can't happen in play; it matters once combat exists.
-- On Crater Ridge the AI's EU harvesters can wedge between buildings on the way to the pile: the AI places its supply center (60,60), power plant (80,64) and command center (80,80) close enough that being pushed out of one building pushes a harvester into the next, and units move in straight lines. Two of three are stuck at 3:00 in the seed-1 AI match. Pathfinding, or AI placement that leaves a gap between buildings, will fix this.
 - The **"base proxy" rule**: Wikipedia says a faction "must have 'captured' a resource stash before letting its harvesters in". The archived sources don't say how capture works, so for now any player can gather from any pile.
 - Rules are const Rust tables, not data files.
-- On imported maps the **sim is still flat**: hills, cliffs and water are drawn, but units drive straight across them, and buildings can be placed on slopes and in water. Retail tech buildings, civilian structures, bridges, cliff textures, blended ground edges and scripts are ignored. Oil wells are finite (10,000 oil each), unlike retail derricks. Water surfaces are flat fans over each area's outline, so a strongly concave lake can overhang its shore. Only 2-player matches are supported, even on 4-, 6- and 8-start maps.
+- On imported maps **bridges are not walkable yet**: their width comes from the bridge models, which we don't have. On 5 of the 85 skirmish maps (Final Crusade, Heartland Shield in both games, Winding River, FloodedPlains) some starts are cut off from each other by water; every start still reaches its own supply. Slopes are walkable and buildings may stand on them; heights don't affect the sim. Retail tech buildings, civilian structures, cliff textures, blended ground edges and scripts are ignored. Oil wells are finite (10,000 oil each), unlike retail derricks. Water surfaces are flat fans over each area's outline, so a strongly concave lake can overhang its shore. Only 2-player matches are supported, even on 4-, 6- and 8-start maps.
 
 ![EU base at 3 minutes, in-game camera](docs/img/m1-eu-base-3min.png)
 

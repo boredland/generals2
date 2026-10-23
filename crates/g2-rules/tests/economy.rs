@@ -3,8 +3,8 @@
 use g2_rules::ids::*;
 use g2_rules::{crater_ridge, rules};
 use g2_sim::{
-    BuildingRole, Class, CommandKind, EntityId, Faction, Fx, MatchSetup, Order, PlayerId, PlayerSetup, Reject, Vec2,
-    World, world::Event,
+    BuildingRole, Class, CommandKind, EntityId, Faction, Fx, GatherPhase, MatchSetup, Order, PlayerId, PlayerSetup,
+    Reject, Vec2, World, world::Event,
 };
 
 const P0: PlayerId = PlayerId(0);
@@ -99,6 +99,55 @@ fn harvesters_carry_supplies_from_pile_to_center() {
     assert!(earned >= 300, "only {earned} credits delivered in 60 s");
     assert_eq!(earned % 100, 0, "deliveries come in full 100-credit loads");
     assert_eq!(delivered, earned, "every credit earned is reported as a delivery");
+}
+
+/// The AI packs its first buildings tightly around the command center. Every one of its
+/// collectors must still reach the pile and come back: none may sit still for 20 seconds while
+/// it has a gather order. (Before pathfinding, EU harvesters wedged between buildings; with
+/// routes but unit-unit pushing, two APA harvesters met head-on in a gap and blocked each other.)
+#[test]
+fn ai_collectors_route_between_tightly_packed_buildings() {
+    for faction in Faction::ALL {
+        let setup = MatchSetup {
+            map: crater_ridge(),
+            seed: 1,
+            players: vec![
+                PlayerSetup { faction, starting_credits: 5_000, ai: true, general: None },
+                PlayerSetup { faction: Faction::Gla, starting_credits: 5_000, ai: true, general: None },
+            ],
+        };
+        let mut w = World::new(&setup, rules());
+        let mut still: std::collections::BTreeMap<EntityId, (Vec2, u32)> = Default::default();
+        let mut delivered = 0;
+        for t in 0..30 * 300 {
+            w.step();
+            for e in w.events() {
+                if let Event::Delivered { player: P0, credits, .. } = *e {
+                    delivered += credits;
+                }
+            }
+            for e in w.entities().filter(|e| e.owner == Some(P0) && rules().def(e.def).collector().is_some()) {
+                let entry = still.entry(e.id).or_insert((e.pos, t));
+                // Loading and unloading stand still on purpose. A wedged unit jitters by tiny
+                // amounts, so "moving" means getting 2 units away from where it last was.
+                let busy = matches!(
+                    e.order,
+                    Order::Gather { phase: GatherPhase::Loading { .. } | GatherPhase::Unloading { .. }, .. }
+                );
+                if entry.0.distance(e.pos) >= Fx::from_int(2) || busy || !matches!(e.order, Order::Gather { .. }) {
+                    *entry = (e.pos, t);
+                }
+                assert!(
+                    t - entry.1 < 30 * 20,
+                    "{faction:?} collector {:?} stuck near {:?} since tick {}",
+                    e.id,
+                    e.pos,
+                    entry.1
+                );
+            }
+        }
+        assert!(delivered >= 5_000, "{faction:?} delivered only {delivered} in 5 minutes");
+    }
 }
 
 #[test]

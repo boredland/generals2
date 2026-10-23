@@ -33,6 +33,13 @@ impl crate::map::MapDef {
                 h.i64(amount);
             }
         }
+        // Hashed only when present, so open-ground maps (Crater Ridge) keep their fingerprint.
+        if self.terrain.iter().any(|&b| b) {
+            h.u64(self.terrain.len() as u64);
+            for (i, _) in self.terrain.iter().enumerate().filter(|&(_, &b)| b) {
+                h.u64(i as u64);
+            }
+        }
         h.0
     }
 }
@@ -79,6 +86,11 @@ impl World {
             h.u64(e.home.map_or(u64::MAX, |w| ((w.index as u64) << 32) | w.generation as u64));
             h.u64(e.powered as u64);
             h.u64(e.income_ticks as u64);
+            h.u64(e.route.len() as u64);
+            for p in &e.route {
+                h.i64(p.x.0);
+                h.i64(p.y.0);
+            }
         }
         h.0
     }
