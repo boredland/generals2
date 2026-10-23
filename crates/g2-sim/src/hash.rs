@@ -86,8 +86,18 @@ impl World {
             h.u64(e.home.map_or(u64::MAX, |w| ((w.index as u64) << 32) | w.generation as u64));
             h.u64(e.powered as u64);
             h.u64(e.income_ticks as u64);
-            h.u64(e.route.len() as u64);
-            for p in &e.route {
+            let r = &e.route;
+            h.u64(r.key);
+            match r.target {
+                Some(t) => {
+                    h.i64(t.x.0);
+                    h.i64(t.y.0);
+                }
+                None => h.u64(u64::MAX),
+            }
+            h.u64(r.partial as u64);
+            h.u64(r.waypoints.len() as u64);
+            for p in &r.waypoints {
                 h.i64(p.x.0);
                 h.i64(p.y.0);
             }

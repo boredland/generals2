@@ -1,7 +1,7 @@
 use crate::ai::Ai;
 use crate::command::{Command, CommandKind, Reject};
 use crate::defs::{BuildingRole, Class, DefId, Faction, Rules};
-use crate::entity::{Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Production};
+use crate::entity::{Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Production, Route};
 use crate::fixed::{Fx, Vec2};
 use crate::map::{MapDef, MatchSetup};
 use crate::rng::Pcg32;
@@ -138,8 +138,7 @@ impl World {
             home: None,
             powered: false,
             income_ticks: 0,
-            route: Vec::new(),
-            route_key: 0,
+            route: Route::default(),
         }
     }
 
@@ -620,7 +619,7 @@ impl World {
     }
 
     /// Rebuilds the blocked-cell grid when the set of statics (buildings, foundations, piles,
-    /// wells) changed since the last build. Units notice through `route_key`.
+    /// wells) changed since the last build. Units notice through `Route::key`.
     fn refresh_nav(&mut self) {
         let statics: Vec<(Vec2, Fx)> = self
             .entities
@@ -640,42 +639,44 @@ impl World {
     /// Moves unit `id` toward a point `contact` away from `target`, routing around statics.
     /// Returns the new position and whether the unit is in contact.
     ///
-    /// A unit walks straight while nothing blocks the straight line (the common case, and the
-    /// pre-pathfinding behaviour); otherwise it plans a route once and follows its waypoints,
-    /// replanning when the grid changes or the goal moves.
+    /// A unit walks straight while nothing blocks the straight line (rechecked every tick, so
+    /// a unit pushed off its line notices). Otherwise it plans once for this target and grid
+    /// and follows the waypoints; an unreachable target gets a partial plan to the closest
+    /// reachable cell, kept (not replanned every tick) until the target or grid changes.
     fn approach(&mut self, id: EntityId, target: Vec2, contact: Fx, speed: Fx) -> (Vec2, bool) {
         let e = self.entities.get(id).unwrap();
         let pos = e.pos;
         let delta = pos - target;
         let dist = delta.length();
         if dist <= contact + SLACK {
-            self.entities.get_mut(id).unwrap().route.clear();
+            self.entities.get_mut(id).unwrap().route = Route::default();
             return (pos, true);
         }
         let stop = target + delta.scale(contact / dist);
-        // A plan is kept while the grid is unchanged and it still ends near the goal (the
-        // contact point drifts as the unit moves, so compare against the target).
-        let planned = !e.route.is_empty()
-            && e.route_key == self.nav_key
-            && e.route[0].distance(target) <= contact + Fx::from_int(4);
+        let planned = e.route.target == Some(target) && e.route.key == self.nav_key;
         if !planned {
-            let route = if self.straight_is_free(pos, stop) {
-                Vec::new()
+            // `find` fails only when the unit stands deep inside blocked cells; it then walks
+            // straight, as before pathfinding, until it is out.
+            let reach = contact + SLACK + Fx::ONE;
+            let found = if self.straight_is_free(pos, stop) {
+                None
             } else {
-                let reach = contact + SLACK;
-                let mut r = self.nav.find(pos, stop, |c| c.distance(target) <= reach + Fx::ONE).unwrap_or_default();
-                r.reverse();
-                r
+                self.nav.find(pos, stop, |c| c.distance(target) <= reach)
             };
-            let u = self.entities.get_mut(id).unwrap();
-            u.route = route;
-            u.route_key = self.nav_key;
+            let route = match found {
+                None => Route::default(),
+                Some(mut waypoints) => {
+                    let partial = waypoints.last().is_none_or(|&w| w.distance(target) > reach);
+                    waypoints.reverse();
+                    Route { key: self.nav_key, target: Some(target), partial, waypoints }
+                }
+            };
+            self.entities.get_mut(id).unwrap().route = route;
         }
         let u = self.entities.get_mut(id).unwrap();
         let mut left = speed;
         let mut p = pos;
-        // Waypoints are stored goal-first, so the next one is `last()`.
-        while let Some(&wp) = u.route.last() {
+        while let Some(&wp) = u.route.waypoints.last() {
             let d = p.distance(wp);
             if d > left {
                 p = p.step_toward(wp, left);
@@ -684,13 +685,17 @@ impl World {
             }
             p = wp;
             left -= d;
-            u.route.pop();
+            u.route.waypoints.pop();
         }
-        if u.route.is_empty() && left > Fx::ZERO {
-            let delta = p - target;
-            let dist = delta.length();
-            if dist > contact {
-                p = p.step_toward(target + delta.scale(contact / dist), left);
+        if u.route.waypoints.is_empty() && !u.route.partial {
+            // Past the last turn (or never needed one): straight on, and look again next tick.
+            u.route = Route::default();
+            if left > Fx::ZERO {
+                let delta = p - target;
+                let dist = delta.length();
+                if dist > contact {
+                    p = p.step_toward(target + delta.scale(contact / dist), left);
+                }
             }
         }
         (p, p.distance(target) <= contact + SLACK)
@@ -731,7 +736,7 @@ impl World {
         e.pos = self.map.clamp(new_pos);
         // A route belongs to one goal; a new order or gather phase plans its own.
         if new_order != order {
-            e.route.clear();
+            e.route = Route::default();
         }
         e.order = new_order;
         if new_order == Order::Idle {

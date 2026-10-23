@@ -311,8 +311,11 @@ impl MapFile {
             .collect()
     }
 
-    /// Ground units can't enter a nav cell (`g2_sim::nav` layout) that overlaps a cliff cell
-    /// or has a corner under water, like the engine's `CELL_CLIFF` / `CELL_WATER`.
+    /// Ground units can't enter a nav cell (`g2_sim::nav` layout) whose centre lies on a cliff
+    /// cell or that has a corner under water, like the engine's `CELL_CLIFF` / `CELL_WATER`
+    /// (`Pathfinder::classifyMapCell`). The engine's pathfind cell is one height cell and reads
+    /// the cliff bit at a single point; ours is 12 SAGE units wide, so it reads one point too
+    /// (the centre) rather than every height cell it overlaps, which would widen cliff lines.
     fn impassable_nav_cells(&self, width: Fx, height: Fx) -> Vec<bool> {
         let (nw, nh) = g2_sim::nav::Grid::dims(width, height);
         let per = SAGE_PER_WORLD as f32;
@@ -327,10 +330,10 @@ impl MapFile {
             .map(|i| {
                 let c = g2_sim::nav::Grid::centre((i % nw) as i32, (i / nw) as i32);
                 // Cell square in SAGE units; world y is flipped (see `to_world`).
-                let (x0, x1) = ((c.x.to_f32() - half) * per, (c.x.to_f32() + half) * per);
-                let (y0, y1) = ((world_h - c.y.to_f32() - half) * per, (world_h - c.y.to_f32() + half) * per);
-                let cliff = (hcell(y0, self.grid_h)..=hcell(y1 - 0.01, self.grid_h))
-                    .any(|j| (hcell(x0, self.grid_w)..=hcell(x1 - 0.01, self.grid_w)).any(|k| self.cliffs[j * w + k]));
+                let (cx, cy) = (c.x.to_f32() * per, (world_h - c.y.to_f32()) * per);
+                let (x0, x1) = (cx - half * per, cx + half * per);
+                let (y0, y1) = (cy - half * per, cy + half * per);
+                let cliff = self.cliffs[hcell(cy, self.grid_h) * w + hcell(cx, self.grid_w)];
                 cliff || [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].iter().any(|&(x, y)| underwater(x, y))
             })
             .collect()
@@ -442,10 +445,13 @@ impl MapFile {
             let points = usize::try_from(points).map_err(|_| Error::BadChunk("polygon point count"))?;
             let mut outline = Vec::with_capacity(points.min(4096));
             let mut z = 0.0;
-            for _ in 0..points {
+            for k in 0..points {
                 let (x, y, pz) = (c.i32()?, c.i32()?, c.i32()?);
                 outline.push((x as f32, y as f32));
-                z = pz as f32;
+                // The engine takes a water area's surface from its first point.
+                if k == 0 {
+                    z = pz as f32;
+                }
             }
             if water && outline.len() >= 3 {
                 self.water.push(Water { outline, z });
@@ -846,21 +852,32 @@ mod tests {
         assert!(playable >= 80, "{playable} maps with two or more starts");
     }
 
-    /// Cliffs and water must leave a skirmish map playable: every start is on free ground and
-    /// can walk to a supply source. (Coverage varies a lot: Dark Mountain is a plateau in a
-    /// lake that fills most of the playable square.)
+    /// Skirmish maps whose starts are connected only by bridges, which the sim can't cross yet
+    /// (README, "Not yet"). Every start on them still reaches its own supply.
+    const BRIDGE_ONLY: [&str; 5] =
+        ["gen:Final Crusade", "gen:Heartland Shield", "zh:FloodedPlains", "zh:Heartland Shield", "zh:Winding River"];
+
+    /// Cliffs and water must leave a skirmish map playable: every start is on free ground,
+    /// can walk to a supply source and to every other start (except on `BRIDGE_ONLY` maps).
+    /// Coverage varies a lot (Dark Mountain is a plateau in a lake), so it isn't bounded.
     fn assert_skirmish_terrain(name: &str, def: &MapDef) {
         let grid = g2_sim::nav::Grid::new(def.width, def.height, &[], &def.terrain);
         assert!(def.terrain.iter().any(|&b| b), "{name}: no cliffs or water at all");
+        let reaches = |from: Vec2, to: Vec2, near: Fx| {
+            grid.find(from, to, |c| c.distance(to) <= near).unwrap().last().unwrap().distance(to) <= near
+        };
         for &s in &def.spawns {
             let c = grid.cell(s);
             assert!(!grid.blocked(c.0, c.1), "{name}: start {s:?} is on a cliff or in water");
-            let reach = def.supply_piles.iter().any(|&(p, _)| {
-                let route = grid.find(s, p, |c| c.distance(p) <= Fx::from_int(8)).unwrap();
-                route.last().unwrap().distance(p) <= Fx::from_int(8)
-            });
-            assert!(reach, "{name}: start {s:?} cannot reach any supply");
+            let supply = def.supply_piles.iter().any(|&(p, _)| reaches(s, p, Fx::from_int(8)));
+            assert!(supply, "{name}: start {s:?} cannot reach any supply");
         }
+        let split = def
+            .spawns
+            .iter()
+            .enumerate()
+            .any(|(i, &a)| def.spawns[i + 1..].iter().any(|&b| !reaches(a, b, Fx::from_int(12))));
+        assert_eq!(split, BRIDGE_ONLY.contains(&name), "{name}: starts cut off from each other: {split}");
     }
 
     #[test]

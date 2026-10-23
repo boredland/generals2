@@ -150,6 +150,36 @@ fn ai_collectors_route_between_tightly_packed_buildings() {
     }
 }
 
+/// A move into a spot enclosed by terrain stops at the closest reachable point and stays
+/// there: the partial route is kept (not replanned into a wander) while the target stands.
+#[test]
+fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
+    let mut setup = MatchSetup {
+        map: crater_ridge(),
+        seed: 1,
+        players: vec![
+            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: false, general: None },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: false, general: None },
+        ],
+    };
+    // A square "lake" of terrain from (140,120) to (180,160); the target is its centre.
+    let (w, h) = g2_sim::nav::Grid::dims(setup.map.width, setup.map.height);
+    let cell = g2_sim::nav::CELL as usize;
+    setup.map.terrain =
+        (0..w * h).map(|i| (140 / cell..160 / cell + 10).contains(&(i % w)) && (60..80).contains(&(i / w))).collect();
+    let mut w = World::new(&setup, rules());
+    let dozer = first(&w, P0, EU_DOZER).unwrap();
+    let target = Vec2::from_int(150, 140);
+    assert_eq!(order(&mut w, CommandKind::Move { units: vec![dozer], target }), vec![]);
+    run(&mut w, 30 * 30);
+    let stop = w.entity(dozer).unwrap().pos;
+    let (x, y) = (stop.x.to_f32(), stop.y.to_f32());
+    assert!((134.0..=144.0).contains(&x) && (130.0..=150.0).contains(&y), "stops on the near shore, at {stop:?}");
+    run(&mut w, 30 * 10);
+    assert_eq!(w.entity(dozer).unwrap().pos, stop, "waits there instead of wandering");
+    assert!(matches!(w.entity(dozer).unwrap().order, Order::Move { .. }), "the order stands");
+}
+
 #[test]
 fn collector_cap_is_per_faction_and_enforced() {
     for (faction, ctor, depot_def, harvester, cap) in [

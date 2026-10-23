@@ -66,10 +66,23 @@ pub struct Entity {
     pub powered: bool,
     /// Fractional oil income accumulator (ticks into the current second).
     pub income_ticks: u32,
-    /// Remaining waypoints toward the current order's goal, nearest first, and the grid key
-    /// they were planned on. Empty when walking straight. Part of the state hash.
-    pub route: Vec<Vec2>,
-    pub route_key: u64,
+    /// The current plan for reaching the order's goal. Part of the state hash.
+    pub route: Route,
+}
+
+/// A planned way around obstacles to the current `approach` target. Planned once per target
+/// and grid, kept while both are unchanged. No plan (`target: None`) means the straight line
+/// was clear when last checked.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Route {
+    /// Grid key the plan was made on.
+    pub key: u64,
+    pub target: Option<Vec2>,
+    /// The target was unreachable: the waypoints lead to the closest reachable cell, where
+    /// the unit waits until the grid or its target changes.
+    pub partial: bool,
+    /// Remaining waypoints, stored goal-first so the next one is `last()`.
+    pub waypoints: Vec<Vec2>,
 }
 
 impl Entity {
@@ -184,8 +197,7 @@ mod tests {
             home: None,
             powered: false,
             income_ticks: 0,
-            route: Vec::new(),
-            route_key: 0,
+            route: Route::default(),
         }
     }
 
