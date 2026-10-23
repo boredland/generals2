@@ -18,12 +18,53 @@ pub struct Sim {
     /// The parsed source map when playing an imported Generals / Zero Hour map; terrain, roads,
     /// water and trees are drawn from it. `None` for the built-in procedural map.
     pub source: Option<MapFile>,
+    /// Draw the local player's fog of war. Off (`--reveal`) shows everything, for watching.
+    pub fog: bool,
 }
 
 impl Sim {
     pub fn new(map: MapDef, source: Option<MapFile>, seed: u64, players: [PlayerSetup; 2]) -> Sim {
         let setup = MatchSetup { map, seed, players: players.to_vec() };
-        Sim { world: World::new(&setup, rules()), setup, speed: 1, source }
+        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true }
+    }
+
+    /// Whether the local player sees `e` right now: own entities always, neutral resources once
+    /// their spot is explored (they never change hands or move), enemies only where visible.
+    pub fn sees(&self, e: &g2_sim::Entity) -> bool {
+        let v = self.world.vision(LOCAL);
+        !self.fog
+            || match e.owner {
+                Some(o) => o == LOCAL || v.is_visible(e.pos),
+                None => v.is_explored(e.pos),
+            }
+    }
+
+    /// Whether `e` is drawn: what the local player sees, plus enemy buildings it remembers.
+    /// Buildings don't move, so a remembered one stands where it was seen. One destroyed out
+    /// of sight disappears at once (the sim entity is gone), a small leak a ghost model would fix.
+    pub fn shows(&self, e: &g2_sim::Entity) -> bool {
+        self.sees(e) || self.world.vision(LOCAL).memory.contains_key(&e.id)
+    }
+
+    /// The local player's fog cells for drawing, row-major on the sim's fog grid: 0 never
+    /// explored, 1 explored but not visible now, 2 visible. All 2 with the fog off.
+    pub fn fog_states(&self, out: &mut Vec<u8>) {
+        let v = self.world.vision(LOCAL);
+        out.clear();
+        out.extend((0..v.h).flat_map(|y| (0..v.w).map(move |x| (x, y))).map(|(x, y)| match v.cell_state(x, y) {
+            _ if !self.fog => 2,
+            (_, true) => 2,
+            (true, false) => 1,
+            (false, false) => 0,
+        }));
+    }
+
+    /// Whether the local player has explored world point `(x, z)` (always, with the fog off).
+    pub fn explored_at(&self, x: f32, z: f32) -> bool {
+        let v = self.world.vision(LOCAL);
+        let c = g2_sim::fog::CELL as f32;
+        let (cx, cy) = ((x / c).floor() as i32, (z / c).floor() as i32);
+        !self.fog || ((0..v.w).contains(&cx) && (0..v.h).contains(&cy) && v.cell_state(cx, cy).0)
     }
 
     /// Players with 5,000 credits and no general; the second is always the AI. Shared by the

@@ -13,6 +13,7 @@ pub mod command;
 pub mod defs;
 pub mod entity;
 pub mod fixed;
+pub mod fog;
 mod hash;
 pub mod map;
 pub mod nav;

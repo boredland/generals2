@@ -194,8 +194,8 @@ fn sync_entities(
     sim: Res<Sim>,
     roots: Query<&Children, With<SimRef>>,
     mut bodies: Query<&mut Transform, (With<Body>, Without<SimRef>, Without<Scaffold>)>,
-    mut scaffolds: Query<&mut Visibility, With<Scaffold>>,
-    mut root_tf: Query<&mut Transform, (With<SimRef>, Without<Body>)>,
+    mut scaffolds: Query<&mut Visibility, (With<Scaffold>, Without<SimRef>)>,
+    mut root_tf: Query<(&mut Transform, &mut Visibility), (With<SimRef>, Without<Body>, Without<Scaffold>)>,
 ) {
     let world = &sim.world;
     mirror.0.retain(|id, &mut e| {
@@ -208,10 +208,15 @@ fn sync_entities(
     for e in world.entities() {
         let def = world.rules.def(e.def);
         let root = *mirror.0.entry(e.id).or_insert_with(|| spawn_entity(&mut commands, &assets, &sim, e));
-        if !def.is_unit()
-            && let Ok(mut tf) = root_tf.get_mut(root)
-        {
-            tf.translation = sim.to_world(e.pos);
+        if let Ok((mut tf, mut vis)) = root_tf.get_mut(root) {
+            if !def.is_unit() {
+                tf.translation = sim.to_world(e.pos);
+            }
+            vis.set_if_neq(if sim.shows(e) { Visibility::Inherited } else { Visibility::Hidden });
+        }
+        // A remembered building out of sight keeps the look it had when last seen.
+        if !sim.sees(e) {
+            continue;
         }
         let Ok(children) = roots.get(root) else { continue };
         // Foundations: the finished model rises inside the scaffold; supply piles shrink as they deplete.
@@ -261,9 +266,14 @@ fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
 }
 
 /// A tracer for every hit (a thin glowing bar from muzzle height at the shooter to the
-/// target), plus an expanding fireball where a hit destroyed its target.
+/// target), plus an expanding fireball where a hit destroyed its target. Under fog, only hits
+/// with an end the local player sees.
 fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, mut hits: ResMut<crate::sim::Hits>) {
+    let vision = sim.world.vision(crate::sim::LOCAL);
     for (from, to, killed) in hits.0.drain(..) {
+        if sim.fog && !vision.is_visible(from) && !vision.is_visible(to) {
+            continue;
+        }
         let (a, b) = (sim.to_world(from) + Vec3::Y * 1.5, sim.to_world(to) + Vec3::Y * 1.5);
         let len = a.distance(b);
         if len > 0.1 {

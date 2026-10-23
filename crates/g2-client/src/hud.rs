@@ -380,12 +380,17 @@ fn update_fields(
     }
 }
 
-/// Minimap: one dot per entity, team-coloured; resources neutral; refreshed every frame.
+/// Minimap: a fog layer (the local player's cells: black unexplored, dimmed out of sight),
+/// then one dot per shown entity, team-coloured; resources neutral; refreshed every frame.
+#[allow(clippy::too_many_arguments)]
 fn minimap(
     mut commands: Commands,
     sim: Res<Sim>,
     view: Query<Entity, With<MinimapView>>,
     dots: Query<Entity, With<MinimapDot>>,
+    mut fog_image: Local<Option<Handle<Image>>>,
+    mut states: Local<Vec<u8>>,
+    mut images: ResMut<Assets<Image>>,
 ) {
     let Ok(map_node) = view.single() else { return };
     for d in &dots {
@@ -393,8 +398,45 @@ fn minimap(
     }
     let world = &sim.world;
     let (w, h) = (world.map.width.to_f32(), world.map.height.to_f32());
+    let v = world.vision(LOCAL);
+    sim.fog_states(&mut states);
+    let shade = [[0u8, 0, 0, 255], [0, 0, 0, 140], [0, 0, 0, 0]];
+    let pixels: Vec<u8> = states.iter().flat_map(|&s| shade[s as usize]).collect();
+    let handle = fog_image.get_or_insert_with(|| {
+        let size =
+            bevy::render::render_resource::Extent3d { width: v.w as u32, height: v.h as u32, depth_or_array_layers: 1 };
+        let mut image = Image::new(
+            size,
+            bevy::render::render_resource::TextureDimension::D2,
+            pixels.clone(),
+            bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
+            bevy::asset::RenderAssetUsages::default(),
+        );
+        image.sampler = bevy::image::ImageSampler::linear();
+        images.add(image)
+    });
+    if let Some(mut image) = images.get_mut(&*handle)
+        && image.data.as_deref() != Some(&pixels[..])
+    {
+        image.data = Some(pixels);
+    }
+    // The fog grid overshoots the map by part of a cell; scale it so cell edges line up.
+    let cell = g2_sim::fog::CELL as f32;
+    let (fw, fh) = (v.w as f32 * cell / w * MINIMAP, v.h as f32 * cell / h * MINIMAP);
     commands.entity(map_node).with_children(|m| {
-        for e in world.entities() {
+        m.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(0),
+                top: px(0),
+                width: px(fw),
+                height: px(fh),
+                ..default()
+            },
+            ImageNode::new(handle.clone()),
+            MinimapDot,
+        ));
+        for e in world.entities().filter(|e| sim.shows(e)) {
             let def = world.rules.def(e.def);
             let (color, size) = match (def.class, e.owner) {
                 // Resources in neutral greys, so they never read as a faction.
@@ -440,7 +482,7 @@ fn overlays(
     }
     let Ok((camera, cam_tf)) = cam.single() else { return };
     let world = &sim.world;
-    for e in world.entities() {
+    for e in world.entities().filter(|e| sim.shows(e)) {
         let anchor = crate::view::overlay_anchor(&sim, e);
         let Ok(screen) = camera.world_to_viewport(cam_tf, anchor) else { continue };
         if let Some((n, cap)) = crate::view::depot_label(&sim, e) {

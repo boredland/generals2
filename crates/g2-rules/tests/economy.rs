@@ -647,6 +647,16 @@ fn hits_follow_armour_bonus_and_cooldown() {
             }
         };
         let hp = rules().def(victim).hp;
+        // Fog: an attack order needs the target in sight. Bring the victim next to our base
+        // and wait until our units see it.
+        let near = w.entity(tank).unwrap().pos + Vec2::from_int(30, 0);
+        w.submit(PlayerId(1), CommandKind::Move { units: vec![target], target: near });
+        while !w.vision(P0).is_visible(w.entity(target).unwrap().pos) {
+            w.step();
+        }
+        // A harvester trained at a depot gathers; stop it so the cadence check sees a still target.
+        w.submit(PlayerId(1), CommandKind::Stop { units: vec![target] });
+        run(&mut w, g2_sim::world::INPUT_DELAY + 1);
         assert_eq!(order(&mut w, CommandKind::Attack { units: vec![tank], target }), vec![]);
         let mut hits = Vec::new();
         for _ in 0..30 * 180 {
@@ -715,14 +725,25 @@ fn mutual_kills_resolve_together() {
     for p in [P0, PlayerId(1)] {
         tanks.push(first(&w, p, APA_WARLORD).unwrap());
     }
-    // Both stop out of range of each other, then both attack on the same tick: equal speed,
-    // equal distance, so they come into range together and fire together.
+    // Both park far apart (out of sight, so neither guard reacts), mirrored about x = 200,
+    // then both attack the other on the same tick. Under fog an attack needs the target in
+    // sight or remembered, so first both walk in until they see each other, still as mirror
+    // images, and then the attacks go out on the same tick: equal speed, equal distance, so
+    // they come into range together and fire together.
     let mid = Vec2::from_int(200, 260);
-    for (&t, dx) in tanks.iter().zip([-30, 30]) {
+    for (&t, dx) in tanks.iter().zip([-60, 60]) {
         let owner = w.entity(t).unwrap().owner.unwrap();
         w.submit(owner, CommandKind::Move { units: vec![t], target: mid + Vec2::from_int(dx, 0) });
     }
-    run(&mut w, 30 * 30);
+    run(&mut w, 30 * 40);
+    for (&t, dx) in tanks.iter().zip([-1, 1]) {
+        let owner = w.entity(t).unwrap().owner.unwrap();
+        w.submit(owner, CommandKind::Move { units: vec![t], target: mid + Vec2::from_int(dx, 0) });
+    }
+    while !w.vision(P0).is_visible(w.entity(tanks[1]).unwrap().pos) {
+        w.step();
+    }
+    assert!(w.vision(PlayerId(1)).is_visible(w.entity(tanks[0]).unwrap().pos), "sight is symmetric");
     for (i, &t) in tanks.iter().enumerate() {
         let other = tanks[1 - i];
         let owner = w.entity(t).unwrap().owner.unwrap();
@@ -754,6 +775,41 @@ fn attacks_on_friendly_or_neutral_targets_and_unarmed_attackers_are_rejected() {
     assert_eq!(w.entity(tank).unwrap().order, Order::Idle);
 }
 
+/// Fog: an attack order needs a target the player sees or a building it remembers. A building
+/// never seen can't be attacked; once scouted, it can be from anywhere, and the tank keeps the
+/// order through the fog until it is in range.
+#[test]
+fn attacks_need_a_seen_or_remembered_target() {
+    let mut w = world(Faction::Apa, 100_000);
+    let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
+    let enemy = first(&w, PlayerId(1), EU_CC).unwrap();
+    let enemy_pos = w.entity(enemy).unwrap().pos;
+    assert_eq!(order(&mut w, CommandKind::Attack { units: vec![tank], target: enemy }), vec![Reject::CannotAttack]);
+    // Scout: drive until the command center comes into view, then back off out of sight.
+    order(&mut w, CommandKind::Move { units: vec![tank], target: enemy_pos });
+    while !w.vision(P0).memory.contains_key(&enemy) {
+        w.step();
+    }
+    let home = Vec2::from_int(150, 150);
+    order(&mut w, CommandKind::Move { units: vec![tank], target: home });
+    run(&mut w, 30 * 30);
+    assert!(!w.vision(P0).is_visible(enemy_pos), "the tank is back out of sight");
+    assert_eq!(order(&mut w, CommandKind::Attack { units: vec![tank], target: enemy }), vec![]);
+    let mut hit = false;
+    for _ in 0..30 * 60 {
+        w.step();
+        hit |= w
+            .events()
+            .iter()
+            .any(|e| matches!(*e, Event::Hit { shooter, target, .. } if (shooter, target) == (tank, enemy)));
+        if hit {
+            break;
+        }
+        assert_eq!(w.entity(tank).unwrap().order, Order::Attack { target: enemy }, "the order holds in the fog");
+    }
+    assert!(hit, "the tank reached the remembered building and fired");
+}
+
 /// An idle armed unit engages an enemy that comes close, chases it while it lives, then
 /// walks back to where it stood.
 #[test]
@@ -778,18 +834,26 @@ fn idle_units_guard_their_spot() {
 }
 
 /// Elimination: a player without buildings or constructors is defeated and the other wins,
-/// with no surrender involved.
+/// with no surrender involved. Under fog the tank first drives to the enemy start; after that
+/// every target it attacks is one it sees or remembers.
 #[test]
 fn destroying_every_building_and_constructor_defeats_a_player() {
     let mut w = world(Faction::Apa, 100_000);
     let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
+    let enemy_start = crater_ridge().spawns[1];
+    order(&mut w, CommandKind::Move { units: vec![tank], target: enemy_start - Vec2::from_int(25, 25) });
     for _ in 0..30 * 600 {
         if w.winner().is_some() {
             break;
         }
-        let next = w.entities().find(|e| e.owner == Some(PlayerId(1))).map(|e| e.id);
-        if w.entity(tank).unwrap().order == Order::Idle
-            && let Some(t) = next
+        let vision = w.vision(P0);
+        let known = w
+            .entities()
+            .filter(|e| e.owner == Some(PlayerId(1)))
+            .find(|e| vision.is_visible(e.pos) || vision.memory.contains_key(&e.id))
+            .map(|e| e.id);
+        if matches!(w.entity(tank).unwrap().order, Order::Idle | Order::Move { .. })
+            && let Some(t) = known
         {
             w.submit(P0, CommandKind::Attack { units: vec![tank], target: t });
         }

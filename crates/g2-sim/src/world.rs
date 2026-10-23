@@ -77,6 +77,9 @@ pub struct World {
     /// `(shooter, target, damage)` fired this tick, applied together by `resolve_shots`.
     /// Empty between ticks, so it needs no hash.
     shots: Vec<(EntityId, EntityId, i32)>,
+    /// What each player sees and has explored (index = player). Updated every tick before
+    /// units act, so targeting only ever uses what is visible at the start of the tick.
+    pub(crate) visions: Vec<crate::fog::Vision>,
 }
 
 impl World {
@@ -107,6 +110,7 @@ impl World {
             nav: crate::nav::Grid::default(),
             nav_key: u64::MAX,
             shots: Vec::new(),
+            visions: setup.players.iter().map(|_| crate::fog::Vision::new(setup.map.width, setup.map.height)).collect(),
             checkpoints: Vec::new(),
         };
         for &(pos, amount) in &setup.map.supply_piles {
@@ -136,6 +140,7 @@ impl World {
             debug_assert!(world.entities.get(cc_id).is_some());
         }
         world.update_power();
+        world.update_vision();
         world
     }
 
@@ -331,6 +336,8 @@ impl World {
         // Defeat first, so an eliminated player's remaining units go in the same tick.
         self.update_defeat();
         self.cleanup();
+        // Last, so the AI and every unit next tick see the state this tick ended in.
+        self.update_vision();
         self.tick += 1;
     }
 
@@ -346,6 +353,15 @@ impl World {
                 self.submit(PlayerId(slot as u8), kind);
             }
         }
+    }
+
+    fn update_vision(&mut self) {
+        crate::fog::update(&mut self.visions, &self.entities, self.rules, ACQUIRE);
+    }
+
+    /// What `player` sees and has explored.
+    pub fn vision(&self, player: PlayerId) -> &crate::fog::Vision {
+        &self.visions[player.0 as usize]
     }
 
     fn apply_due_commands(&mut self) {
@@ -507,7 +523,7 @@ impl World {
                 Ok(())
             }
             CommandKind::Attack { units, target } => {
-                if self.live_enemy(player, *target).is_none() {
+                if !self.attackable(player, *target) {
                     return Err(Reject::CannotAttack);
                 }
                 let units =
@@ -779,7 +795,18 @@ impl World {
             };
             self.entities.get_mut(id).unwrap().route = route;
         }
+        let radius = self.rules.def(self.entities.get(id).unwrap().def).radius;
+        // A turn the unit is already close to counts as taken once the next leg is clear:
+        // two units routed through the same turn push each other off it, and neither would
+        // ever reach it exactly.
+        let route = &self.entities.get(id).unwrap().route.waypoints;
+        let skip = route.len() >= 2
+            && pos.distance(route[route.len() - 1]) <= radius + SLACK
+            && self.straight_is_free(pos, route[route.len() - 2]);
         let u = self.entities.get_mut(id).unwrap();
+        if skip {
+            u.route.waypoints.pop();
+        }
         let mut left = speed;
         let mut p = pos;
         while let Some(&wp) = u.route.waypoints.last() {
@@ -853,13 +880,16 @@ impl World {
             Order::AttackMove { dest, pace, engaged } => match weapon {
                 None => (pos, Order::Idle),
                 Some(w) => {
-                    // Keep the current target while it lives and stays within acquisition
-                    // range (a leash: a guard isn't dragged across the map); else look around.
+                    // Keep the current target while it lives, stays visible and within
+                    // acquisition range (a leash: a guard isn't dragged across the map, nor
+                    // into the fog); else look around.
                     let reach = w.range + ACQUIRE;
+                    let vision = &self.visions[owner.0 as usize];
                     let target = engaged
                         .filter(|&t| {
-                            self.live_enemy(owner, t)
-                                .is_some_and(|e| e.pos.distance(pos) - self.rules.def(e.def).radius <= reach)
+                            self.live_enemy(owner, t).is_some_and(|e| {
+                                vision.is_visible(e.pos) && e.pos.distance(pos) - self.rules.def(e.def).radius <= reach
+                            })
                         })
                         .or_else(|| self.enemy_near(owner, pos, reach));
                     match target {
@@ -884,15 +914,24 @@ impl World {
         }
     }
 
-    /// `target` if it is a live entity owned by an opponent of `owner` and can be shot
-    /// (units and buildings, not neutral resources).
+    /// `target` if it is a live entity owned by an opponent of `owner` that can be shot (units
+    /// and buildings, not neutral resources). Fog is not checked: an attack order, once given,
+    /// chases its target through fog while it lives. Whether it may be given is `attackable`.
     fn live_enemy(&self, owner: PlayerId, target: EntityId) -> Option<&Entity> {
         self.entities.get(target).filter(|t| t.owner.is_some_and(|o| o != owner) && t.hp > 0)
     }
 
-    /// The enemy whose edge is nearest `pos`, within `reach`. Units come before buildings, so
-    /// a squad fights the army before the walls; ties go to the lower entity id.
+    /// Whether `owner` may order an attack on `target`: a live enemy it sees now, or an enemy
+    /// building it remembers.
+    fn attackable(&self, owner: PlayerId, target: EntityId) -> bool {
+        let vision = &self.visions[owner.0 as usize];
+        self.live_enemy(owner, target).is_some_and(|t| vision.is_visible(t.pos) || vision.memory.contains_key(&target))
+    }
+
+    /// The visible enemy whose edge is nearest `pos`, within `reach`. Units come before
+    /// buildings, so a squad fights the army before the walls; ties go to the lower entity id.
     fn enemy_near(&self, owner: PlayerId, pos: Vec2, reach: Fx) -> Option<EntityId> {
+        let vision = &self.visions[owner.0 as usize];
         let mut best: Option<(bool, Fx, EntityId)> = None;
         for e in self.entities.iter() {
             if !e.owner.is_some_and(|o| o != owner) || e.hp <= 0 {
@@ -905,7 +944,7 @@ impl World {
                 continue;
             }
             let gap = (e.pos.distance(pos) - d.radius).max(Fx::ZERO);
-            if gap > reach {
+            if gap > reach || !vision.is_visible(e.pos) {
                 continue;
             }
             let key = (!d.is_unit(), gap, e.id);

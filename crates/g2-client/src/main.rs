@@ -1,16 +1,17 @@
 //! Generals 2 client.
 //!
 //!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--general NAME]
-//!             [--enemy-general NAME] [--seed N] [--spectate] [--record FILE]
+//!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle] [...]
 //!             headless: simulate N ticks, render one frame
 //!
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
 //! Generals / Zero Hour map (`g2-tools maps` lists them). `--general` picks a general of your
 //! faction (Bulldog, Taskmaster, Junkyard); without one you play the plain faction. `--spectate`
-//! lets the AI play your side too (AI vs AI). `--record` saves the match as a replay on exit;
-//! check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no window or
-//! display server.
+//! lets the AI play your side too (AI vs AI). `--reveal` draws the whole map without your fog
+//! of war (the sim's fog still applies to both sides). `--record` saves the match as a replay
+//! on exit; check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no
+//! window or display server.
 
 mod camera;
 mod hud;
@@ -32,6 +33,7 @@ struct Args {
     generals: [Option<String>; 2],
     seed: u64,
     spectate: bool,
+    reveal: bool,
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
@@ -46,6 +48,7 @@ fn parse_args() -> Result<Args, String> {
         generals: [None, None],
         seed: 1,
         spectate: false,
+        reveal: false,
         screenshot: None,
         record: None,
         ticks: 900,
@@ -68,6 +71,7 @@ fn parse_args() -> Result<Args, String> {
             "--enemy-general" => a.generals[1] = Some(it.next().ok_or("--enemy-general needs a name")?),
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()).ok_or("--seed needs a number")?,
             "--spectate" => a.spectate = true,
+            "--reveal" => a.reveal = true,
             "--screenshot" => a.screenshot = Some(it.next().ok_or("--screenshot needs a path")?),
             "--record" => a.record = Some(it.next().ok_or("--record needs a path")?),
             "--ticks" => a.ticks = it.next().and_then(|v| v.parse().ok()).ok_or("--ticks needs a number")?,
@@ -142,7 +146,9 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
     let player = |i: usize, ai: bool| -> Result<PlayerSetup, String> {
         Ok(PlayerSetup { faction: args.factions[i], starting_credits: 5_000, ai, general: general(i)? })
     };
-    Ok(Sim::new(map, source, args.seed, [player(0, spectate)?, player(1, true)?]))
+    let mut sim = Sim::new(map, source, args.seed, [player(0, spectate)?, player(1, true)?]);
+    sim.fog = !args.reveal;
+    Ok(sim)
 }
 
 #[derive(Resource)]

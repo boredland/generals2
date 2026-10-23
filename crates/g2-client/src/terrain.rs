@@ -29,7 +29,7 @@ pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_terrain).add_systems(Update, clear_under_buildings);
+        app.add_systems(Startup, spawn_terrain).add_systems(Update, (clear_under_buildings, update_fog));
     }
 }
 
@@ -41,26 +41,109 @@ struct Scenery {
 }
 
 /// Props are placed once from the map; players build anywhere. Hide every prop that overlaps a
-/// building footprint. Props never move, so this only reruns when the set of footprints changes.
+/// shown building's footprint (an enemy building in the fog must not clear its trees, or the
+/// gap would give it away), and (under fog) every prop on ground the local player hasn't
+/// explored, since props stand taller than the fog sheet. Props never move, so this only
+/// reruns when the shown footprints or the explored area change.
 fn clear_under_buildings(
     sim: Res<Sim>,
-    mut seen: Local<Vec<(Vec2, f32)>>,
+    mut seen: Local<(Vec<(Vec2, f32)>, usize)>,
     mut props: Query<(&Scenery, &mut Visibility)>,
 ) {
     let world = &sim.world;
     let buildings: Vec<(Vec2, f32)> = world
         .entities()
-        .filter(|e| world.rules.def(e.def).is_building())
+        .filter(|e| world.rules.def(e.def).is_building() && sim.shows(e))
         .map(|e| (to_world(e.pos).xz(), world.rules.def(e.def).radius.to_f32()))
         .collect();
-    if buildings == *seen {
+    let v = world.vision(crate::sim::LOCAL);
+    let explored = (0..v.h).flat_map(|y| (0..v.w).map(move |x| (x, y))).filter(|&(x, y)| v.cell_state(x, y).0).count();
+    if (buildings.as_slice(), explored) == (seen.0.as_slice(), seen.1) {
         return;
     }
     for (prop, mut vis) in &mut props {
         let covered = buildings.iter().any(|&(c, r)| c.distance(prop.at) < r + prop.radius);
-        vis.set_if_neq(if covered { Visibility::Hidden } else { Visibility::Inherited });
+        let hidden = covered || !sim.explored_at(prop.at.x, prop.at.y);
+        vis.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
     }
-    *seen = buildings;
+    *seen = (buildings, explored);
+}
+
+/// Darkness drawn over the playable ground: unexplored, explored but not seen, and visible.
+const FOG_ALPHA: [f32; 3] = [0.88, 0.5, 0.0];
+
+/// The fog overlay: a sheet just above the ground whose vertex alpha follows the local
+/// player's fog cells, interpolated between cell centres so edges are soft.
+#[derive(Component)]
+struct FogSheet {
+    mesh: Handle<Mesh>,
+    /// Vertex positions in sim units (x, y), in mesh order.
+    points: Vec<Vec2>,
+}
+
+fn fog_sheet(layout: &Layout) -> (Mesh, Vec<Vec2>) {
+    let cell = cell_size(layout);
+    let nx = (layout.width / cell) as usize + 1;
+    let nz = (layout.height / cell) as usize + 1;
+    let mut points = Vec::with_capacity(nx * nz);
+    let mut positions = Vec::with_capacity(nx * nz);
+    for j in 0..nz {
+        for i in 0..nx {
+            let p = Vec2::new((i as f32 * cell).min(layout.width), (j as f32 * cell).min(layout.height));
+            points.push(p);
+            // Over water the sheet lies on the surface, not the bed, or the water would cover it.
+            let top = layout.height(p) + layout.water_depth(p).unwrap_or(0.0);
+            positions.push([p.x, top + 0.25, p.y]);
+        }
+    }
+    let mut indices = Vec::with_capacity((nx - 1) * (nz - 1) * 6);
+    for j in 0..nz - 1 {
+        for i in 0..nx - 1 {
+            let a = (j * nx + i) as u32;
+            let (b, c, d) = (a + 1, a + nx as u32, a + nx as u32 + 1);
+            indices.extend_from_slice(&[a, c, b, b, c, d]);
+        }
+    }
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32, 0.0, 0.0, FOG_ALPHA[0]]; nx * nz]);
+    mesh.insert_indices(Indices::U32(indices));
+    (mesh, points)
+}
+
+/// Fog darkness at sim point `p`: bilinear between the centres of the fog cells around it.
+fn fog_alpha(states: &[u8], w: i32, h: i32, p: Vec2) -> f32 {
+    let c = g2_sim::fog::CELL as f32;
+    let (fx, fy) = (p.x / c - 0.5, p.y / c - 0.5);
+    let (x0, y0) = (fx.floor(), fy.floor());
+    let (tx, ty) = (fx - x0, fy - y0);
+    let at = |x: i32, y: i32| FOG_ALPHA[states[(y.clamp(0, h - 1) * w + x.clamp(0, w - 1)) as usize] as usize];
+    let (x0, y0) = (x0 as i32, y0 as i32);
+    let top = at(x0, y0) + (at(x0 + 1, y0) - at(x0, y0)) * tx;
+    let bot = at(x0, y0 + 1) + (at(x0 + 1, y0 + 1) - at(x0, y0 + 1)) * tx;
+    top + (bot - top) * ty
+}
+
+/// Rewrites the fog sheet's alpha when the local player's fog cells change.
+fn update_fog(
+    sim: Res<Sim>,
+    mut last: Local<Vec<u8>>,
+    mut now: Local<Vec<u8>>,
+    sheets: Query<&FogSheet>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    sim.fog_states(&mut now);
+    if *now == *last {
+        return;
+    }
+    std::mem::swap(&mut *now, &mut *last);
+    let v = sim.world.vision(crate::sim::LOCAL);
+    for sheet in &sheets {
+        let Some(mut mesh) = meshes.get_mut(&sheet.mesh) else { continue };
+        let colors: Vec<[f32; 4]> =
+            sheet.points.iter().map(|&p| [0.0, 0.0, 0.0, fog_alpha(&last, v.w, v.h, p)]).collect();
+        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    }
 }
 
 // ---- deterministic value noise ------------------------------------------------------------
@@ -550,10 +633,22 @@ fn spawn_terrain(
         ..default()
     });
     commands.spawn((Mesh3d(meshes.add(ground_mesh(&layout))), MeshMaterial3d(ground)));
+    let (sheet, points) = fog_sheet(&layout);
+    let sheet = meshes.add(sheet);
+    let fog = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        // Distance haze would tint the black sheet; it sits on the ground and needs none.
+        fog_enabled: false,
+        ..default()
+    });
+    commands.spawn((Mesh3d(sheet.clone()), MeshMaterial3d(fog), FogSheet { mesh: sheet, points }));
     if let Some(file) = layout.source {
+        // Opaque: blended water would be sorted against the blended fog sheet per mesh, and
+        // draw over it wherever its centre lies nearer the camera.
         let water = materials.add(StandardMaterial {
-            base_color: Color::srgba(0.16, 0.30, 0.32, 0.78),
-            alpha_mode: AlphaMode::Blend,
+            base_color: Color::srgb(0.16, 0.30, 0.32),
             perceptual_roughness: 0.08,
             reflectance: 0.6,
             ..default()
@@ -756,7 +851,9 @@ mod tests {
 
     #[test]
     fn props_under_a_building_are_hidden_and_return_when_it_is_gone() {
-        let sim = built_in();
+        let mut sim = built_in();
+        // Cover only: with the fog on, the far prop would stay hidden as unexplored.
+        sim.fog = false;
         let cc = sim.world.entities().find(|e| sim.world.rules.def(e.def).is_building()).unwrap();
         let (at, owner) = (to_world(cc.pos).xz(), cc.owner.unwrap());
         let mut app = App::new();
@@ -776,6 +873,105 @@ mod tests {
         assert!(sim.world.entities().all(|e| e.owner != Some(owner)));
         app.update();
         assert_eq!(app.world().get::<Visibility>(under), Some(&Visibility::Inherited));
+    }
+
+    /// Under fog, props stand taller than the fog sheet, so those on unexplored ground are
+    /// hidden; they appear once a unit has seen the spot.
+    #[test]
+    fn props_on_unexplored_ground_are_hidden_until_explored() {
+        // A human local player and a passive opponent, so only our dozer explores.
+        let players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false)
+            .map(|p| g2_sim::PlayerSetup { ai: false, ..p });
+        let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+        let dozer = sim
+            .world
+            .entities()
+            .find(|e| e.owner == Some(crate::sim::LOCAL) && sim.world.rules.def(e.def).is_constructor())
+            .unwrap();
+        let (home, dozer) = (to_world(dozer.pos).xz(), dozer.id);
+        let spot = home + Vec2::new(70.0, 0.0);
+        let mut app = App::new();
+        app.insert_resource(sim).add_systems(Update, clear_under_buildings);
+        // Beside the dozer, clear of the command center's footprint: seen from the start.
+        let (near, out) = (home + Vec2::new(8.0, 4.0), spot);
+        let near = app.world_mut().spawn((Scenery { at: near, radius: 0.5 }, Visibility::default())).id();
+        let out = app.world_mut().spawn((Scenery { at: out, radius: 0.5 }, Visibility::default())).id();
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(near), Some(&Visibility::Inherited), "seen from the start");
+        assert_eq!(app.world().get::<Visibility>(out), Some(&Visibility::Hidden), "not explored yet");
+        let mut sim = app.world_mut().resource_mut::<Sim>();
+        sim.order(g2_sim::CommandKind::Move {
+            units: vec![dozer],
+            target: crate::sim::to_sim(Vec3::new(spot.x, 0.0, spot.y)),
+        });
+        // 70 units at the dozer's speed is well under a minute.
+        for _ in 0..30 * 60 {
+            if sim.explored_at(spot.x, spot.y) {
+                break;
+            }
+            sim.world.step();
+        }
+        assert!(sim.explored_at(spot.x, spot.y), "the dozer reached the spot");
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(out), Some(&Visibility::Inherited), "explored now");
+    }
+
+    /// An enemy building raised in the fog leaves the props on its footprint alone: a clearing
+    /// in an explored grove would give it away. The spot is explored (our dozer drove there and
+    /// back) but out of sight when the enemy builds on it.
+    #[test]
+    fn an_unseen_enemy_building_does_not_clear_props() {
+        let players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false)
+            .map(|p| g2_sim::PlayerSetup { ai: false, ..p });
+        let mut sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+        let mine = |sim: &Sim, owner| {
+            sim.world
+                .entities()
+                .find(|e| e.owner == Some(owner) && sim.world.rules.def(e.def).is_constructor())
+                .unwrap()
+                .id
+        };
+        let (ours, theirs) = (mine(&sim, crate::sim::LOCAL), mine(&sim, g2_sim::PlayerId(1)));
+        let home = sim.world.entity(ours).unwrap().pos;
+        let spot = g2_sim::Vec2::from_int(200, 140) + g2_sim::Vec2::from_int(30, 30);
+        sim.order(g2_sim::CommandKind::Move { units: vec![ours], target: spot });
+        for _ in 0..30 * 120 {
+            if sim.world.vision(crate::sim::LOCAL).is_visible(spot) {
+                break;
+            }
+            sim.world.step();
+        }
+        sim.order(g2_sim::CommandKind::Move { units: vec![ours], target: home });
+        for _ in 0..30 * 120 {
+            if !sim.world.vision(crate::sim::LOCAL).is_visible(spot) {
+                break;
+            }
+            sim.world.step();
+        }
+        let explored_out_of_sight = |s: &Sim| {
+            let v = s.world.vision(crate::sim::LOCAL);
+            v.is_explored(spot) && !v.is_visible(spot)
+        };
+        assert!(explored_out_of_sight(&sim), "the spot is explored, then left");
+        let barracks = sim.world.rules.find("GLA Barracks").unwrap();
+        sim.world.submit(g2_sim::PlayerId(1), g2_sim::CommandKind::Build { builder: theirs, def: barracks, pos: spot });
+        let built = |s: &Sim| s.world.entities().any(|e| e.def == barracks && e.pos == spot);
+        for _ in 0..30 * 120 {
+            if built(&sim) {
+                break;
+            }
+            sim.world.step();
+        }
+        assert!(built(&sim) && explored_out_of_sight(&sim), "a foundation stands on the spot, unseen");
+        let at = to_world(spot).xz();
+        let mut app = App::new();
+        app.insert_resource(sim).add_systems(Update, clear_under_buildings);
+        let prop = app.world_mut().spawn((Scenery { at, radius: 1.0 }, Visibility::default())).id();
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(prop), Some(&Visibility::Inherited), "the grove gives nothing away");
+        app.world_mut().resource_mut::<Sim>().fog = false;
+        app.update();
+        assert_eq!(app.world().get::<Visibility>(prop), Some(&Visibility::Hidden), "shown, the foundation clears it");
     }
 
     fn imported(name: &str) -> Sim {

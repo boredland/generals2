@@ -276,12 +276,13 @@ fn mouse(
     }
 }
 
-/// Topmost entity under the cursor: the one whose footprint contains `at`, smallest first, so a
-/// unit standing next to a building is still clickable.
+/// Topmost shown entity under the cursor: the one whose footprint contains `at`, smallest
+/// first, so a unit standing next to a building is still clickable. Enemies hidden by the fog
+/// can't be picked.
 fn pick(sim: &Sim, at: g2_sim::Vec2, filter: impl Fn(&g2_sim::Entity) -> bool) -> Option<EntityId> {
     sim.world
         .entities()
-        .filter(|e| filter(e))
+        .filter(|e| sim.shows(e) && filter(e))
         .filter(|e| e.pos.distance(at) <= sim.world.rules.def(e.def).radius + g2_sim::Fx::ONE)
         .min_by_key(|e| sim.world.rules.def(e.def).radius)
         .map(|e| e.id)

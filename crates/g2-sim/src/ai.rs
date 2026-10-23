@@ -142,13 +142,15 @@ impl Ai {
             out.push(CommandKind::Gather { units: idle, pile });
         }
 
-        // 5. Army: defend first, then attack in waves. Only armed intruders call the defence: a
-        //    passing harvester or dozer is no threat, and idle guards shoot it anyway if it
-        //    comes within range.
+        // 5. Army: defend first, then attack in waves. Only visible, armed intruders call the
+        //    defence: a passing harvester or dozer is no threat, and idle guards shoot it anyway
+        //    if it comes within range.
         let army: Vec<_> = mine.iter().filter(|e| rules.def(e.def).weapon().is_some()).collect();
+        let vision = world.vision(me);
         let intruder = world.entities().find(|e| {
             e.owner.is_some_and(|o| o != me)
                 && rules.def(e.def).weapon().is_some()
+                && vision.is_visible(e.pos)
                 && mine.iter().any(|b| rules.def(b.def).is_building() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
         });
         if let Some(intruder) = intruder {
@@ -207,21 +209,39 @@ impl Ai {
         best.map(|(_, p)| p).or_else(|| self.find_spot(world, def, around))
     }
 
-    /// Where an attack wave heads: just outside the enemy building nearest `home`, on the side
-    /// facing home. Not its centre, which is a blocked cell no route can end on; units engage
-    /// whatever they meet once they are close anyway.
+    /// Where an attack wave heads: just outside the nearest enemy building this AI remembers,
+    /// on the side facing home (not its centre, a blocked cell no route can end on). With none
+    /// remembered, it scouts the nearest place it can't see: start positions, oil wells and
+    /// supply piles first (the map is public; enemies build there), then any cell it has
+    /// never explored, so a hidden last building is always found. Units engage whatever they
+    /// meet once they are close anyway.
     fn enemy_base(&self, world: &World, home: Vec2) -> Option<Vec2> {
-        let b = world
-            .entities()
-            .filter(|e| e.owner.is_some_and(|o| o != self.player) && world.rules.def(e.def).is_building())
-            .min_by_key(|e| (e.pos.distance(home), e.id))?;
-        let delta = home - b.pos;
+        let vision = world.vision(self.player);
+        let seen = vision
+            .memory
+            .iter()
+            .min_by_key(|(id, s)| (s.pos.distance(home), **id))
+            .map(|(_, s)| (s.pos, world.rules.def(s.def).radius));
+        let scout = || {
+            let resources = world
+                .entities()
+                .filter(|e| matches!(world.rules.def(e.def).class, Class::OilWell | Class::SupplyPile))
+                .map(|e| e.pos);
+            let nearest = |points: &mut dyn Iterator<Item = Vec2>| points.min_by_key(|&p| (p.distance(home), p.x, p.y));
+            let likely: Vec<Vec2> = world.map.spawns.iter().copied().chain(resources).collect();
+            nearest(&mut likely.iter().copied().filter(|&p| !vision.is_explored(p)))
+                .or_else(|| nearest(&mut vision.unexplored_centres()))
+                .or_else(|| nearest(&mut likely.iter().copied().filter(|&p| !vision.is_visible(p))))
+                .map(|p| (p, Fx::from_int(5)))
+        };
+        let (pos, radius) = seen.or_else(scout)?;
+        let delta = home - pos;
         let dist = delta.length();
         if dist == Fx::ZERO {
-            return Some(b.pos);
+            return Some(pos);
         }
-        let stand_off = world.rules.def(b.def).radius + Fx::from_int(8);
-        Some(b.pos + delta.scale(stand_off.min(dist) / dist))
+        let stand_off = radius + Fx::from_int(8);
+        Some(pos + delta.scale(stand_off.min(dist) / dist))
     }
 
     fn free_well(&self, world: &World, derrick: crate::defs::DefId, around: Vec2) -> Option<Vec2> {

@@ -63,6 +63,9 @@ impl World {
                 h.u64(0x6e6e_0000 | g.0 as u64);
             }
         }
+        for v in &self.visions {
+            v.hash_into(|x| h.u64(x));
+        }
         h.u64(self.entities.slot_count() as u64);
         for e in self.entities.iter() {
             h.u64(e.id.index as u64);
