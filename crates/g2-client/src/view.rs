@@ -45,6 +45,21 @@ struct Effect {
     arc: Option<(Vec3, Vec3, f32)>,
 }
 
+/// What a kill leaves behind: it sits on the ground for `life` seconds, then sinks out of sight
+/// over the last `SINK_SECS` and goes.
+#[derive(Component)]
+struct Wreck {
+    age: f32,
+    life: f32,
+    depth: f32,
+    ground: f32,
+}
+
+const SINK_SECS: f32 = 6.0;
+/// Unit and building wrecks stay this long.
+const UNIT_WRECK_SECS: f32 = 25.0;
+const BUILDING_WRECK_SECS: f32 = 70.0;
+
 /// Seconds a tracer stays visible; kill flashes last three times as long.
 const TRACER_SECS: f32 = 0.12;
 
@@ -67,6 +82,9 @@ struct Assets3d {
     /// Unlit, additive-looking muzzle/tracer and explosion colours.
     tracer: Handle<StandardMaterial>,
     blast: Handle<StandardMaterial>,
+    /// Charred ground and rubble left where something died.
+    scorch: Handle<StandardMaterial>,
+    rubble: Handle<StandardMaterial>,
 }
 
 /// `Slot` with crate colours folded to an index, so it can key a map.
@@ -103,6 +121,7 @@ impl Plugin for ViewPlugin {
                 spin_rotors,
                 spawn_effects,
                 age_effects,
+                age_wrecks,
             )
                 .chain()
                 .after(crate::menu::MenuSet),
@@ -161,6 +180,16 @@ fn setup_scene(
         team,
         tracer: materials.add(glow(Color::srgb(1.0, 0.85, 0.45), 4.0)),
         blast: materials.add(glow(Color::srgb(1.0, 0.5, 0.15), 3.0)),
+        scorch: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.045, 0.04, 0.035),
+            perceptual_roughness: 1.0,
+            ..default()
+        }),
+        rubble: materials.add(StandardMaterial {
+            base_color: Color::srgb(0.16, 0.14, 0.12),
+            perceptual_roughness: 0.95,
+            ..default()
+        }),
     });
     let size = sim.world.map.width.to_f32().max(sim.world.map.height.to_f32());
     crate::look::spawn_lights(&mut commands, size);
@@ -331,12 +360,17 @@ fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, m
     let tick_secs = 1.0 / g2_sim::TICKS_PER_SECOND as f32;
     for shot in hits.0.drain(..) {
         match shot {
-            Shot::Hit { from, at, killed, tracer } => {
+            Shot::Hit { from, at, killed, tracer, target } => {
                 if !seen(from) && !seen(at) {
                     continue;
                 }
+                if let (true, Some(def)) = (killed && seen(at), target) {
+                    spawn_wreck(&mut commands, &assets, &sim, at, def);
+                }
                 let (a, b) = (sim.to_world(from) + Vec3::Y * 1.5, sim.to_world(at) + Vec3::Y * 1.5);
                 let len = a.distance(b);
+                // A building dies in a bigger fireball than a unit.
+                let blast_scale = target.map_or(2.5, |d| 2.0 + sim.world.rules.def(d).radius.to_f32() * 0.45);
                 if tracer && len > 0.1 {
                     commands.spawn((
                         crate::menu::MatchEntity,
@@ -353,7 +387,7 @@ fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, m
                         crate::menu::MatchEntity,
                         Mesh3d(assets.sphere.clone()),
                         MeshMaterial3d(assets.blast.clone()),
-                        Transform::from_translation(b).with_scale(Vec3::splat(2.5)),
+                        Transform::from_translation(b).with_scale(Vec3::splat(blast_scale)),
                         Effect { age: 0.0, life: TRACER_SECS * 3.0, grow: 3.0, arc: None },
                     ));
                 }
@@ -415,6 +449,80 @@ fn age_effects(
         }
         let now = 1.0 + (fx.grow - 1.0) * t;
         tf.scale *= now / before;
+    }
+}
+
+/// Leaves a scorch mark and a few tumbled slabs where a unit or building died. Wrecks are
+/// decoration only: they are not sim entities, never block anything and are not hashed. Their
+/// shapes come from the spot, so a replay or a second viewer draws the same ones.
+fn spawn_wreck(commands: &mut Commands, assets: &Assets3d, sim: &Sim, at: g2_sim::Vec2, def: g2_sim::DefId) {
+    let d = sim.world.rules.def(def);
+    let building = d.is_building();
+    let r = d.radius.to_f32().max(1.5);
+    let ground = sim.ground_y(at.x.to_f32(), at.y.to_f32());
+    let origin = sim.to_world(at).with_y(ground);
+    let life = if building { BUILDING_WRECK_SECS } else { UNIT_WRECK_SECS };
+    let seed = (at.x.0 as u32).wrapping_mul(0x9e37_79b1) ^ (at.y.0 as u32).wrapping_mul(0x85eb_ca6b);
+    let rnd = |k: u32| {
+        let mut h = seed ^ k.wrapping_mul(0xc2b2_ae35);
+        h ^= h >> 15;
+        h = h.wrapping_mul(0x2c1b_3c6d);
+        h ^= h >> 12;
+        (h & 0xffff) as f32 / 65_535.0
+    };
+    let wreck = |age_life: f32, depth: f32| Wreck { age: 0.0, life: age_life, depth, ground };
+    // The scorch: a flat dark disc just above the ground, wider than what died.
+    commands.spawn((
+        crate::menu::MatchEntity,
+        Mesh3d(assets.cylinder.clone()),
+        MeshMaterial3d(assets.scorch.clone()),
+        Transform::from_translation(origin + Vec3::Y * 0.06).with_scale(Vec3::new(r * 2.3, 0.05, r * 2.3)),
+        wreck(life, 0.3),
+    ));
+    let slabs = if building { 5 } else { 2 };
+    for k in 0..slabs {
+        let (a, dist) = (rnd(k * 3) * std::f32::consts::TAU, rnd(k * 3 + 1) * r * 0.8);
+        let size =
+            Vec3::new(0.5 + rnd(k * 3 + 2) * r * 0.5, 0.25 + rnd(k * 5 + 7) * 0.5, 0.5 + rnd(k * 7 + 3) * r * 0.4);
+        commands.spawn((
+            crate::menu::MatchEntity,
+            Mesh3d(assets.cube.clone()),
+            MeshMaterial3d(assets.rubble.clone()),
+            Transform::from_translation(origin + Vec3::new(a.cos() * dist, size.y * 0.35, a.sin() * dist))
+                .with_rotation(Quat::from_euler(
+                    EulerRot::YXZ,
+                    rnd(k * 11) * std::f32::consts::TAU,
+                    (rnd(k * 13) - 0.5) * 0.4,
+                    (rnd(k * 17) - 0.5) * 0.4,
+                ))
+                .with_scale(size),
+            wreck(life, size.y + 0.4),
+        ));
+    }
+}
+
+/// Wrecks sit still, then sink into the ground over their last seconds and go. Frozen with the
+/// effects in screenshot mode.
+fn age_wrecks(
+    mut commands: Commands,
+    time: Res<Time>,
+    sim: Res<Sim>,
+    frozen: Option<Res<FreezeEffects>>,
+    mut q: Query<(Entity, &mut Wreck, &mut Transform)>,
+) {
+    if frozen.is_some() || sim.speed == 0 {
+        return;
+    }
+    for (id, mut w, mut tf) in &mut q {
+        w.age += time.delta_secs() * sim.speed as f32;
+        if w.age >= w.life {
+            commands.entity(id).despawn();
+            continue;
+        }
+        let sunk = ((w.age - (w.life - SINK_SECS)) / SINK_SECS).clamp(0.0, 1.0);
+        if sunk > 0.0 {
+            tf.translation.y = w.ground - w.depth * sunk + (tf.translation.y - w.ground).max(0.0) * (1.0 - sunk);
+        }
     }
 }
 
@@ -501,6 +609,72 @@ mod tests {
         step_until(&mut app, &|s| !s.remembers(cc), "seen again");
         app.update();
         assert!(!app.world().resource::<Mirror>().0.contains_key(&cc), "the ghost is gone");
+    }
+
+    /// A kill leaves a scorch mark and rubble where it happened, a plain hit leaves nothing; the
+    /// wreckage sits on the ground, then sinks out of sight and goes, and never touches the sim.
+    #[test]
+    fn a_kill_leaves_wreckage_that_sinks_and_goes() {
+        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: None, ..p });
+        let mut sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+        sim.fog = false;
+        let target = sim
+            .world
+            .entities()
+            .find(|e| e.owner == Some(PlayerId(1)) && sim.world.rules.def(e.def).is_unit())
+            .unwrap();
+        let (at, def) = (target.pos, target.def);
+        let hash = sim.world.state_hash();
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<Mesh>()
+            .init_asset::<StandardMaterial>()
+            .insert_resource(sim)
+            .init_resource::<Previous>()
+            .init_resource::<crate::sim::Hits>()
+            .add_plugins(ViewPlugin);
+        app.update();
+        let wrecks = |app: &mut App| app.world_mut().query::<&Wreck>().iter(app.world()).count();
+        app.world_mut().resource_mut::<crate::sim::Hits>().0.push(crate::sim::Shot::Hit {
+            from: at,
+            at,
+            killed: true,
+            tracer: false,
+            target: Some(def),
+        });
+        app.update();
+        let n = wrecks(&mut app);
+        assert!(n >= 3, "a scorch and rubble: {n}");
+        // Not a kill: nothing is left behind.
+        app.world_mut().resource_mut::<crate::sim::Hits>().0.push(crate::sim::Shot::Hit {
+            from: at,
+            at,
+            killed: false,
+            tracer: false,
+            target: None,
+        });
+        app.update();
+        assert_eq!(wrecks(&mut app), n, "a plain hit leaves no wreck");
+        // Time passes: the wreck sinks before it goes.
+        let top = |app: &mut App| {
+            app.world_mut()
+                .query::<(&Wreck, &Transform)>()
+                .iter(app.world())
+                .map(|(_, t)| t.translation.y)
+                .fold(f32::MIN, f32::max)
+        };
+        let high = top(&mut app);
+        for mut w in app.world_mut().query::<&mut Wreck>().iter_mut(app.world_mut()) {
+            w.age = w.life - SINK_SECS / 2.0;
+        }
+        app.update();
+        assert!(top(&mut app) < high, "sinking");
+        for mut w in app.world_mut().query::<&mut Wreck>().iter_mut(app.world_mut()) {
+            w.age = w.life;
+        }
+        app.update();
+        assert_eq!(wrecks(&mut app), 0, "gone");
+        assert_eq!(app.world().resource::<Sim>().world.state_hash(), hash, "decoration never touches the sim");
     }
 
     /// A shell handed over partway through its flight (a screenshot of one fired earlier)

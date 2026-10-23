@@ -155,7 +155,7 @@ pub struct Hits(pub Vec<Shot>);
 #[derive(Clone, Copy, Debug)]
 pub enum Shot {
     /// A hit on a target at `at`; `tracer` for direct fire (a shell's hits are its blast).
-    Hit { from: g2_sim::Vec2, at: g2_sim::Vec2, killed: bool, tracer: bool },
+    Hit { from: g2_sim::Vec2, at: g2_sim::Vec2, killed: bool, tracer: bool, target: Option<g2_sim::DefId> },
     /// A shell from `from` to `at`, in the air for `flight` more ticks, `done` of its whole flight
     /// (0 at the muzzle) already behind it.
     Shell { from: g2_sim::Vec2, at: g2_sim::Vec2, flight: u32, done: f32 },
@@ -208,9 +208,9 @@ pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
     let tick = world.tick();
     for e in world.events() {
         match *e {
-            g2_sim::world::Event::Hit { shooter, at, killed, splash, .. } => {
+            g2_sim::world::Event::Hit { shooter, at, killed, splash, target_def, .. } => {
                 let from = world.entity(shooter).map_or(at, |s| s.pos);
-                hits.0.push(Shot::Hit { from, at, killed, tracer: !splash });
+                hits.0.push(Shot::Hit { from, at, killed, tracer: !splash, target: killed.then_some(target_def) });
             }
             g2_sim::world::Event::Fired { from, at, lands, .. } => {
                 hits.0.push(Shot::Shell { from, at, flight: lands.saturating_sub(tick) + 1, done: 0.0 })

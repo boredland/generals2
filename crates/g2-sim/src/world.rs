@@ -71,6 +71,8 @@ pub enum Event {
         damage: i32,
         killed: bool,
         splash: bool,
+        /// What `target` was, for drawing what it leaves behind once it is swept away.
+        target_def: DefId,
     },
     /// An artillery shell left `shooter` at `from`; it lands at `at` on tick `lands`. Output
     /// only, for drawing the flight.
@@ -1230,7 +1232,7 @@ impl World {
             let killed = was_alive && t.hp <= 0;
             let at = t.pos;
             let (victim, def) = (t.owner, t.def);
-            self.events.push(Event::Hit { shooter, target, at, damage, killed, splash });
+            self.events.push(Event::Hit { shooter, target, at, damage, killed, splash, target_def: def });
             if killed {
                 self.stats[by.0 as usize].kills += 1;
                 if let Some(v) = victim {
