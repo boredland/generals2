@@ -1,0 +1,69 @@
+[submodule "vendor/ea/CnC_Generals_Zero_Hour"]
+	path = vendor/ea/CnC_Generals_Zero_Hour
+	url = https://github.com/electronicarts/CnC_Generals_Zero_Hour.git
+[submodule "vendor/ea/CnC_Modding_Support"]
+	path = vendor/ea/CnC_Modding_Support
+	url = https://github.com/electronicarts/CnC_Modding_Support.git
+[submodule "vendor/superhackers/GeneralsGameCode"]
+	path = vendor/superhackers/GeneralsGameCode
+	url = https://github.com/TheSuperHackers/GeneralsGameCode.git
+[submodule "vendor/superhackers/GeneralsGamePatch2"]
+	path = vendor/superhackers/GeneralsGamePatch2
+	url = https://github.com/TheSuperHackers/GeneralsGamePatch2.git
+[submodule "vendor/superhackers/GeneralsModBuilder"]
+	path = vendor/superhackers/GeneralsModBuilder
+	url = https://github.com/TheSuperHackers/GeneralsModBuilder.git
+[submodule "vendor/superhackers/GeneralsDocuments"]
+	path = vendor/superhackers/GeneralsDocuments
+	url = https://github.com/TheSuperHackers/GeneralsDocuments.git
+[submodule "vendor/superhackers/GeneralsWiki"]
+	path = vendor/superhackers/GeneralsWiki
+	url = https://github.com/TheSuperHackers/GeneralsWiki.git
+[submodule "vendor/superhackers/GeneralsBigCreator"]
+	path = vendor/superhackers/GeneralsBigCreator
+	url = https://github.com/TheSuperHackers/GeneralsBigCreator.git
+[submodule "vendor/superhackers/bink-sdk-stub"]
+	path = vendor/superhackers/bink-sdk-stub
+	url = https://github.com/TheSuperHackers/bink-sdk-stub.git
+[submodule "vendor/superhackers/miles-sdk-stub"]
+	path = vendor/superhackers/miles-sdk-stub
+	url = https://github.com/TheSuperHackers/miles-sdk-stub.git
+[submodule "vendor/superhackers/min-dx8-sdk"]
+	path = vendor/superhackers/min-dx8-sdk
+	url = https://github.com/TheSuperHackers/min-dx8-sdk.git
+[submodule "vendor/superhackers/stlport-4.5.3"]
+	path = vendor/superhackers/stlport-4.5.3
+	url = https://github.com/TheSuperHackers/stlport-4.5.3.git
+[submodule "vendor/superhackers/zlib-1.1.4"]
+	path = vendor/superhackers/zlib-1.1.4
+	url = https://github.com/TheSuperHackers/zlib-1.1.4.git
+[submodule "vendor/superhackers/lzhl-1.0"]
+	path = vendor/superhackers/lzhl-1.0
+	url = https://github.com/TheSuperHackers/lzhl-1.0.git
+[submodule "vendor/ports/Fighter19-linux"]
+	path = vendor/ports/Fighter19-linux
+	url = https://github.com/Fighter19/CnC_Generals_Zero_Hour.git
+[submodule "vendor/ports/GeneralsX"]
+	path = vendor/ports/GeneralsX
+	url = https://github.com/fbraz3/GeneralsX.git
+[submodule "vendor/reimpl/OpenSAGE"]
+	path = vendor/reimpl/OpenSAGE
+	url = https://github.com/OpenSAGE/OpenSAGE.git
+[submodule "vendor/reimpl/OpenSAGE-Docs"]
+	path = vendor/reimpl/OpenSAGE-Docs
+	url = https://github.com/OpenSAGE/Docs.git
+[submodule "vendor/tools/OpenSAGE.BlenderPlugin"]
+	path = vendor/tools/OpenSAGE.BlenderPlugin
+	url = https://github.com/OpenSAGE/OpenSAGE.BlenderPlugin.git
+[submodule "vendor/reimpl/Thyme"]
+	path = vendor/reimpl/Thyme
+	url = https://github.com/TheAssemblyArmada/Thyme.git
+[submodule "vendor/tools/pySAGE"]
+	path = vendor/tools/pySAGE
+	url = https://github.com/ClementJ18/pySAGE.git
+[submodule "vendor/tools/pyBIG"]
+	path = vendor/tools/pyBIG
+	url = https://github.com/ClementJ18/pyBIG.git
+[submodule "vendor/tools/cnc-formats"]
+	path = vendor/tools/cnc-formats
+	url = https://github.com/iron-curtain-engine/cnc-formats.git

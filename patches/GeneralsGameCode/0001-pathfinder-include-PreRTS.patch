@@ -1,0 +1,117 @@
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/Path.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/Path.cpp
+index 24ae98835..b7334fd41 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/Path.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/Path.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "Common/CRCDebug.h"
+ #include "GameLogic/AI.h"
+ #include "GameLogic/AIPathfind.h"
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathNode.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathNode.cpp
+index a0ec8bcb4..767b4b336 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathNode.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathNode.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/Pathfinder/PathNode.h"
+ 
+ PathNode::PathNode() :
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCell.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCell.cpp
+index 4c3d16c85..179f0e653 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCell.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCell.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/Object.h"
+ #include "GameLogic/Pathfinder/PathfindCell.h"
+ #include "GameLogic/Pathfinder/PathfindCellInfo.h"
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellInfo.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellInfo.cpp
+index c1541f8fc..c400fd9fa 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellInfo.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellInfo.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/Pathfinder/PathfindCellInfo.h"
+ 
+ constexpr const UnsignedInt CELL_INFOS_TO_ALLOCATE = 30000;
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellList.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellList.cpp
+index 4be96d3b3..79a85fef2 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellList.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindCellList.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/Pathfinder/PathfindCell.h"
+ #include "GameLogic/Pathfinder/PathfindCellList.h"
+ 
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindConstants.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindConstants.cpp
+index b9b95d9b3..434e9acba 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindConstants.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindConstants.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/Pathfinder/PathfindConstants.h"
+ 
+ #if RETAIL_COMPATIBLE_PATHFINDING
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindLayer.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindLayer.cpp
+index 7a1901172..3889cdae5 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindLayer.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindLayer.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/AIPathfind.h"
+ #include "GameLogic/GameLogic.h"
+ #include "GameLogic/Object.h"
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindZoneManager.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindZoneManager.cpp
+index 82c2e4ef3..16d3d45c6 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindZoneManager.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/PathfindZoneManager.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/Pathfinder/PathfindCell.h"
+ #include "GameLogic/Pathfinder/PathfindConstants.h"
+ #include "GameLogic/Pathfinder/PathfindLayer.h"
+diff --git a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/ZoneBlock.cpp b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/ZoneBlock.cpp
+index 7777bfd96..2e94b900c 100644
+--- a/Core/GameEngine/Source/GameLogic/AI/Pathfinder/ZoneBlock.cpp
++++ b/Core/GameEngine/Source/GameLogic/AI/Pathfinder/ZoneBlock.cpp
+@@ -16,6 +16,8 @@
+ **	along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+ 
++#include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++
+ #include "GameLogic/Pathfinder/PathfindCell.h"
+ #include "GameLogic/Pathfinder/PathfindZoneManager.h"
+ #include "GameLogic/Pathfinder/ZoneBlock.h"

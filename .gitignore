@@ -1,12 +1,19 @@
+# Bulk archive data is local-only (EA-copyrighted); only our own manifests are committed.
 archive/videos/**
+!archive/videos/**/
+!archive/videos/**/*.info.json
+!archive/videos/MANIFEST.csv
+!archive/videos/FAILED.txt
+!archive/videos/.downloaded.txt
 archive/local/**
-archive/wayback/**
-archive/ia/**
-!archive/**/
-!archive/**/*.md
-!archive/**/*.json
-!archive/**/*.txt
-!archive/**/*.csv
-!archive/**/*.sha256
+!archive/local/INDEX.md
 !archive/local/SHA256SUMS
+archive/wayback/**
+!archive/wayback/*.csv
+!archive/wayback/*.md
+!archive/wayback/FAILED.txt
+archive/ia/**
+# Upstream archives can contain .json/.txt that the video negations above would re-include.
+archive/**/extracted/
 vendor/**/build/
+/build/
