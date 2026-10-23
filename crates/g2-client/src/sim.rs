@@ -20,12 +20,21 @@ pub struct Sim {
     pub source: Option<MapFile>,
     /// Draw the local player's fog of war. Off (`--reveal`) shows everything, for watching.
     pub fog: bool,
+    /// Each player's index into `models::TEAM_PALETTE` (index = player).
+    pub teams: Vec<usize>,
 }
 
 impl Sim {
-    pub fn new(map: MapDef, source: Option<MapFile>, seed: u64, players: [PlayerSetup; 2]) -> Sim {
-        let setup = MatchSetup { map, seed, players: players.to_vec() };
-        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true }
+    pub fn new(map: MapDef, source: Option<MapFile>, seed: u64, players: impl Into<Vec<PlayerSetup>>) -> Sim {
+        let players = players.into();
+        let teams = crate::models::team_slots(&players.iter().map(|p| p.faction).collect::<Vec<_>>());
+        let setup = MatchSetup { map, seed, players };
+        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true, teams }
+    }
+
+    /// Team colour of `player`.
+    pub fn team_color(&self, player: PlayerId) -> Color {
+        crate::models::TEAM_PALETTE[self.teams[player.0 as usize]]
     }
 
     /// Whether the local player sees `e` right now: own entities always, neutral resources once

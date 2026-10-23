@@ -472,8 +472,37 @@ pub fn scaffold(w: f32, height: f32) -> Vec<Part> {
     p
 }
 
-/// Material colours per faction (sRGB): EU teal, APA red, GLA sand team colours; the hulls carry
-/// the faction's character.
+/// Team colours, in the order players claim them: the three factions' own (EU teal, APA red,
+/// GLA sand) first, then colours that read apart from those on the ground and under fog.
+pub const TEAM_PALETTE: [Color; 8] = [
+    Color::srgb(0.10, 0.62, 0.78),
+    Color::srgb(0.80, 0.14, 0.10),
+    Color::srgb(0.80, 0.62, 0.20),
+    Color::srgb(0.30, 0.72, 0.22),
+    Color::srgb(0.58, 0.30, 0.78),
+    Color::srgb(0.92, 0.45, 0.08),
+    Color::srgb(0.88, 0.88, 0.86),
+    Color::srgb(0.16, 0.28, 0.80),
+];
+
+/// Each player's index into `TEAM_PALETTE`: their faction's own colour unless an earlier
+/// player already holds it, else the first colour nobody holds. Two players never share one.
+pub fn team_slots(factions: &[Faction]) -> Vec<usize> {
+    let mut taken = [false; TEAM_PALETTE.len()];
+    factions
+        .iter()
+        .map(|&f| {
+            let own = f as usize;
+            let i = if taken[own] { taken.iter().position(|&t| !t).unwrap_or(own) } else { own };
+            taken[i] = true;
+            i
+        })
+        .collect()
+}
+
+/// Material colours per faction (sRGB); the hulls carry the faction's character. `Slot::Team`
+/// here is the faction's own colour, for previews; in a match each player's comes from
+/// `team_slots`.
 pub fn color(faction: Option<Faction>, slot: Slot) -> Color {
     let f = faction.unwrap_or(Faction::Gla);
     match slot {
@@ -488,11 +517,7 @@ pub fn color(faction: Option<Faction>, slot: Slot) -> Color {
             Faction::Gla => Color::srgb(0.43, 0.38, 0.31),
         },
         Slot::Dark => Color::srgb(0.13, 0.13, 0.14),
-        Slot::Team => match f {
-            Faction::Eu => Color::srgb(0.10, 0.62, 0.78),
-            Faction::Apa => Color::srgb(0.80, 0.14, 0.10),
-            Faction::Gla => Color::srgb(0.80, 0.62, 0.20),
-        },
+        Slot::Team => TEAM_PALETTE[f as usize],
         Slot::Hazard => Color::srgb(0.92, 0.70, 0.08),
         Slot::Concrete => Color::srgb(0.50, 0.48, 0.44),
         Slot::Glow => Color::srgb(0.35, 0.75, 0.85),

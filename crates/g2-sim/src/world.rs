@@ -30,6 +30,24 @@ pub struct Player {
     pub defeated: bool,
 }
 
+/// Running totals for the end-of-match screen. Output only: nothing in the simulation reads
+/// them, so they are not part of the state hash, but they are exact on every replay.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// Credits from collector deliveries and oil derricks.
+    pub earned: i64,
+    /// Credits paid for buildings and units, less refunds from cancels.
+    pub spent: i64,
+    pub units_built: u32,
+    pub buildings_built: u32,
+    /// Enemy units and buildings this player's fire destroyed.
+    pub kills: u32,
+    pub units_lost: u32,
+    pub buildings_lost: u32,
+    /// Tick the player was defeated on.
+    pub defeated_at: Option<u32>,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Event {
     Rejected {
@@ -104,14 +122,17 @@ pub struct World {
     nav: crate::nav::Grid,
     /// Hash of the statics the grid was built from; when it changes, every unit replans.
     nav_key: u64,
-    /// `(shooter, target, damage, splash)` fired this tick, applied together by
-    /// `resolve_shots`. Empty between ticks, so it needs no hash.
-    shots: Vec<(EntityId, EntityId, i32, bool)>,
+    /// `(shooter, shooter's owner, target, damage, splash)` fired this tick, applied together
+    /// by `resolve_shots`. The owner travels with the shot because a shell's gun may be gone
+    /// by the time it lands. Empty between ticks, so it needs no hash.
+    shots: Vec<(EntityId, PlayerId, EntityId, i32, bool)>,
     /// Shells in flight, in firing order.
     pub(crate) shells: Vec<ShellInFlight>,
     /// What each player sees and has explored (index = player). Updated every tick before
     /// units act, so targeting only ever uses what is visible at the start of the tick.
     pub(crate) visions: Vec<crate::fog::Vision>,
+    /// Per-player totals (index = player), output only.
+    stats: Vec<Stats>,
 }
 
 impl World {
@@ -144,6 +165,7 @@ impl World {
             shots: Vec::new(),
             shells: Vec::new(),
             visions: setup.players.iter().map(|_| crate::fog::Vision::new(setup.map.width, setup.map.height)).collect(),
+            stats: vec![Stats::default(); setup.players.len()],
             checkpoints: Vec::new(),
         };
         for &(pos, amount) in &setup.map.supply_piles {
@@ -245,6 +267,11 @@ impl World {
     /// Artillery shells in the air, in firing order.
     pub fn shells(&self) -> &[ShellInFlight] {
         &self.shells
+    }
+
+    /// Match totals for player `id`.
+    pub fn stats(&self, id: PlayerId) -> &Stats {
+        &self.stats[id.0 as usize]
     }
 
     /// The match so far as a replay: setup, human commands and hash checkpoints. Any driver
@@ -456,6 +483,7 @@ impl World {
         let cost = self.cost_for(player, def);
         let p = &mut self.players[player.0 as usize];
         p.credits -= sign * cost.credits;
+        self.stats[player.0 as usize].spent += sign * cost.credits;
     }
 
     fn apply(&mut self, cmd: &Command) -> Result<(), Reject> {
@@ -562,6 +590,7 @@ impl World {
             }
             CommandKind::Surrender => {
                 self.players[player.0 as usize].defeated = true;
+                self.stats[player.0 as usize].defeated_at = Some(self.tick);
                 Ok(())
             }
             CommandKind::Attack { units, target } => {
@@ -766,6 +795,7 @@ impl World {
             let side = self.toward_centre(pos);
             let spawn_at = self.map.clamp(pos + Vec2::new(Fx::ZERO, (radius + ud.radius + SLACK) * side));
             let unit = self.spawn_owned(def, owner, spawn_at);
+            self.stats[owner.0 as usize].units_built += 1;
             if is_depot
                 && ud.collector().is_some()
                 && let Some(pile) = self.nearest_pile(pos)
@@ -789,9 +819,11 @@ impl World {
                 continue;
             }
             let progress = progress + 1;
-            let done = progress >= self.build_ticks_for(s.owner.unwrap(), s.def);
+            let owner = s.owner.unwrap();
+            let done = progress >= self.build_ticks_for(owner, s.def);
             self.entities.get_mut(site).unwrap().construction = (!done).then_some(progress);
             if done {
+                self.stats[owner.0 as usize].buildings_built += 1;
                 for b in self.entities.ids() {
                     let b = self.entities.get_mut(b).unwrap();
                     if b.order == (Order::Construct { site }) {
@@ -1142,7 +1174,7 @@ impl World {
         }
         self.entities.get_mut(id).unwrap().cooldown = w.cooldown_ticks;
         match w.shell {
-            None => self.shots.push((id, target, w.damage_vs(armour), false)),
+            None => self.shots.push((id, owner, target, w.damage_vs(armour), false)),
             Some(s) => {
                 let flight = (pos.distance(tpos) / s.speed).floor_int().max(1) as u32;
                 let lands = self.tick + flight;
@@ -1182,7 +1214,7 @@ impl World {
                     continue;
                 }
                 let damage = (s.damage + s.bonus[d.armour as usize]).max(1);
-                self.shots.push((s.shooter, e.id, damage, true));
+                self.shots.push((s.shooter, s.owner, e.id, damage, true));
             }
         }
     }
@@ -1191,13 +1223,21 @@ impl World {
     /// and the outcome does not depend on entity order: two units that shoot each other both
     /// land their hit. `killed` is reported once, by the shot that took the target to zero.
     fn resolve_shots(&mut self) {
-        for (shooter, target, damage, splash) in core::mem::take(&mut self.shots) {
+        for (shooter, by, target, damage, splash) in core::mem::take(&mut self.shots) {
             let Some(t) = self.entities.get_mut(target) else { continue };
             let was_alive = t.hp > 0;
             t.hp -= damage;
             let killed = was_alive && t.hp <= 0;
             let at = t.pos;
+            let (victim, def) = (t.owner, t.def);
             self.events.push(Event::Hit { shooter, target, at, damage, killed, splash });
+            if killed {
+                self.stats[by.0 as usize].kills += 1;
+                if let Some(v) = victim {
+                    let s = &mut self.stats[v.0 as usize];
+                    if self.rules.def(def).is_unit() { s.units_lost += 1 } else { s.buildings_lost += 1 }
+                }
+            }
         }
     }
 
@@ -1282,6 +1322,7 @@ impl World {
                 let u = self.entities.get_mut(id).unwrap();
                 let cargo = core::mem::take(&mut u.cargo);
                 self.players[owner.0 as usize].credits += cargo;
+                self.stats[owner.0 as usize].earned += cargo;
                 self.events.push(Event::Delivered { player: owner, depot, credits: cargo });
                 (pos, Order::Gather { pile, phase: GatherPhase::ToPile })
             }
@@ -1371,6 +1412,7 @@ impl World {
             let amount = credits_per_second.min(w.resource);
             w.resource -= amount;
             self.players[owner.0 as usize].credits += amount;
+            self.stats[owner.0 as usize].earned += amount;
         }
     }
 
@@ -1397,6 +1439,9 @@ impl World {
                 e.owner == owner && e.hp > 0 && (d.is_building() || d.is_constructor())
             });
             p.defeated = !alive;
+            if p.defeated {
+                self.stats[i].defeated_at = Some(self.tick);
+            }
         }
     }
 }

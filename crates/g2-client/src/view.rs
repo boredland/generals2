@@ -60,7 +60,10 @@ struct Assets3d {
     cube: Handle<Mesh>,
     cylinder: Handle<Mesh>,
     sphere: Handle<Mesh>,
+    /// Every slot but `Team` per faction (`None` for neutral resources).
     materials: BTreeMap<(Option<Faction>, SlotKey), Handle<StandardMaterial>>,
+    /// `Slot::Team` per `models::TEAM_PALETTE` entry.
+    team: Vec<Handle<StandardMaterial>>,
     /// Unlit, additive-looking muzzle/tracer and explosion colours.
     tracer: Handle<StandardMaterial>,
     blast: Handle<StandardMaterial>,
@@ -118,25 +121,21 @@ fn setup_scene(
     .into_iter()
     .chain((0..5).map(Slot::Crate));
     let factions = [None, Some(Faction::Eu), Some(Faction::Apa), Some(Faction::Gla)];
-    for slot in all_slots {
+    let material = |base_color: Color, slot: Slot| {
+        let (roughness, metallic, emissive) = match slot {
+            Slot::Glow => (0.3, 0.0, base_color.to_linear() * 1.5),
+            Slot::Oil => (0.08, 0.0, LinearRgba::BLACK),
+            Slot::Hull | Slot::Panel | Slot::Dark => (0.55, 0.35, LinearRgba::BLACK),
+            _ => (0.8, 0.0, LinearRgba::BLACK),
+        };
+        StandardMaterial { base_color, perceptual_roughness: roughness, metallic, emissive, ..default() }
+    };
+    for slot in all_slots.filter(|&s| s != Slot::Team) {
         for f in factions {
-            let base_color = models::color(f, slot);
-            let (roughness, metallic, emissive) = match slot {
-                Slot::Glow => (0.3, 0.0, base_color.to_linear() * 1.5),
-                Slot::Oil => (0.08, 0.0, LinearRgba::BLACK),
-                Slot::Hull | Slot::Panel | Slot::Dark => (0.55, 0.35, LinearRgba::BLACK),
-                _ => (0.8, 0.0, LinearRgba::BLACK),
-            };
-            let m = materials.add(StandardMaterial {
-                base_color,
-                perceptual_roughness: roughness,
-                metallic,
-                emissive,
-                ..default()
-            });
-            table.insert((f, SlotKey::from(slot)), m);
+            table.insert((f, SlotKey::from(slot)), materials.add(material(models::color(f, slot), slot)));
         }
     }
+    let team = models::TEAM_PALETTE.iter().map(|&c| materials.add(material(c, Slot::Team))).collect();
     let glow = |c: Color, k: f32| StandardMaterial {
         base_color: c,
         emissive: c.to_linear() * k,
@@ -149,6 +148,7 @@ fn setup_scene(
         cylinder: meshes.add(Cylinder::new(0.5, 1.0)),
         sphere: meshes.add(Sphere::new(0.5).mesh().ico(2).unwrap()),
         materials: table,
+        team,
         tracer: materials.add(glow(Color::srgb(1.0, 0.85, 0.45), 4.0)),
         blast: materials.add(glow(Color::srgb(1.0, 0.5, 0.15), 3.0)),
     });
@@ -156,14 +156,24 @@ fn setup_scene(
     crate::look::spawn_lights(&mut commands, size);
 }
 
-fn spawn_parts(parent: &mut ChildSpawnerCommands, assets: &Assets3d, faction: Option<Faction>, parts: &[Part]) {
+/// Spawns `parts` in `faction`'s materials, with team-coloured parts in palette entry `team`.
+fn spawn_parts(
+    parent: &mut ChildSpawnerCommands,
+    assets: &Assets3d,
+    faction: Option<Faction>,
+    team: usize,
+    parts: &[Part],
+) {
     for p in parts {
         let mesh = match p.prim {
             Prim::Box => assets.cube.clone(),
             Prim::Cylinder => assets.cylinder.clone(),
             Prim::Sphere => assets.sphere.clone(),
         };
-        let material = assets.materials[&(faction, SlotKey::from(p.slot))].clone();
+        let material = match p.slot {
+            Slot::Team => assets.team[team].clone(),
+            slot => assets.materials[&(faction, SlotKey::from(slot))].clone(),
+        };
         let mut e = parent.spawn((
             Mesh3d(mesh),
             MeshMaterial3d(material),
@@ -178,22 +188,23 @@ fn spawn_parts(parent: &mut ChildSpawnerCommands, assets: &Assets3d, faction: Op
 fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_sim::Entity) -> Entity {
     let def = sim.world.rules.def(e.def);
     let faction = e.owner.map(|o| sim.world.player(o).faction);
+    let team = e.owner.map_or(0, |o| sim.teams[o.0 as usize]);
     let parts = models::parts_for(def, faction);
     let mut root =
         commands.spawn((SimRef(e.id), Transform::from_translation(sim.to_world(e.pos)), Visibility::default()));
     root.with_children(|c| {
         c.spawn((Body, Transform::default(), Visibility::default()))
-            .with_children(|b| spawn_parts(b, assets, faction, &parts));
+            .with_children(|b| spawn_parts(b, assets, faction, team, &parts));
         if def.is_building() {
             let w = def.radius.to_f32() * 1.75;
             let scaffold: Vec<Part> = models::scaffold(w, 7.0);
             c.spawn((Scaffold, Transform::default(), Visibility::Hidden))
-                .with_children(|s| spawn_parts(s, assets, faction, &scaffold));
+                .with_children(|s| spawn_parts(s, assets, faction, team, &scaffold));
         }
         if def.deploy.is_some() {
             let legs = models::outriggers(def.radius.to_f32());
             c.spawn((Outriggers, Transform::default(), Visibility::Hidden))
-                .with_children(|s| spawn_parts(s, assets, faction, &legs));
+                .with_children(|s| spawn_parts(s, assets, faction, team, &legs));
         }
     });
     root.id()

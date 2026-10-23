@@ -351,10 +351,12 @@ fn unaffordable_and_foreign_commands_are_rejected_without_side_effects() {
 fn cancelling_production_refunds_in_full() {
     let mut w = world(Faction::Eu, 10_000);
     let depot = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(110, 80));
-    let before = w.player(P0).credits;
+    let (before, spent) = (w.player(P0).credits, w.stats(P0).spent);
     order(&mut w, CommandKind::Train { producer: depot, def: EU_HARVESTER });
+    assert!(w.stats(P0).spent > spent);
     order(&mut w, CommandKind::CancelTrain { producer: depot });
     assert_eq!(w.player(P0).credits, before);
+    assert_eq!(w.stats(P0).spent, spent, "the refund comes off the match's spending");
     assert!(w.entity(depot).unwrap().queue.is_empty());
 }
 

@@ -32,6 +32,8 @@ const MINIMAP: f32 = 196.0;
 #[derive(Component)]
 enum Field {
     Clock,
+    /// A player's tag in the match bar, dimmed once that player is defeated.
+    Tag(g2_sim::PlayerId),
     Power,
     Money,
     Status,
@@ -73,7 +75,17 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn).add_systems(Update, (update_fields, minimap, overlays, popups));
+        app.add_systems(Startup, spawn).add_systems(Update, (update_fields, tags, minimap, overlays, popups));
+    }
+}
+
+/// Dims a defeated player's tag in the match bar.
+fn tags(sim: Res<Sim>, mut q: Query<(&Field, &mut TextColor)>) {
+    for (f, mut c) in &mut q {
+        if let Field::Tag(id) = *f {
+            let team = sim.team_color(id);
+            c.set_if_neq(TextColor(if sim.world.player(id).defeated { team.with_alpha(0.3) } else { team }));
+        }
     }
 }
 
@@ -134,25 +146,25 @@ fn faction_initial(f: Faction) -> &'static str {
 
 fn spawn(mut commands: Commands, sim: Res<Sim>) {
     let world = &sim.world;
-    let me = world.player(LOCAL);
-    let enemy = world.players().iter().enumerate().find(|(i, _)| *i != LOCAL.0 as usize).map(|(_, p)| p);
 
-    // Top left: menu; top right: neutral project label (no EA trademarks in the UI).
-    commands.spawn((abs(px(14), auto(), px(8), auto()), text("MENU", 14.0, DIM)));
-    commands.spawn((abs(auto(), px(14), px(8), auto()), text("OPEN RTS - M1", 12.0, DIM)));
+    // Top left: the in-match menu key; top right: neutral project label (no EA trademarks).
+    commands.spawn((abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, DIM)));
+    commands.spawn((abs(auto(), px(14), px(8), auto()), text("OPEN RTS", 12.0, DIM)));
 
-    // Top centre: one compact match bar: own tag, clock, enemy tag; a general shows after its faction.
+    // Top centre: one compact match bar: own tag, clock, then every opponent's tag in its
+    // team colour (struck out once defeated); a general shows after its faction.
     commands
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
                 top: px(6),
                 left: percent(50),
-                margin: UiRect::left(px(-150)),
-                width: px(300),
+                margin: UiRect::left(px(-210)),
+                width: px(420),
                 padding: UiRect::axes(px(8), px(3)),
-                justify_content: JustifyContent::SpaceBetween,
+                justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                column_gap: px(12),
                 border: UiRect::bottom(px(2)),
                 ..default()
             },
@@ -164,11 +176,12 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
                 Some(g) => format!("{} {}", faction_initial(p.faction), world.rules.general(g).name.to_uppercase()),
                 None => faction_initial(p.faction).to_owned(),
             };
-            let team = |p: &g2_sim::Player| crate::models::color(Some(p.faction), crate::models::Slot::Team);
-            t.spawn(text(&label(me), 12.0, team(me)));
-            t.spawn((text("0:00:00", 15.0, TEXT), Field::Clock));
-            if let Some(e) = enemy {
-                t.spawn(text(&label(e), 12.0, team(e)));
+            for (i, p) in world.players().iter().enumerate() {
+                let id = g2_sim::PlayerId(i as u8);
+                t.spawn((text(&label(p), 12.0, sim.team_color(id)), Field::Tag(id)));
+                if id == LOCAL {
+                    t.spawn((text("0:00:00", 15.0, TEXT), Field::Clock));
+                }
             }
         });
 
@@ -309,6 +322,7 @@ fn update_fields(
     for (field, mut t, node) in &mut fields {
         match field {
             Field::Clock => t.0 = clock(world.tick()),
+            Field::Tag(_) => {}
             Field::Power => {
                 t.0 = if me.faction.uses_power() {
                     format!("PWR {}/{}", me.power_drain, me.power_supply)
@@ -462,9 +476,7 @@ fn minimap(
                 (Class::OilWell, _) => (Color::srgb(0.35, 0.35, 0.35), 4.0),
                 (_, Some(o)) => {
                     // Same team colours as the match bar and the models.
-                    let f = world.player(o).faction;
-                    let c = crate::models::color(Some(f), crate::models::Slot::Team);
-                    (c, if def.is_building() { 6.0 } else { 3.0 })
+                    (sim.team_color(o), if def.is_building() { 6.0 } else { 3.0 })
                 }
                 _ => continue,
             };

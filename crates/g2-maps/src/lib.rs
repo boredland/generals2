@@ -822,6 +822,38 @@ pub fn resolve(name: &str) -> Result<MapDef, String> {
     }
 }
 
+/// Skirmish maps whose starts are connected only by bridges, which the sim can't cross yet
+/// (README, "Not yet"). Every start on them still reaches its own supply; a terrain test checks
+/// this list against the maps.
+pub const BRIDGE_ONLY: [&str; 5] =
+    ["gen:Final Crusade", "gen:Heartland Shield", "zh:FloodedPlains", "zh:Heartland Shield", "zh:Winding River"];
+
+/// A map a skirmish can be played on: its name and start count.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkirmishMap {
+    pub name: String,
+    pub starts: usize,
+}
+
+/// Every playable skirmish map: the built-in Crater Ridge, then each official map under `root`
+/// with at least two starts that can reach each other (not `BRIDGE_ONLY`). Unreadable files
+/// are skipped.
+pub fn skirmish_maps(root: &std::path::Path) -> Vec<SkirmishMap> {
+    let mut out = vec![SkirmishMap { name: "Crater Ridge".to_owned(), starts: 2 }];
+    for e in catalogue(root) {
+        if BRIDGE_ONLY.contains(&e.name.as_str()) {
+            continue;
+        }
+        let Ok(bytes) = std::fs::read(&e.path) else { continue };
+        let Ok(map) = load(&bytes) else { continue };
+        let starts = map.to_map_def(&e.name).spawns.len();
+        if starts >= 2 {
+            out.push(SkirmishMap { name: e.name, starts });
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -857,11 +889,6 @@ mod tests {
         // Skirmish maps; the rest are campaign and test maps without player starts.
         assert!(playable >= 80, "{playable} maps with two or more starts");
     }
-
-    /// Skirmish maps whose starts are connected only by bridges, which the sim can't cross yet
-    /// (README, "Not yet"). Every start on them still reaches its own supply.
-    const BRIDGE_ONLY: [&str; 5] =
-        ["gen:Final Crusade", "gen:Heartland Shield", "zh:FloodedPlains", "zh:Heartland Shield", "zh:Winding River"];
 
     /// Cliffs and water must leave a skirmish map playable: every start is on free ground,
     /// can walk to a supply source and to every other start (except on `BRIDGE_ONLY` maps).

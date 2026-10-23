@@ -150,6 +150,7 @@ fn survey(args: &[String]) -> Result<(), String> {
     );
     Ok(())
 }
+
 fn maps() -> Result<(), String> {
     let root = g2_maps::vendored_root();
     let entries = g2_maps::catalogue(&root);
@@ -163,13 +164,14 @@ fn maps() -> Result<(), String> {
             .and_then(|b| g2_maps::load(&b).map(|m| m.to_map_def(&e.name)).map_err(|err| err.to_string()));
         match map {
             Ok(m) if m.spawns.len() >= 2 => println!(
-                "{}  ({} starts, {:.0}x{:.0}, {} supplies, {} oil)",
+                "{}  ({} starts, {:.0}x{:.0}, {} supplies, {} oil){}",
                 e.name,
                 m.spawns.len(),
                 m.width.to_f32(),
                 m.height.to_f32(),
                 m.supply_piles.len(),
-                m.oil_wells.len()
+                m.oil_wells.len(),
+                if g2_maps::BRIDGE_ONLY.contains(&e.name.as_str()) { "  starts joined only by bridges" } else { "" }
             ),
             Ok(_) => {} // campaign and test maps: no skirmish starts
             Err(err) => println!("{}  (unreadable: {err})", e.name),
