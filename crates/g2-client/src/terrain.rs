@@ -123,8 +123,11 @@ struct Layout {
     width: f32,
     height: f32,
     roads: Vec<Road>,
-    /// Bases and resources: kept clear of trees and rocks.
+    /// Command centers and resources: kept clear of trees and rocks. Small on purpose, so groves
+    /// grow right up to the bases; later buildings hide what they cover (`clear_under_buildings`).
     clearings: Vec<(Vec2, f32)>,
+    /// Trampled dirt painted around bases and resources; larger than the scenery clearings.
+    pads: Vec<(Vec2, f32)>,
 }
 
 impl Layout {
@@ -133,20 +136,22 @@ impl Layout {
         let p = |v: g2_sim::Vec2| Vec2::new(v.x.to_f32(), v.y.to_f32());
         let spawns: Vec<Vec2> = map.spawns.iter().map(|&s| p(s)).collect();
         let mut roads = Vec::new();
-        // Room for the opening buildings; the AI and players build within ~35 units of the spawn.
-        let mut clearings: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, 38.0)).collect();
+        // Just past the command center (radius 10); everything else at a base is built later.
+        let mut clearings: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, 13.0)).collect();
+        let mut pads: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, 38.0)).collect();
         // Main road between the bases, plus a spur from each resource to the nearest base.
         if let [a, b, ..] = spawns.as_slice() {
             roads.push(Road::new(*a, *b, 60.0));
         }
         for (i, &(pos, _)) in map.supply_piles.iter().chain(map.oil_wells.iter()).enumerate() {
             let q = p(pos);
-            clearings.push((q, 16.0));
+            clearings.push((q, 8.0));
+            pads.push((q, 16.0));
             let nearest = spawns.iter().copied().min_by(|x, y| x.distance(q).total_cmp(&y.distance(q))).unwrap_or(q);
             let bend = if i % 2 == 0 { 18.0 } else { -18.0 };
             roads.push(Road::new(nearest, q, bend));
         }
-        Layout { width: map.width.to_f32(), height: map.height.to_f32(), roads, clearings }
+        Layout { width: map.width.to_f32(), height: map.height.to_f32(), roads, clearings, pads }
     }
 
     fn road(&self, p: Vec2) -> f32 {
@@ -187,7 +192,7 @@ impl Layout {
         let tracks = if (d - 2.5).abs() < 0.6 { 0.06 } else { 0.0 };
         c = c.lerp(road - Vec3::splat(tracks), on_road);
         // Only a soft trampled patch at the very centre of a base; grass runs up to the buildings.
-        for &(centre, r) in &self.clearings {
+        for &(centre, r) in &self.pads {
             let k = (1.0 - (centre.distance(p) - r * 0.25) / (r * 0.35)).clamp(0.0, 1.0);
             c = c.lerp(dirt * 1.05, k * 0.45);
         }
