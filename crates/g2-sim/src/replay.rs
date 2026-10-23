@@ -222,6 +222,16 @@ impl Writer {
                 self.ids(units);
             }
             CommandKind::Surrender => self.u8(7),
+            CommandKind::Attack { units, target } => {
+                self.u8(8);
+                self.ids(units);
+                self.id(*target);
+            }
+            CommandKind::AttackMove { units, target } => {
+                self.u8(9);
+                self.ids(units);
+                self.pos(*target);
+            }
         }
     }
 }
@@ -281,6 +291,8 @@ impl Reader<'_> {
             5 => CommandKind::CancelTrain { producer: self.id()? },
             6 => CommandKind::Stop { units: self.ids()? },
             7 => CommandKind::Surrender,
+            8 => CommandKind::Attack { units: self.ids()?, target: self.id()? },
+            9 => CommandKind::AttackMove { units: self.ids()?, target: self.pos()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

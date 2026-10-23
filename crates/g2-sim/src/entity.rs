@@ -27,6 +27,17 @@ pub enum Order {
     Construct {
         site: EntityId,
     },
+    /// Chase `target` and fire at it until it is destroyed.
+    Attack {
+        target: EntityId,
+    },
+    /// Walk to `dest`, fighting the enemy `engaged` whenever one comes within acquisition
+    /// range on the way. An idle armed unit that spots an enemy switches to this with `dest`
+    /// at its own position, so it walks back after the fight.
+    AttackMove {
+        dest: Vec2,
+        engaged: Option<EntityId>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -66,6 +77,8 @@ pub struct Entity {
     pub powered: bool,
     /// Fractional oil income accumulator (ticks into the current second).
     pub income_ticks: u32,
+    /// Armed units: ticks until the weapon can fire again.
+    pub cooldown: u32,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -91,6 +104,9 @@ impl Entity {
     }
 }
 
+/// Most slots are occupied, so boxing `Entity` to shrink the rare free slot would only add an
+/// allocation per spawn.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 enum Slot {
     Occupied(Entity),
@@ -197,6 +213,7 @@ mod tests {
             home: None,
             powered: false,
             income_ticks: 0,
+            cooldown: 0,
             route: Route::default(),
         }
     }

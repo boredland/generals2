@@ -13,6 +13,11 @@ pub const INPUT_DELAY: u32 = 2;
 pub const MAX_QUEUE: usize = 5;
 /// Distance tolerance for "has reached" checks, so units pushed apart by separation still arrive.
 const SLACK: Fx = Fx::from_int(1);
+/// Armed units notice enemies this far beyond their weapon range (idle guard, attack-move).
+const ACQUIRE: Fx = Fx::from_int(15);
+/// A unit keeps its planned route while its target moves less than this from where the route
+/// was planned: replanning a chase every tick would run an A* per attacker per tick.
+const REPLAN: Fx = Fx::from_int(8);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Player {
@@ -39,6 +44,15 @@ pub enum Event {
         depot: EntityId,
         credits: i64,
     },
+    /// `shooter` hit `target` (standing at `at`) for `damage`; `killed` when that destroyed
+    /// it. Output only, like `Delivered`.
+    Hit {
+        shooter: EntityId,
+        target: EntityId,
+        at: Vec2,
+        damage: i32,
+        killed: bool,
+    },
 }
 
 pub struct World {
@@ -61,6 +75,9 @@ pub struct World {
     nav: crate::nav::Grid,
     /// Hash of the statics the grid was built from; when it changes, every unit replans.
     nav_key: u64,
+    /// `(shooter, target, damage)` fired this tick, applied together by `resolve_shots`.
+    /// Empty between ticks, so it needs no hash.
+    shots: Vec<(EntityId, EntityId, i32)>,
 }
 
 impl World {
@@ -90,6 +107,7 @@ impl World {
             log: Vec::new(),
             nav: crate::nav::Grid::default(),
             nav_key: u64::MAX,
+            shots: Vec::new(),
             checkpoints: Vec::new(),
         };
         for &(pos, amount) in &setup.map.supply_piles {
@@ -138,6 +156,7 @@ impl World {
             home: None,
             powered: false,
             income_ticks: 0,
+            cooldown: 0,
             route: Route::default(),
         }
     }
@@ -301,10 +320,12 @@ impl World {
                 self.update_unit(id);
             }
         }
+        self.resolve_shots();
         self.separate_units();
         self.update_oil();
-        self.cleanup();
+        // Defeat first, so an eliminated player's remaining units go in the same tick.
         self.update_defeat();
+        self.cleanup();
         self.tick += 1;
     }
 
@@ -383,18 +404,9 @@ impl World {
         match &cmd.kind {
             CommandKind::Move { units, target } => {
                 let units = self.own_units(player, units, |_| true)?;
-                let target = self.map.clamp(*target);
-                // Square formation, row-major in selection order, spaced by the widest unit.
-                let spacing = units.iter().map(|&u| self.radius_of(u)).max().unwrap_or(SLACK) * Fx::from_int(2) + SLACK;
-                let side = ceil_sqrt(units.len() as i64);
-                for (i, &u) in units.iter().enumerate() {
-                    let (row, col) = (i as i64 / side, i as i64 % side);
-                    let offset = Vec2::new(
-                        spacing * Fx::from_int(col) - spacing * Fx::from_ratio(side - 1, 2),
-                        spacing * Fx::from_int(row) - spacing * Fx::from_ratio(side - 1, 2),
-                    );
+                for (u, dest) in self.formation(&units, *target) {
                     let e = self.entities.get_mut(u).unwrap();
-                    e.order = Order::Move { target: self.map.clamp(target + offset) };
+                    e.order = Order::Move { target: dest };
                     e.home = None;
                 }
                 Ok(())
@@ -489,7 +501,50 @@ impl World {
                 self.players[player.0 as usize].defeated = true;
                 Ok(())
             }
+            CommandKind::Attack { units, target } => {
+                if self.live_enemy(player, *target).is_none() {
+                    return Err(Reject::CannotAttack);
+                }
+                let units =
+                    self.own_units(player, units, |d| d.weapon().is_some()).map_err(|_| Reject::CannotAttack)?;
+                for u in units {
+                    let e = self.entities.get_mut(u).unwrap();
+                    e.order = Order::Attack { target: *target };
+                    e.home = None;
+                }
+                Ok(())
+            }
+            CommandKind::AttackMove { units, target } => {
+                let units =
+                    self.own_units(player, units, |d| d.weapon().is_some()).map_err(|_| Reject::CannotAttack)?;
+                for (u, dest) in self.formation(&units, *target) {
+                    let e = self.entities.get_mut(u).unwrap();
+                    e.order = Order::AttackMove { dest, engaged: None };
+                    e.home = None;
+                }
+                Ok(())
+            }
         }
+    }
+
+    /// One destination per unit around `target`: a square, row-major in selection order,
+    /// spaced by the widest unit.
+    fn formation(&self, units: &[EntityId], target: Vec2) -> Vec<(EntityId, Vec2)> {
+        let target = self.map.clamp(target);
+        let spacing = units.iter().map(|&u| self.radius_of(u)).max().unwrap_or(SLACK) * Fx::from_int(2) + SLACK;
+        let side = ceil_sqrt(units.len() as i64);
+        units
+            .iter()
+            .enumerate()
+            .map(|(i, &u)| {
+                let (row, col) = (i as i64 / side, i as i64 % side);
+                let offset = Vec2::new(
+                    spacing * Fx::from_int(col) - spacing * Fx::from_ratio(side - 1, 2),
+                    spacing * Fx::from_int(row) - spacing * Fx::from_ratio(side - 1, 2),
+                );
+                (u, self.map.clamp(target + offset))
+            })
+            .collect()
     }
 
     /// The subset of `ids` that are live units owned by `player` and match `filter`.
@@ -640,9 +695,10 @@ impl World {
     /// Returns the new position and whether the unit is in contact.
     ///
     /// A unit walks straight while nothing blocks the straight line (rechecked every tick, so
-    /// a unit pushed off its line notices). Otherwise it plans once for this target and grid
-    /// and follows the waypoints; an unreachable target gets a partial plan to the closest
-    /// reachable cell, kept (not replanned every tick) until the target or grid changes.
+    /// a unit pushed off its line notices). Otherwise it plans once and follows the waypoints,
+    /// keeping the plan while the grid is unchanged and the target stays within `REPLAN` of
+    /// where it was planned (a chased unit moves every tick). An unreachable target gets a
+    /// partial plan to the closest reachable cell, kept on the same terms.
     fn approach(&mut self, id: EntityId, target: Vec2, contact: Fx, speed: Fx) -> (Vec2, bool) {
         let e = self.entities.get(id).unwrap();
         let pos = e.pos;
@@ -653,7 +709,7 @@ impl World {
             return (pos, true);
         }
         let stop = target + delta.scale(contact / dist);
-        let planned = e.route.target == Some(target) && e.route.key == self.nav_key;
+        let planned = e.route.key == self.nav_key && e.route.target.is_some_and(|t| t.distance(target) <= REPLAN);
         if !planned {
             // `find` fails only when the unit stands deep inside blocked cells; it then walks
             // straight, as before pathfinding, until it is out.
@@ -716,8 +772,17 @@ impl World {
         let e = self.entities.get(id).unwrap();
         let d = self.rules.def(e.def);
         let (pos, speed, radius, owner, order) = (e.pos, d.speed(), d.radius, e.owner.unwrap(), e.order);
+        let weapon = d.weapon();
+        if weapon.is_some() {
+            let e = self.entities.get_mut(id).unwrap();
+            e.cooldown = e.cooldown.saturating_sub(1);
+        }
         let (new_pos, new_order) = match order {
-            Order::Idle => (pos, Order::Idle),
+            Order::Idle => match weapon.and_then(|w| self.enemy_near(owner, pos, w.range + ACQUIRE)) {
+                // Guard: an idle armed unit engages what comes close and then walks back.
+                Some(t) => (pos, Order::AttackMove { dest: pos, engaged: Some(t) }),
+                None => (pos, Order::Idle),
+            },
             Order::Move { target } => {
                 let (p, arrived) = self.approach(id, target, Fx::ZERO, speed);
                 (p, if arrived { Order::Idle } else { order })
@@ -731,6 +796,31 @@ impl World {
                 }
             },
             Order::Gather { pile, phase } => self.gather_step(id, pile, phase, pos, speed, radius, owner),
+            Order::Attack { target } => match (weapon, self.live_enemy(owner, target)) {
+                (Some(w), Some(_)) => (self.engage(id, target, w, speed), order),
+                _ => (pos, Order::Idle),
+            },
+            Order::AttackMove { dest, engaged } => match weapon {
+                None => (pos, Order::Idle),
+                Some(w) => {
+                    // Keep the current target while it lives and stays within acquisition
+                    // range (a leash: a guard isn't dragged across the map); else look around.
+                    let reach = w.range + ACQUIRE;
+                    let target = engaged
+                        .filter(|&t| {
+                            self.live_enemy(owner, t)
+                                .is_some_and(|e| e.pos.distance(pos) - self.rules.def(e.def).radius <= reach)
+                        })
+                        .or_else(|| self.enemy_near(owner, pos, reach));
+                    match target {
+                        Some(t) => (self.engage(id, t, w, speed), Order::AttackMove { dest, engaged: Some(t) }),
+                        None => {
+                            let (p, arrived) = self.approach(id, dest, Fx::ZERO, speed);
+                            (p, if arrived { Order::Idle } else { Order::AttackMove { dest, engaged: None } })
+                        }
+                    }
+                }
+            },
         };
         let e = self.entities.get_mut(id).unwrap();
         e.pos = self.map.clamp(new_pos);
@@ -741,6 +831,72 @@ impl World {
         e.order = new_order;
         if new_order == Order::Idle {
             e.home = None;
+        }
+    }
+
+    /// `target` if it is a live entity owned by an opponent of `owner` and can be shot
+    /// (units and buildings, not neutral resources).
+    fn live_enemy(&self, owner: PlayerId, target: EntityId) -> Option<&Entity> {
+        self.entities.get(target).filter(|t| t.owner.is_some_and(|o| o != owner) && t.hp > 0)
+    }
+
+    /// The enemy whose edge is nearest `pos`, within `reach`. Units come before buildings, so
+    /// a squad fights the army before the walls; ties go to the lower entity id.
+    fn enemy_near(&self, owner: PlayerId, pos: Vec2, reach: Fx) -> Option<EntityId> {
+        let mut best: Option<(bool, Fx, EntityId)> = None;
+        for e in self.entities.iter() {
+            if !e.owner.is_some_and(|o| o != owner) || e.hp <= 0 {
+                continue;
+            }
+            let d = self.rules.def(e.def);
+            // Cheap box test first: almost every entity is far away, and `distance` is a sqrt.
+            let far = reach + d.radius;
+            if (e.pos.x - pos.x).abs() > far || (e.pos.y - pos.y).abs() > far {
+                continue;
+            }
+            let gap = (e.pos.distance(pos) - d.radius).max(Fx::ZERO);
+            if gap > reach {
+                continue;
+            }
+            let key = (!d.is_unit(), gap, e.id);
+            if best.is_none_or(|b| key < b) {
+                best = Some(key);
+            }
+        }
+        best.map(|(_, _, id)| id)
+    }
+
+    /// Moves unit `id` into range of `target` and fires when the weapon is ready. Returns the
+    /// unit's new position.
+    fn engage(&mut self, id: EntityId, target: EntityId, w: crate::defs::Weapon, speed: Fx) -> Vec2 {
+        let t = self.entities.get(target).unwrap();
+        let (tpos, tdef) = (t.pos, self.rules.def(t.def));
+        let (tr, armour) = (tdef.radius, tdef.armour);
+        let e = self.entities.get(id).unwrap();
+        let (pos, ready) = (e.pos, e.cooldown == 0);
+        if pos.distance(tpos) - tr > w.range {
+            // Close to a point just inside range, so separation can't push it back out.
+            return self.approach(id, tpos, tr + w.range - SLACK, speed).0;
+        }
+        self.entities.get_mut(id).unwrap().route = Route::default();
+        if ready {
+            self.entities.get_mut(id).unwrap().cooldown = w.cooldown_ticks;
+            self.shots.push((id, target, w.damage_vs(armour)));
+        }
+        pos
+    }
+
+    /// Applies this tick's shots together, so every unit alive at the start of the tick fires
+    /// and the outcome does not depend on entity order: two units that shoot each other both
+    /// land their hit. `killed` is reported once, by the shot that took the target to zero.
+    fn resolve_shots(&mut self) {
+        for (shooter, target, damage) in core::mem::take(&mut self.shots) {
+            let Some(t) = self.entities.get_mut(target) else { continue };
+            let was_alive = t.hp > 0;
+            t.hp -= damage;
+            let killed = was_alive && t.hp <= 0;
+            let at = t.pos;
+            self.events.push(Event::Hit { shooter, target, at, damage, killed });
         }
     }
 
@@ -857,6 +1013,10 @@ impl World {
                 }
                 let min = ad.radius + bd.radius;
                 let delta = b.pos - a.pos;
+                // Box test before the sqrt in `length`: nearly every pair is far apart.
+                if delta.x.abs() >= min || delta.y.abs() >= min {
+                    continue;
+                }
                 let dist = delta.length();
                 if dist >= min {
                     continue;
@@ -874,8 +1034,12 @@ impl World {
             let mut pos = e.pos;
             for &(spos, srad) in &statics {
                 let delta = pos - spos;
+                let reach = srad + r;
+                if delta.x.abs() >= reach || delta.y.abs() >= reach {
+                    continue;
+                }
                 let dist = delta.length();
-                if dist < srad + r {
+                if dist < reach {
                     let dir = if dist == Fx::ZERO { Vec2::new(Fx::ONE, Fx::ZERO) } else { delta.scale(Fx::ONE / dist) };
                     pos = spos + dir.scale(srad + r);
                 }
@@ -919,9 +1083,10 @@ impl World {
                 continue;
             }
             let owner = Some(PlayerId(i as u8));
+            // Entities killed this tick (hp ≤ 0) are swept by `cleanup` right after.
             let alive = self.entities.iter().any(|e| {
                 let d = self.rules.def(e.def);
-                e.owner == owner && (d.is_building() || d.is_constructor())
+                e.owner == owner && e.hp > 0 && (d.is_building() || d.is_constructor())
             });
             p.defeated = !alive;
         }

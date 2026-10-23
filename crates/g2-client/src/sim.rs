@@ -81,6 +81,11 @@ pub struct Previous(pub std::collections::BTreeMap<g2_sim::EntityId, g2_sim::Vec
 #[derive(Resource, Default)]
 pub struct Deliveries(pub Vec<(g2_sim::EntityId, i64)>);
 
+/// Every hit since the view last drained this: `(shooter position, target position, killed)`,
+/// gathered per step like `Deliveries`.
+#[derive(Resource, Default)]
+pub struct Hits(pub Vec<(g2_sim::Vec2, g2_sim::Vec2, bool)>);
+
 pub struct SimPlugin;
 
 impl Plugin for SimPlugin {
@@ -88,11 +93,17 @@ impl Plugin for SimPlugin {
         app.insert_resource(Time::<Fixed>::from_hz(TICKS_PER_SECOND as f64))
             .init_resource::<Previous>()
             .init_resource::<Deliveries>()
+            .init_resource::<Hits>()
             .add_systems(FixedUpdate, step_sim);
     }
 }
 
-fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>, mut deliveries: ResMut<Deliveries>) {
+fn step_sim(
+    mut sim: ResMut<Sim>,
+    mut prev: ResMut<Previous>,
+    mut deliveries: ResMut<Deliveries>,
+    mut hits: ResMut<Hits>,
+) {
     if sim.speed == 0 {
         return;
     }
@@ -102,8 +113,15 @@ fn step_sim(mut sim: ResMut<Sim>, mut prev: ResMut<Previous>, mut deliveries: Re
     for _ in 0..sim.speed {
         sim.world.step();
         for e in sim.world.events() {
-            if let g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } = *e {
-                deliveries.0.push((depot, credits));
+            match *e {
+                g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } => {
+                    deliveries.0.push((depot, credits))
+                }
+                g2_sim::world::Event::Hit { shooter, at, killed, .. } => {
+                    let from = sim.world.entity(shooter).map_or(at, |s| s.pos);
+                    hits.0.push((from, at, killed));
+                }
+                _ => {}
             }
         }
         if sim.world.winner().is_some() {

@@ -86,6 +86,7 @@ impl World {
             h.u64(e.home.map_or(u64::MAX, |w| ((w.index as u64) << 32) | w.generation as u64));
             h.u64(e.powered as u64);
             h.u64(e.income_ticks as u64);
+            h.u64(e.cooldown as u64);
             let r = &e.route;
             h.u64(r.key);
             match r.target {
@@ -141,6 +142,16 @@ fn hash_order(h: &mut Fnv, o: Order) {
         Order::Construct { site } => {
             h.u64(3);
             id(h, site);
+        }
+        Order::Attack { target } => {
+            h.u64(4);
+            id(h, target);
+        }
+        Order::AttackMove { dest, engaged } => {
+            h.u64(5);
+            h.i64(dest.x.0);
+            h.i64(dest.y.0);
+            h.u64(engaged.map_or(u64::MAX, |e| ((e.index as u64) << 32) | e.generation as u64));
         }
     }
 }

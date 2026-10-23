@@ -47,6 +47,7 @@ pub enum Class {
         speed: Fx,
         constructor: bool,
         collector: Option<CollectorSpec>,
+        weapon: Option<Weapon>,
     },
     Building {
         /// Positive: power source with this capacity. Negative: consumer drawing this much.
@@ -57,6 +58,35 @@ pub enum Class {
     },
     SupplyPile,
     OilWell,
+}
+
+/// Armour classes from the archived unit cards ("Infantry", "Light", "Heavy, Mechanical",
+/// "Structure"). A weapon's damage against each is its base damage plus a per-class bonus,
+/// the way the cards state it ("40 (Bonus: 30 vs. Light)").
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum Armour {
+    Infantry,
+    Light,
+    Heavy,
+    Structure,
+}
+
+/// An instant-hit weapon: every `cooldown_ticks` it deals `damage_vs(armour)` to one target
+/// whose edge is within `range` of the shooter's centre.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Weapon {
+    pub damage: i32,
+    /// Extra damage per armour class, indexed by `Armour as usize`; may be negative.
+    pub bonus: [i32; 4],
+    pub range: Fx,
+    pub cooldown_ticks: u32,
+}
+
+impl Weapon {
+    /// At least 1, so every hit counts.
+    pub fn damage_vs(&self, armour: Armour) -> i32 {
+        (self.damage + self.bonus[armour as usize]).max(1)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -70,6 +100,7 @@ pub enum BuildingRole {
     OilDerrick {
         oil_per_second: i64,
     },
+    /// Trains combat units (barracks, war factory).
     Factory,
 }
 
@@ -79,6 +110,7 @@ pub struct Def {
     pub faction: Option<Faction>,
     pub class: Class,
     pub hp: i32,
+    pub armour: Armour,
     pub cost: Cost,
     pub build_ticks: u32,
     /// Collision/placement radius in world units.
@@ -95,6 +127,13 @@ impl Def {
 
     pub fn is_unit(&self) -> bool {
         matches!(self.class, Class::Unit { .. })
+    }
+
+    pub fn weapon(&self) -> Option<Weapon> {
+        match self.class {
+            Class::Unit { weapon, .. } => weapon,
+            _ => None,
+        }
     }
 
     pub fn collector(&self) -> Option<CollectorSpec> {

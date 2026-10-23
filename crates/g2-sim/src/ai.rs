@@ -9,6 +9,10 @@ use crate::world::{TICKS_PER_SECOND, World};
 
 /// Decisions every second, not every tick: cheaper and closer to a human's pace.
 const THINK_INTERVAL: u32 = TICKS_PER_SECOND;
+/// Idle combat units gather at the factory until there are this many, then attack together.
+const WAVE: usize = 5;
+/// Enemy units this close to one of our buildings trigger the whole army's defence.
+const DEFEND_RADIUS: Fx = Fx::from_int(50);
 
 pub struct Ai {
     player: PlayerId,
@@ -26,10 +30,26 @@ impl Ai {
         let me = self.player;
         let rules = world.rules;
         let mine: Vec<_> = world.entities().filter(|e| e.owner == Some(me)).collect();
-        let has = |role: fn(BuildingRole) -> bool| mine.iter().any(|e| rules.def(e.def).role().is_some_and(role));
         let idle_constructor =
             mine.iter().find(|e| rules.def(e.def).is_constructor() && e.order == Order::Idle).map(|e| e.id);
         let cc = mine.iter().find(|e| rules.def(e.def).role() == Some(BuildingRole::CommandCenter));
+        let count =
+            |role: fn(BuildingRole) -> bool| mine.iter().filter(|e| rules.def(e.def).role().is_some_and(role)).count();
+
+        // 0. Never be left without a constructor: one lost (or never built) is retrained, and
+        //    until it is queued the army waits, so its credits can't keep the rebuild away.
+        let constructors = mine.iter().filter(|e| rules.def(e.def).is_constructor()).count()
+            + mine.iter().flat_map(|e| &e.queue).filter(|p| rules.def(p.def).is_constructor()).count();
+        let rebuild = mine.iter().filter(|e| e.is_complete()).find_map(|e| {
+            rules.def(e.def).produces.iter().find(|&&u| rules.def(u).is_constructor()).map(|&u| (e.id, u))
+        });
+        let saving = constructors == 0 && rebuild.is_some();
+        if constructors == 0
+            && let Some((producer, def)) = rebuild
+            && world.player(me).credits >= rules.def(def).cost.credits
+        {
+            out.push(CommandKind::Train { producer, def });
+        }
 
         // 1. Finish any abandoned foundation first.
         if let (Some(builder), Some(site)) = (idle_constructor, mine.iter().find(|e| e.construction.is_some())) {
@@ -37,38 +57,52 @@ impl Ai {
             return;
         }
 
-        // 2. Base layout: supply center, then power (if the faction uses it), then an oil derrick.
+        // 2. Base layout: supply center, power (if the faction uses it), one oil derrick, a
+        //    barracks and a war factory; then derricks on any other free well.
         if let (Some(builder), Some(cc)) = (idle_constructor, cc) {
             let builder_def = rules.def(world.entity(builder).unwrap().def);
-            let want = if !has(|r| matches!(r, BuildingRole::SupplyCenter { .. })) {
-                builder_def
+            let find =
+                |pred: fn(&crate::defs::Def) -> bool| builder_def.builds.iter().copied().find(|&b| pred(rules.def(b)));
+            let derrick = find(|d| matches!(d.role(), Some(BuildingRole::OilDerrick { .. })));
+            let derricks = count(|r| matches!(r, BuildingRole::OilDerrick { .. }));
+            // Barracks first: the faction's factory producing the cheaper unit.
+            let factories: Vec<_> = {
+                let mut f: Vec<_> = builder_def
                     .builds
                     .iter()
                     .copied()
-                    .find(|&b| matches!(rules.def(b).role(), Some(BuildingRole::SupplyCenter { .. })))
-            } else if world.player(me).faction.uses_power() && !has(|r| r == BuildingRole::PowerPlant) {
-                builder_def.builds.iter().copied().find(|&b| rules.def(b).role() == Some(BuildingRole::PowerPlant))
+                    .filter(|&b| rules.def(b).role() == Some(BuildingRole::Factory))
+                    .collect();
+                f.sort_by_key(|&b| rules.def(b).produces.first().map_or(0, |&u| rules.def(u).cost.credits));
+                f
+            };
+            let missing_factory = factories.iter().copied().find(|&f| !mine.iter().any(|e| e.def == f));
+            let want = if count(|r| matches!(r, BuildingRole::SupplyCenter { .. })) == 0 {
+                find(|d| matches!(d.role(), Some(BuildingRole::SupplyCenter { .. })))
+            } else if world.player(me).faction.uses_power() && count(|r| r == BuildingRole::PowerPlant) == 0 {
+                find(|d| d.role() == Some(BuildingRole::PowerPlant))
+            } else if derricks == 0 && derrick.is_some_and(|d| self.free_well(world, d, cc.pos).is_some()) {
+                derrick
             } else {
-                None
+                missing_factory.or(derrick)
             };
             if let Some(def) = want
                 && world.player(me).credits >= rules.def(def).cost.credits
-                && let Some(pos) = self.find_spot(world, def, cc.pos)
             {
-                out.push(CommandKind::Build { builder, def, pos });
-                return;
-            }
-            let derrick = builder_def
-                .builds
-                .iter()
-                .copied()
-                .find(|&b| matches!(rules.def(b).role(), Some(BuildingRole::OilDerrick { .. })));
-            if let Some(def) = derrick
-                && world.player(me).credits >= rules.def(def).cost.credits
-                && let Some(well) = self.free_well(world, def, cc.pos)
-            {
-                out.push(CommandKind::Build { builder, def, pos: well });
-                return;
+                let pos = if Some(def) == derrick {
+                    self.free_well(world, def, cc.pos)
+                } else if matches!(rules.def(def).role(), Some(BuildingRole::SupplyCenter { .. })) {
+                    // Toward the nearest pile: shorter trips, and the same layout from every
+                    // start (the spiral's fixed ring order favours one corner of the map).
+                    let toward = world.nearest_pile(cc.pos).and_then(|p| world.entity(p)).map_or(cc.pos, |p| p.pos);
+                    self.find_spot_toward(world, def, cc.pos, toward)
+                } else {
+                    self.find_spot(world, def, cc.pos)
+                };
+                if let Some(pos) = pos {
+                    out.push(CommandKind::Build { builder, def, pos });
+                    return;
+                }
             }
         }
 
@@ -84,6 +118,18 @@ impl Ai {
             }
         }
 
+        // 3b. Keep every factory training (one at a time, so collectors come first).
+        for f in mine.iter().filter(|e| !saving && e.is_complete() && e.queue.is_empty()) {
+            if rules.def(f.def).role() != Some(BuildingRole::Factory) {
+                continue;
+            }
+            if let Some(&unit) = rules.def(f.def).produces.first()
+                && world.player(me).credits >= rules.def(unit).cost.credits
+            {
+                out.push(CommandKind::Train { producer: f.id, def: unit });
+            }
+        }
+
         // 4. Put idle collectors back to work.
         let idle: Vec<EntityId> = mine
             .iter()
@@ -94,6 +140,38 @@ impl Ai {
             && let Some(pile) = world.nearest_pile(world.entity(first).unwrap().pos)
         {
             out.push(CommandKind::Gather { units: idle, pile });
+        }
+
+        // 5. Army: defend first, then attack in waves.
+        let army: Vec<_> = mine.iter().filter(|e| rules.def(e.def).weapon().is_some()).collect();
+        let intruder = world.entities().find(|e| {
+            e.owner.is_some_and(|o| o != me)
+                && rules.def(e.def).is_unit()
+                && mine.iter().any(|b| rules.def(b.def).is_building() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
+        });
+        if let Some(intruder) = intruder {
+            // Only units at home defend: a wave already under way keeps going, and a unit
+            // already fighting keeps its target.
+            let home: Vec<EntityId> = army
+                .iter()
+                .filter(|e| {
+                    !matches!(e.order, Order::Attack { .. } | Order::AttackMove { engaged: Some(_), .. })
+                        && mine.iter().any(|b| rules.def(b.def).is_building() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
+                })
+                .map(|e| e.id)
+                .collect();
+            if !home.is_empty() {
+                out.push(CommandKind::Attack { units: home, target: intruder.id });
+                // Those units are busy this second; the wave check waits for the next.
+                return;
+            }
+        }
+        let idle: Vec<EntityId> = army.iter().filter(|e| e.order == Order::Idle).map(|e| e.id).collect();
+        if idle.len() >= WAVE
+            && let Some(home) = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos))
+            && let Some(target) = self.enemy_base(world, home)
+        {
+            out.push(CommandKind::AttackMove { units: idle, target });
         }
     }
 
@@ -110,6 +188,40 @@ impl Ai {
             }
         }
         None
+    }
+
+    /// The valid foundation spot nearest `toward` among the spiral's first rings around
+    /// `around`; ties go to the earlier ring cell.
+    fn find_spot_toward(&self, world: &World, def: crate::defs::DefId, around: Vec2, toward: Vec2) -> Option<Vec2> {
+        let step = world.rules.def(def).radius * Fx::from_int(2) + Fx::from_int(4);
+        let mut best: Option<(Fx, Vec2)> = None;
+        for ring in 1..4i64 {
+            for k in 0..8 * ring {
+                let (dx, dy) = ring_offset(ring, k);
+                let pos = around + Vec2::new(step * Fx::from_int(dx), step * Fx::from_int(dy));
+                if world.check_placement(def, pos).is_ok() && best.is_none_or(|(d, _)| pos.distance(toward) < d) {
+                    best = Some((pos.distance(toward), pos));
+                }
+            }
+        }
+        best.map(|(_, p)| p).or_else(|| self.find_spot(world, def, around))
+    }
+
+    /// Where an attack wave heads: just outside the enemy building nearest `home`, on the side
+    /// facing home. Not its centre, which is a blocked cell no route can end on; units engage
+    /// whatever they meet once they are close anyway.
+    fn enemy_base(&self, world: &World, home: Vec2) -> Option<Vec2> {
+        let b = world
+            .entities()
+            .filter(|e| e.owner.is_some_and(|o| o != self.player) && world.rules.def(e.def).is_building())
+            .min_by_key(|e| (e.pos.distance(home), e.id))?;
+        let delta = home - b.pos;
+        let dist = delta.length();
+        if dist == Fx::ZERO {
+            return Some(b.pos);
+        }
+        let stand_off = world.rules.def(b.def).radius + Fx::from_int(8);
+        Some(b.pos + delta.scale(stand_off.min(dist) / dist))
     }
 
     fn free_well(&self, world: &World, derrick: crate::defs::DefId, around: Vec2) -> Option<Vec2> {

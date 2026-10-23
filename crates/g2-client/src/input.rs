@@ -1,7 +1,8 @@
 //! Mouse and keyboard → sim commands.
 //!
 //! Left click/drag: select own units (click on a building selects it).
-//! Right click: context order (supply pile → gather, own foundation → construct, ground → move).
+//! Right click: context order (enemy → attack, supply pile → gather, own foundation →
+//! construct, ground → move). Ctrl + right click on the ground attack-moves.
 //! With a constructor selected: B opens build mode, 1-9 pick a building, left click places, Esc cancels.
 //! With a building selected: 1-9 queue production, Backspace cancels the last item.
 //! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
@@ -239,15 +240,39 @@ fn mouse(
             return;
         }
         let rules = sim.world.rules;
-        let target = pick(&sim, here, |e| e.owner.is_none() || e.owner == Some(LOCAL));
-        let kind = match target.and_then(|t| sim.world.entity(t)) {
-            Some(t) if matches!(rules.def(t.def).class, Class::SupplyPile) => CommandKind::Gather { units, pile: t.id },
-            Some(t) if t.owner == Some(LOCAL) && t.construction.is_some() => {
-                CommandKind::Construct { units, site: t.id }
+        // An enemy under the cursor wins over our own entities or a pile it stands next to.
+        let enemy = pick(&sim, here, |e| e.owner.is_some_and(|o| o != LOCAL));
+        let target = enemy.or_else(|| pick(&sim, here, |e| e.owner.is_none() || e.owner == Some(LOCAL)));
+        let attack_move = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
+        let armed = |id: &EntityId| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).weapon().is_some());
+        let kinds = match target.and_then(|t| sim.world.entity(t)) {
+            // Armed units attack; the rest of a mixed selection walks to the spot instead of
+            // having the whole order rejected.
+            Some(t) if t.owner.is_some_and(|o| o != LOCAL) => {
+                let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
+                [
+                    (!fighters.is_empty()).then_some(CommandKind::Attack { units: fighters, target: t.id }),
+                    (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+                ]
             }
-            _ => CommandKind::Move { units, target: here },
+            Some(t) if matches!(rules.def(t.def).class, Class::SupplyPile) => {
+                [Some(CommandKind::Gather { units, pile: t.id }), None]
+            }
+            Some(t) if t.owner == Some(LOCAL) && t.construction.is_some() => {
+                [Some(CommandKind::Construct { units, site: t.id }), None]
+            }
+            _ if attack_move => {
+                let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
+                [
+                    (!fighters.is_empty()).then_some(CommandKind::AttackMove { units: fighters, target: here }),
+                    (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+                ]
+            }
+            _ => [Some(CommandKind::Move { units, target: here }), None],
         };
-        sim.order(kind);
+        for kind in kinds.into_iter().flatten() {
+            sim.order(kind);
+        }
     }
 }
 

@@ -170,6 +170,15 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
             greebles(&mut p, w * 0.5, w * 0.5, 8.2, 11, 6);
             p.push(block(Slot::Team, 0.0, w * 0.32, 5.0, w * 0.4, 1.4, 0.3));
         }
+        (Faction::Gla, BuildingRole::Factory) => {
+            // Salvage shed: a corrugated hall with an open front and scrap piled along a side.
+            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.02, 0.4, w * 1.02));
+            p.push(block(Slot::Hull, 0.0, -w * 0.12, 0.4, w * 0.82, 4.4, w * 0.62));
+            p.push(block(Slot::Dark, 0.0, w * 0.2, 0.4, w * 0.5, 3.4, 0.25));
+            p.push(block(Slot::Panel, 0.0, -w * 0.12, 4.8, w * 0.86, 0.5, w * 0.66));
+            crate_yard(&mut p, w * 0.95, w * 0.25, 0.4, 61, 2);
+            p.push(block(Slot::Team, w * 0.3, -w * 0.12, 5.3, 0.3, 1.8, 0.2));
+        }
         (Faction::Gla, _) => {
             p.push(block(Slot::Hull, 0.0, 0.0, 0.0, w * 0.8, 4.0, w * 0.8));
             crate_yard(&mut p, w, w * 0.3, 0.0, 91, 2);
@@ -217,9 +226,30 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
             p.push(block(Slot::Glow, 0.0, w * 0.405, 1.5, w * 0.6, 0.6, 0.1));
             greebles(&mut p, w * 0.8, w * 0.4, 4.0, 31, 4);
         }
+        (_, BuildingRole::Factory) if r < 8.0 => {
+            // Barracks: a low block with a lit front, a striped curb along the yard side and a flag.
+            let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
+            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.4, w * 1.05));
+            p.push(block(Slot::Hull, 0.0, -w * 0.18, 0.4, w * 0.9, 3.4, w * 0.55));
+            p.push(block(Slot::Panel, 0.0, -w * 0.18, 3.8, w * 0.7, 0.9, w * 0.4));
+            p.push(block(Slot::Glow, 0.0, w * 0.1, 1.6, w * 0.6, 0.5, 0.1));
+            p.push(block(accent, 0.0, w * 0.48, 0.4, w * 0.9, 0.7, 0.2));
+            p.push(cyl(Slot::Dark, Vec3::new(w * 0.38, 3.0, w * 0.38), Vec3::new(0.25, 6.0, 0.25)));
+            p.push(block(Slot::Team, w * 0.38 + 0.8, w * 0.38, 5.2, 1.6, 0.9, 0.08));
+            greebles(&mut p, w * 0.7, w * 0.4, 4.7, 71, 4);
+        }
         (_, BuildingRole::Factory) => {
-            p.push(block(Slot::Hull, 0.0, 0.0, 0.0, w, 5.0, w));
-            greebles(&mut p, w, w, 5.0, 51, 8);
+            // War factory: a tall assembly hall with a wide vehicle door and a hazard-striped roof beam.
+            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.5, w * 1.05));
+            p.push(block(Slot::Hull, 0.0, -w * 0.1, 0.5, w * 0.92, 6.0, w * 0.72));
+            p.push(block(Slot::Dark, 0.0, w * 0.27, 0.5, w * 0.5, 4.2, 0.2));
+            p.push(block(Slot::Panel, 0.0, -w * 0.1, 6.5, w * 0.8, 1.0, w * 0.6));
+            p.push(block(Slot::Hazard, 0.0, -w * 0.1, 7.5, w * 0.95, 0.4, 0.5));
+            p.push(block(Slot::Team, -w * 0.47, -w * 0.1, 3.5, 0.3, 2.0, w * 0.4));
+            greebles(&mut p, w * 0.75, w * 0.55, 7.5, 81, 6);
+            if faction == Faction::Eu {
+                hazard_trim(&mut p, w * 0.92, w * 0.72, 6.5);
+            }
         }
     }
     p
@@ -242,7 +272,11 @@ fn derrick(p: &mut Vec<Part>, faction: Faction, r: f32) {
 
 pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
     let mut p = Vec::new();
-    let Class::Unit { constructor, collector, .. } = def.class else { return p };
+    let Class::Unit { constructor, collector, weapon, .. } = def.class else { return p };
+    if weapon.is_some() {
+        combat_unit(&mut p, faction, def, r);
+        return p;
+    }
     match (faction, constructor, collector.is_some()) {
         (Faction::Gla, _, _) => {
             // Worker: a small figure with a hard hat; the GLA has no construction vehicles.
@@ -296,6 +330,48 @@ pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
         }
     }
     p
+}
+
+/// Infantry squads (several small figures) and tanks (hull, tracks, turret, barrel). Our own
+/// silhouettes: helmets and a roof band carry the team colour so sides read at game zoom; EU
+/// tanks are long and flat, APA tanks twin-barrelled, GLA tanks small and boxy.
+fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
+    if def.armour == g2_sim::Armour::Infantry {
+        // Squad of three figures in a loose wedge.
+        for (k, (x, z)) in [(0.0, 0.7), (-0.8, -0.4), (0.8, -0.4)].into_iter().enumerate() {
+            let body = if faction == Faction::Gla { Slot::Crate(k as u8 + 1) } else { Slot::Hull };
+            p.push(cyl(body, Vec3::new(x, 0.55, z), Vec3::new(0.55, 1.1, 0.45)));
+            p.push(part(Prim::Sphere, Slot::Team, Vec3::new(x, 1.3, z), Vec3::splat(0.5)));
+            p.push(block(Slot::Panel, x, z, 0.85, 0.6, 0.2, 0.5));
+            p.push(block(Slot::Dark, x + 0.25, z + 0.3, 0.75, 0.12, 0.12, 0.8));
+        }
+        return;
+    }
+    let (l, wd) = (r * 2.0, r * 1.3);
+    for side in [-1.0, 1.0] {
+        p.push(block(Slot::Dark, side * wd * 0.42, 0.0, 0.0, wd * 0.22, 0.8, l));
+    }
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, wd * 0.7, 0.9, l * 0.9));
+    p.push(block(Slot::Team, 0.0, -l * 0.3, 1.4, wd * 0.72, 0.15, l * 0.3));
+    let (turret_y, barrel_y) = (1.4, 1.9);
+    match faction {
+        Faction::Eu => {
+            p.push(block(Slot::Panel, 0.0, -l * 0.05, turret_y, wd * 0.55, 0.7, l * 0.42));
+            p.push(block(Slot::Dark, 0.0, l * 0.4, barrel_y - 0.15, 0.22, 0.22, l * 0.55));
+            hazard_trim(p, wd * 0.7, l * 0.9, 1.4);
+        }
+        Faction::Apa => {
+            p.push(cyl(Slot::Panel, Vec3::new(0.0, turret_y + 0.4, 0.0), Vec3::new(wd * 0.6, 0.8, wd * 0.6)));
+            for x in [-0.2, 0.2] {
+                p.push(block(Slot::Dark, x, l * 0.38, barrel_y, 0.18, 0.18, l * 0.5));
+            }
+        }
+        Faction::Gla => {
+            p.push(block(Slot::Panel, 0.0, -l * 0.1, turret_y, wd * 0.5, 0.9, l * 0.35));
+            p.push(block(Slot::Dark, 0.0, l * 0.3, barrel_y, 0.2, 0.2, l * 0.45));
+            p.push(block(Slot::Crate(2), wd * 0.2, -l * 0.38, 1.4, 0.8, 0.6, 0.7));
+        }
+    }
 }
 
 pub fn supply_pile(r: f32) -> Vec<Part> {

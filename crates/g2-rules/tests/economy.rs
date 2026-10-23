@@ -3,8 +3,8 @@
 use g2_rules::ids::*;
 use g2_rules::{crater_ridge, rules};
 use g2_sim::{
-    BuildingRole, Class, CommandKind, EntityId, Faction, Fx, GatherPhase, MatchSetup, Order, PlayerId, PlayerSetup,
-    Reject, Vec2, World, world::Event,
+    Armour, BuildingRole, Class, CommandKind, EntityId, Faction, Fx, GatherPhase, MatchSetup, Order, PlayerId,
+    PlayerSetup, Reject, Vec2, World, world::Event,
 };
 
 const P0: PlayerId = PlayerId(0);
@@ -105,6 +105,7 @@ fn harvesters_carry_supplies_from_pile_to_center() {
 /// collectors must still reach the pile and come back: none may sit still for 20 seconds while
 /// it has a gather order. (Before pathfinding, EU harvesters wedged between buildings; with
 /// routes but unit-unit pushing, two APA harvesters met head-on in a gap and blocked each other.)
+/// The opponent is passive, so no attack raids the measured economy.
 #[test]
 fn ai_collectors_route_between_tightly_packed_buildings() {
     for faction in Faction::ALL {
@@ -113,7 +114,7 @@ fn ai_collectors_route_between_tightly_packed_buildings() {
             seed: 1,
             players: vec![
                 PlayerSetup { faction, starting_credits: 5_000, ai: true, general: None },
-                PlayerSetup { faction: Faction::Gla, starting_credits: 5_000, ai: true, general: None },
+                PlayerSetup { faction: Faction::Gla, starting_credits: 5_000, ai: false, general: None },
             ],
         };
         let mut w = World::new(&setup, rules());
@@ -519,4 +520,199 @@ fn group_moves_spread_units_instead_of_stacking() {
             assert!(pos[i].distance(pos[j]) >= Fx::from_int(3), "units {i} and {j} overlap");
         }
     }
+}
+
+/// Builds `factory` with the starting constructor, then trains one `unit` from it.
+fn train_one(w: &mut World, ctor: g2_sim::DefId, factory: g2_sim::DefId, unit: g2_sim::DefId) -> EntityId {
+    let f = build(w, ctor, factory, Vec2::from_int(110, 110));
+    assert_eq!(order(w, CommandKind::Train { producer: f, def: unit }), vec![]);
+    for _ in 0..30 * 60 {
+        if let Some(u) = first(w, P0, unit) {
+            return u;
+        }
+        w.step();
+    }
+    panic!("{} never trained", rules().def(unit).name);
+}
+
+/// Damage per hit is the card value plus the bonus against the target's armour class, the
+/// next hit only lands after the weapon's cooldown, and exactly the last hit reports the kill.
+#[test]
+fn hits_follow_armour_bonus_and_cooldown() {
+    // The Warlord's card: 40, +30 vs. Light. The EU bulldozer's card says Heavy (no bonus);
+    // the EU harvester has no armour card and is Light.
+    for (victim, armour, per_hit) in [(EU_DOZER, Armour::Heavy, 40), (EU_HARVESTER, Armour::Light, 70)] {
+        assert_eq!(rules().def(victim).armour, armour);
+        let mut w = world(Faction::Apa, 100_000);
+        let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
+        let gun = rules().def(APA_WARLORD).weapon().unwrap();
+        assert_eq!(gun.damage_vs(armour), per_hit);
+        let target = match first(&w, PlayerId(1), victim) {
+            Some(t) => t,
+            None => {
+                let dozer = first(&w, PlayerId(1), EU_DOZER).unwrap();
+                let pos = Vec2::from_int(290, 300);
+                w.submit(PlayerId(1), CommandKind::Build { builder: dozer, def: EU_SUPPLY, pos });
+                while first(&w, PlayerId(1), EU_SUPPLY).is_none_or(|s| !w.entity(s).unwrap().is_complete()) {
+                    w.step();
+                }
+                let depot = first(&w, PlayerId(1), EU_SUPPLY).unwrap();
+                w.submit(PlayerId(1), CommandKind::Train { producer: depot, def: victim });
+                while first(&w, PlayerId(1), victim).is_none() {
+                    w.step();
+                }
+                first(&w, PlayerId(1), victim).unwrap()
+            }
+        };
+        let hp = rules().def(victim).hp;
+        assert_eq!(order(&mut w, CommandKind::Attack { units: vec![tank], target }), vec![]);
+        let mut hits = Vec::new();
+        for _ in 0..30 * 180 {
+            w.step();
+            for e in w.events() {
+                if let Event::Hit { shooter, target: t, damage, killed, .. } = *e {
+                    assert_eq!((shooter, t), (tank, target));
+                    hits.push((w.tick(), damage, killed));
+                }
+            }
+            if w.entity(target).is_none() {
+                break;
+            }
+        }
+        assert!(w.entity(target).is_none(), "a destroyed unit is removed");
+        assert!(hits.iter().all(|h| h.1 == per_hit), "{hits:?}");
+        let needed = (hp + per_hit - 1) / per_hit;
+        let mut kills = vec![false; needed as usize];
+        kills[needed as usize - 1] = true;
+        assert_eq!(hits.iter().map(|h| h.2).collect::<Vec<_>>(), kills, "{hp} hp at {per_hit} per hit");
+        for pair in hits.windows(2) {
+            // Exactly the cooldown while the target stands still; longer when it moves away.
+            assert!(pair[1].0 - pair[0].0 >= gun.cooldown_ticks, "fires faster than its cooldown: {hits:?}");
+        }
+        if victim == EU_DOZER {
+            assert!(hits.windows(2).all(|p| p[1].0 - p[0].0 == gun.cooldown_ticks), "{hits:?}");
+        }
+        w.step();
+        assert_eq!(w.entity(tank).unwrap().order, Order::Idle, "an attack order ends with its target");
+    }
+}
+
+/// Shots in one tick resolve together, after every unit has moved and aimed: two tanks that
+/// can each kill the other with their next shot both fire, and both die, whichever comes first
+/// in entity order. Each kill is reported once.
+#[test]
+fn mutual_kills_resolve_together() {
+    let setup = MatchSetup {
+        map: crater_ridge(),
+        seed: 1,
+        players: [Faction::Apa, Faction::Apa]
+            .map(|faction| PlayerSetup { faction, starting_credits: 100_000, ai: false, general: None })
+            .to_vec(),
+    };
+    let mut w = World::new(&setup, rules());
+    // One Warlord each, built side by side at the map centre so they meet straight away.
+    let mut tanks = Vec::new();
+    for (p, at) in [(P0, Vec2::from_int(170, 200)), (PlayerId(1), Vec2::from_int(230, 200))] {
+        let crane = first(&w, p, APA_CRANE).unwrap();
+        w.submit(p, CommandKind::Build { builder: crane, def: APA_FACTORY, pos: at });
+        run(&mut w, 1);
+    }
+    while [P0, PlayerId(1)]
+        .iter()
+        .any(|&p| first(&w, p, APA_FACTORY).is_none_or(|f| !w.entity(f).unwrap().is_complete()))
+    {
+        w.step();
+    }
+    for p in [P0, PlayerId(1)] {
+        let f = first(&w, p, APA_FACTORY).unwrap();
+        w.submit(p, CommandKind::Train { producer: f, def: APA_WARLORD });
+    }
+    while [P0, PlayerId(1)].iter().any(|&p| first(&w, p, APA_WARLORD).is_none()) {
+        w.step();
+    }
+    for p in [P0, PlayerId(1)] {
+        tanks.push(first(&w, p, APA_WARLORD).unwrap());
+    }
+    // Both stop out of range of each other, then both attack on the same tick: equal speed,
+    // equal distance, so they come into range together and fire together.
+    let mid = Vec2::from_int(200, 260);
+    for (&t, dx) in tanks.iter().zip([-30, 30]) {
+        let owner = w.entity(t).unwrap().owner.unwrap();
+        w.submit(owner, CommandKind::Move { units: vec![t], target: mid + Vec2::from_int(dx, 0) });
+    }
+    run(&mut w, 30 * 30);
+    for (i, &t) in tanks.iter().enumerate() {
+        let other = tanks[1 - i];
+        let owner = w.entity(t).unwrap().owner.unwrap();
+        w.submit(owner, CommandKind::Attack { units: vec![t], target: other });
+    }
+    let mut kills = 0;
+    for _ in 0..30 * 120 {
+        w.step();
+        kills += w.events().iter().filter(|e| matches!(e, Event::Hit { killed: true, .. })).count();
+        if tanks.iter().any(|&t| w.entity(t).is_none()) {
+            break;
+        }
+    }
+    // 610 hp at 40 per hit is 16 hits each; firing in lockstep, both fall on the same tick.
+    assert!(tanks.iter().all(|&t| w.entity(t).is_none()), "both tanks die together");
+    assert_eq!(kills, 2, "each kill is reported once");
+}
+
+#[test]
+fn attacks_on_friendly_or_neutral_targets_and_unarmed_attackers_are_rejected() {
+    let mut w = world(Faction::Apa, 100_000);
+    let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
+    let crane = first(&w, P0, APA_CRANE).unwrap();
+    let pile = w.nearest_pile(Vec2::from_int(0, 0)).unwrap();
+    let enemy = first(&w, PlayerId(1), EU_CC).unwrap();
+    assert_eq!(order(&mut w, CommandKind::Attack { units: vec![tank], target: crane }), vec![Reject::CannotAttack]);
+    assert_eq!(order(&mut w, CommandKind::Attack { units: vec![tank], target: pile }), vec![Reject::CannotAttack]);
+    assert_eq!(order(&mut w, CommandKind::Attack { units: vec![crane], target: enemy }), vec![Reject::CannotAttack]);
+    assert_eq!(w.entity(tank).unwrap().order, Order::Idle);
+}
+
+/// An idle armed unit engages an enemy that comes close, chases it while it lives, then
+/// walks back to where it stood.
+#[test]
+fn idle_units_guard_their_spot() {
+    let mut w = world(Faction::Apa, 100_000);
+    let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
+    run(&mut w, 30 * 5);
+    let post = w.entity(tank).unwrap().pos;
+    let dozer = first(&w, PlayerId(1), EU_DOZER).unwrap();
+    w.submit(PlayerId(1), CommandKind::Move { units: vec![dozer], target: post + Vec2::from_int(35, 0) });
+    let mut engaged = false;
+    for _ in 0..30 * 120 {
+        w.step();
+        engaged |= matches!(w.entity(tank).unwrap().order, Order::AttackMove { engaged: Some(t), .. } if t == dozer);
+        if w.entity(dozer).is_none() && w.entity(tank).unwrap().order == Order::Idle {
+            break;
+        }
+    }
+    assert!(engaged, "the tank engaged the intruder");
+    assert!(w.entity(dozer).is_none(), "and destroyed it");
+    assert!(w.entity(tank).unwrap().pos.distance(post) <= Fx::from_int(2), "then returned to its post");
+}
+
+/// Elimination: a player without buildings or constructors is defeated and the other wins,
+/// with no surrender involved.
+#[test]
+fn destroying_every_building_and_constructor_defeats_a_player() {
+    let mut w = world(Faction::Apa, 100_000);
+    let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
+    for _ in 0..30 * 600 {
+        if w.winner().is_some() {
+            break;
+        }
+        let next = w.entities().find(|e| e.owner == Some(PlayerId(1))).map(|e| e.id);
+        if w.entity(tank).unwrap().order == Order::Idle
+            && let Some(t) = next
+        {
+            w.submit(P0, CommandKind::Attack { units: vec![tank], target: t });
+        }
+        w.step();
+    }
+    assert!(w.player(PlayerId(1)).defeated);
+    assert_eq!(w.winner(), Some(P0));
 }

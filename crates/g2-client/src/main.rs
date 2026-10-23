@@ -2,7 +2,8 @@
 //!
 //!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--general NAME]
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--record FILE]
-//!   g2-client --screenshot out.png [--ticks N] [...]   headless: simulate N ticks, render one frame
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle] [...]
+//!             headless: simulate N ticks, render one frame
 //!
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
 //! Generals / Zero Hour map (`g2-tools maps` lists them). `--general` picks a general of your
@@ -74,7 +75,8 @@ fn parse_args() -> Result<Args, String> {
                 a.view = match it.next().as_deref() {
                     Some("base") => headless::View::Base,
                     Some("map") => headless::View::Map,
-                    other => return Err(format!("--view expects base|map, got {other:?}")),
+                    Some("battle") => headless::View::Battle,
+                    other => return Err(format!("--view expects base|map|battle, got {other:?}")),
                 }
             }
             "--size" => {
@@ -206,13 +208,31 @@ mod headless {
         Base,
         /// The whole map from above, for checking layout.
         Map,
+        /// The in-game camera over the latest shots (the local base if there are none).
+        Battle,
     }
 
     pub fn run(mut sim: Sim, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
         sim.speed = 0;
-        for _ in 0..ticks {
+        // The last few ticks' hits, so the frame shows tracers and kill flashes in flight.
+        let mut hits = crate::sim::Hits::default();
+        for t in 0..ticks {
             sim.world.step();
+            if t + 4 >= ticks {
+                for e in sim.world.events() {
+                    if let g2_sim::world::Event::Hit { shooter, at, killed, .. } = *e {
+                        hits.0.push((sim.world.entity(shooter).map_or(at, |s| s.pos), at, killed));
+                    }
+                }
+            }
         }
+        // Midpoint of the last few ticks' shots (shooter to target), for `View::Battle`, so both
+        // sides of the fight are in frame.
+        let fight = (!hits.0.is_empty()).then(|| {
+            let n = hits.0.len() as f32;
+            let p = |v: g2_sim::Vec2| Vec2::new(v.x.to_f32(), v.y.to_f32());
+            hits.0.iter().fold(Vec2::ZERO, |s, &(from, at, _)| s + (p(from) + p(at)) / 2.0) / n
+        });
         let mut app = App::new();
         app.add_plugins(
             DefaultPlugins
@@ -227,6 +247,9 @@ mod headless {
             crate::view::ViewPlugin,
             crate::hud::HudPlugin,
         ))
+        .insert_resource(hits)
+        // Warm-up frames run on wall time; frozen effects survive until the capture.
+        .insert_resource(crate::view::FreezeEffects)
         .init_resource::<crate::input::Selection>()
         .init_resource::<crate::input::Placement>();
         app.finish();
@@ -240,11 +263,20 @@ mod headless {
         let cam = {
             let sim = world.resource::<Sim>();
             match view {
-                View::Base => {
-                    let home = sim
-                        .world
-                        .entities()
-                        .find(|e| e.owner == Some(LOCAL))
+                View::Battle if let Some(f) = fight => RtsCamera {
+                    pivot: Vec3::new(f.x, sim.ground_y(f.x, f.y), f.y),
+                    distance: crate::camera::DEFAULT_DISTANCE,
+                    yaw: crate::look::YAW,
+                    pitch: crate::look::PITCH,
+                },
+                View::Base | View::Battle => {
+                    // The command center, not the first own entity: depleted piles free low
+                    // entity slots, which later units reuse.
+                    let rules = sim.world.rules;
+                    let mine = || sim.world.entities().filter(|e| e.owner == Some(LOCAL));
+                    let home = mine()
+                        .find(|e| rules.def(e.def).role() == Some(g2_sim::BuildingRole::CommandCenter))
+                        .or_else(|| mine().next())
                         .map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
                     RtsCamera {
                         pivot: home + Vec3::new(12.0, 0.0, 4.0),

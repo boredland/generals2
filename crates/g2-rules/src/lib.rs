@@ -3,7 +3,9 @@
 //! Values marked `// src:` come from archived material (see the local field notes for the file).
 //! Everything else is a placeholder chosen for playability and will be tuned.
 
-use g2_sim::defs::{BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Faction, General, Modifier, Rules};
+use g2_sim::defs::{
+    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Faction, General, Modifier, Rules, Weapon,
+};
 use g2_sim::{Fx, MapDef, Vec2};
 
 /// Stable ids into `RULES.defs`; `tests::id_constants_match_table_order` keeps them in sync.
@@ -27,6 +29,18 @@ pub mod ids {
     pub const GLA_WORKER: DefId = DefId(15);
     pub const GLA_STASH: DefId = DefId(16);
     pub const GLA_DERRICK: DefId = DefId(17);
+    pub const EU_BARRACKS: DefId = DefId(18);
+    pub const EU_FACTORY: DefId = DefId(19);
+    pub const EU_RECON: DefId = DefId(20);
+    pub const EU_AEGIS: DefId = DefId(21);
+    pub const APA_BARRACKS: DefId = DefId(22);
+    pub const APA_FACTORY: DefId = DefId(23);
+    pub const APA_RED_GUARD: DefId = DefId(24);
+    pub const APA_WARLORD: DefId = DefId(25);
+    pub const GLA_BARRACKS: DefId = DefId(26);
+    pub const GLA_FACTORY: DefId = DefId(27);
+    pub const GLA_RABBLE: DefId = DefId(28);
+    pub const GLA_TANK: DefId = DefId(29);
 }
 
 /// Stable ids into `RULES.generals`.
@@ -71,6 +85,7 @@ const fn building(
         faction: Some(faction),
         class: Class::Building { power, power_radius: Fx::from_int(if power > 0 { 60 } else { 0 }), role },
         hp,
+        armour: Armour::Structure,
         cost,
         build_ticks: secs(build_secs),
         radius: Fx::from_int(radius),
@@ -79,6 +94,8 @@ const fn building(
     }
 }
 
+/// An unarmed unit: constructor or collector. Without a sourced armour class, vehicles are
+/// `Light` and GLA workers `Infantry` (placeholders); `with_armour` sets a sourced one.
 #[allow(clippy::too_many_arguments)]
 const fn unit(
     name: &'static str,
@@ -94,8 +111,9 @@ const fn unit(
     Def {
         name,
         faction: Some(faction),
-        class: Class::Unit { speed: per_sec(speed), constructor, collector },
+        class: Class::Unit { speed: per_sec(speed), constructor, collector, weapon: None },
         hp,
+        armour: if matches!(faction, Faction::Gla) { Armour::Infantry } else { Armour::Light },
         cost,
         build_ticks: secs(build_secs),
         radius: Fx::from_int(2),
@@ -104,16 +122,74 @@ const fn unit(
     }
 }
 
+const fn with_armour(mut d: Def, armour: Armour) -> Def {
+    d.armour = armour;
+    d
+}
+
+/// A combat unit; one entity per squad, with the squad's card values. `build_ticks` rather
+/// than seconds, since the cards give hundredths.
+#[allow(clippy::too_many_arguments)]
+const fn soldier(
+    name: &'static str,
+    faction: Faction,
+    hp: i32,
+    armour: Armour,
+    cost: Cost,
+    build_ticks: u32,
+    speed: i64,
+    radius: i64,
+    weapon: Weapon,
+) -> Def {
+    Def {
+        name,
+        faction: Some(faction),
+        class: Class::Unit { speed: per_sec(speed), constructor: false, collector: None, weapon: Some(weapon) },
+        hp,
+        armour,
+        cost,
+        build_ticks,
+        radius: Fx::from_int(radius),
+        produces: NONE,
+        builds: NONE,
+    }
+}
+
+/// `damage` plus `[infantry, light, heavy, structure]` bonuses, `range` in world units and
+/// `cooldown` in tenths of a second, as the archived cards give them.
+const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) -> Weapon {
+    Weapon {
+        damage,
+        bonus,
+        range: Fx::from_int(range),
+        cooldown_ticks: cooldown_tenths * g2_sim::TICKS_PER_SECOND / 10,
+    }
+}
+
+/// Hundredths of a second to ticks, rounded down.
+const fn centis(t: u32) -> u32 {
+    t * g2_sim::TICKS_PER_SECOND / 100
+}
+
+const FACTORY: BuildingRole = BuildingRole::Factory;
+
+// src: Red Guard (APA basic infantry): 13 (+2 vs. infantry), cooldown 0.9, range 25. Recon
+// squad and Rabble squad have no weapon card; they reuse it as a placeholder.
+const RIFLES: Weapon = weapon(13, [2, 0, 0, 0], 25, 9);
+// src: Warlord tank: 40 (bonus 30 vs. Light), cooldown 1.50, range 35. Placeholder for Aegis.
+const TANK_GUN: Weapon = weapon(40, [0, 30, 0, 0], 35, 15);
+
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { oil_per_second: 5 };
 
-static DEFS: [Def; 18] = [
+static DEFS: [Def; 30] = [
     Def {
         name: "Supply Pile",
         faction: None,
         class: Class::SupplyPile,
         hp: 1,
         cost: credits(0),
+        armour: Armour::Structure,
         build_ticks: 0,
         radius: Fx::from_int(4),
         produces: NONE,
@@ -125,6 +201,7 @@ static DEFS: [Def; 18] = [
         class: Class::OilWell,
         hp: 1,
         cost: credits(0),
+        armour: Armour::Structure,
         build_ticks: 0,
         radius: Fx::from_int(5),
         produces: NONE,
@@ -143,8 +220,21 @@ static DEFS: [Def; 18] = [
         10,
         &[EU_DOZER],
     ),
-    // src: Bulldozer hp 250, land speed 14.
-    unit("EU Bulldozer", Faction::Eu, 250, credits(500), 12, 14, true, None, &[EU_SUPPLY, EU_POWER, EU_DERRICK]),
+    // src: Bulldozer hp 250, armour Heavy, land speed 14.
+    with_armour(
+        unit(
+            "EU Bulldozer",
+            Faction::Eu,
+            250,
+            credits(500),
+            12,
+            14,
+            true,
+            None,
+            &[EU_SUPPLY, EU_POWER, EU_DERRICK, EU_BARRACKS, EU_FACTORY],
+        ),
+        Armour::Heavy,
+    ),
     // src: Supply center collector cap EU 3.
     building(
         "EU Supply Center",
@@ -174,7 +264,17 @@ static DEFS: [Def; 18] = [
         &[APA_CRANE],
     ),
     // src: Crane hp 280, $150, 11 s.
-    unit("APA Crane", Faction::Apa, 280, credits(150), 11, 13, true, None, &[APA_SUPPLY, APA_POWER, APA_DERRICK]),
+    unit(
+        "APA Crane",
+        Faction::Apa,
+        280,
+        credits(150),
+        11,
+        13,
+        true,
+        None,
+        &[APA_SUPPLY, APA_POWER, APA_DERRICK, APA_BARRACKS, APA_FACTORY],
+    ),
     // src: Supply center collector cap APA 5.
     building(
         "APA Supply Center",
@@ -205,7 +305,17 @@ static DEFS: [Def; 18] = [
         &[GLA_WORKER],
     ),
     // src: workers construct and gather supplies.
-    unit("GLA Worker", Faction::Gla, 120, credits(200), 8, 16, true, Some(HARVEST_WORKER), &[GLA_STASH, GLA_DERRICK]),
+    unit(
+        "GLA Worker",
+        Faction::Gla,
+        120,
+        credits(200),
+        8,
+        16,
+        true,
+        Some(HARVEST_WORKER),
+        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY],
+    ),
     // src: Supply center collector cap GLA 8.
     building(
         "GLA Supply Stash",
@@ -219,6 +329,48 @@ static DEFS: [Def; 18] = [
         &[GLA_WORKER],
     ),
     building("GLA Oil Derrick", Faction::Gla, DERRICK, 0, 500, credits(400), 12, 5, NONE),
+    // ---- Combat ----------------------------------------------------------------------------
+    // Barracks numbers are placeholders. War factories copy the GLA war factory card.
+    building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 7, &[EU_RECON]),
+    building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS]),
+    // src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
+    soldier("EU Recon Squad", Faction::Eu, 200, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+    // src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
+    soldier("EU Aegis Tank", Faction::Eu, 660, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+    building("APA Barracks", Faction::Apa, FACTORY, -10, 800, credits(500), 15, 7, &[APA_RED_GUARD]),
+    building("APA War Factory", Faction::Apa, FACTORY, -20, 1000, credits(900), 25, 9, &[APA_WARLORD]),
+    // src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
+    soldier("APA Red Guard", Faction::Apa, 180, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+    // src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
+    soldier("APA Warlord Tank", Faction::Apa, 610, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+    building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE]),
+    // src: GLA war factory hp 1000, $900, 25 s.
+    building("GLA War Factory", Faction::Gla, FACTORY, 0, 1000, credits(900), 25, 9, &[GLA_TANK]),
+    // src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
+    soldier(
+        "GLA Rabble Squad",
+        Faction::Gla,
+        160,
+        Armour::Infantry,
+        credits(120),
+        secs(6),
+        10,
+        2,
+        weapon(12, [4, 4, 0, 0], 20, 10),
+    ),
+    // src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
+    // placeholders: cheaper, faster and weaker than the Warlord.
+    soldier(
+        "GLA Scorpion Tank",
+        Faction::Gla,
+        420,
+        Armour::Light,
+        credits(700),
+        secs(18),
+        11,
+        3,
+        weapon(30, [0, 15, 0, 0], 30, 12),
+    ),
 ];
 
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
@@ -307,6 +459,18 @@ mod tests {
             (GLA_WORKER, "GLA Worker"),
             (GLA_STASH, "GLA Supply Stash"),
             (GLA_DERRICK, "GLA Oil Derrick"),
+            (EU_BARRACKS, "EU Barracks"),
+            (EU_FACTORY, "EU War Factory"),
+            (EU_RECON, "EU Recon Squad"),
+            (EU_AEGIS, "EU Aegis Tank"),
+            (APA_BARRACKS, "APA Barracks"),
+            (APA_FACTORY, "APA War Factory"),
+            (APA_RED_GUARD, "APA Red Guard"),
+            (APA_WARLORD, "APA Warlord Tank"),
+            (GLA_BARRACKS, "GLA Barracks"),
+            (GLA_FACTORY, "GLA War Factory"),
+            (GLA_RABBLE, "GLA Rabble Squad"),
+            (GLA_TANK, "GLA Scorpion Tank"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

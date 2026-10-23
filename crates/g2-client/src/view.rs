@@ -28,6 +28,22 @@ struct Scaffold;
 #[derive(Component)]
 struct Rotor;
 
+/// A short-lived combat effect: a tracer from shooter to target or the flash of a kill.
+#[derive(Component)]
+struct Effect {
+    age: f32,
+    life: f32,
+    /// Grows from 1 to this many times its spawn scale over its life (kill flashes).
+    grow: f32,
+}
+
+/// Seconds a tracer stays visible; kill flashes last three times as long.
+const TRACER_SECS: f32 = 0.12;
+
+/// Present in screenshot mode: effects keep their spawn state so the captured frame shows them.
+#[derive(Resource)]
+pub struct FreezeEffects;
+
 #[derive(Resource, Default)]
 pub struct Mirror(pub BTreeMap<EntityId, Entity>);
 
@@ -37,6 +53,9 @@ struct Assets3d {
     cylinder: Handle<Mesh>,
     sphere: Handle<Mesh>,
     materials: BTreeMap<(Option<Faction>, SlotKey), Handle<StandardMaterial>>,
+    /// Unlit, additive-looking muzzle/tracer and explosion colours.
+    tracer: Handle<StandardMaterial>,
+    blast: Handle<StandardMaterial>,
 }
 
 /// `Slot` with crate colours folded to an index, so it can key a map.
@@ -66,7 +85,7 @@ impl Plugin for ViewPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Mirror>()
             .add_systems(Startup, setup_scene)
-            .add_systems(Update, (sync_entities, interpolate, spin_rotors).chain());
+            .add_systems(Update, (sync_entities, interpolate, spin_rotors, spawn_effects, age_effects).chain());
     }
 }
 
@@ -110,11 +129,20 @@ fn setup_scene(
             table.insert((f, SlotKey::from(slot)), m);
         }
     }
+    let glow = |c: Color, k: f32| StandardMaterial {
+        base_color: c,
+        emissive: c.to_linear() * k,
+        unlit: true,
+        alpha_mode: AlphaMode::Add,
+        ..default()
+    };
     commands.insert_resource(Assets3d {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0)),
         sphere: meshes.add(Sphere::new(0.5).mesh().ico(2).unwrap()),
         materials: table,
+        tracer: materials.add(glow(Color::srgb(1.0, 0.85, 0.45), 4.0)),
+        blast: materials.add(glow(Color::srgb(1.0, 0.5, 0.15), 3.0)),
     });
     let size = sim.world.map.width.to_f32().max(sim.world.map.height.to_f32());
     crate::look::spawn_lights(&mut commands, size);
@@ -229,6 +257,54 @@ fn interpolate(sim: Res<Sim>, prev: Res<Previous>, fixed: Res<Time<Fixed>>, mut 
 fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
     for mut tf in &mut q {
         tf.rotate_y(time.delta_secs() * 18.0);
+    }
+}
+
+/// A tracer for every hit (a thin glowing bar from muzzle height at the shooter to the
+/// target), plus an expanding fireball where a hit destroyed its target.
+fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, mut hits: ResMut<crate::sim::Hits>) {
+    for (from, to, killed) in hits.0.drain(..) {
+        let (a, b) = (sim.to_world(from) + Vec3::Y * 1.5, sim.to_world(to) + Vec3::Y * 1.5);
+        let len = a.distance(b);
+        if len > 0.1 {
+            commands.spawn((
+                Mesh3d(assets.cube.clone()),
+                MeshMaterial3d(assets.tracer.clone()),
+                Transform::from_translation((a + b) / 2.0)
+                    .looking_at(b, Vec3::Y)
+                    .with_scale(Vec3::new(0.25, 0.25, len)),
+                Effect { age: 0.0, life: TRACER_SECS, grow: 1.0 },
+            ));
+        }
+        if killed {
+            commands.spawn((
+                Mesh3d(assets.sphere.clone()),
+                MeshMaterial3d(assets.blast.clone()),
+                Transform::from_translation(b).with_scale(Vec3::splat(2.5)),
+                Effect { age: 0.0, life: TRACER_SECS * 3.0, grow: 3.0 },
+            ));
+        }
+    }
+}
+
+fn age_effects(
+    mut commands: Commands,
+    time: Res<Time>,
+    frozen: Option<Res<FreezeEffects>>,
+    mut q: Query<(Entity, &mut Effect, &mut Transform)>,
+) {
+    if frozen.is_some() {
+        return;
+    }
+    for (id, mut fx, mut tf) in &mut q {
+        let before = 1.0 + (fx.grow - 1.0) * (fx.age / fx.life);
+        fx.age += time.delta_secs();
+        if fx.age >= fx.life {
+            commands.entity(id).despawn();
+            continue;
+        }
+        let now = 1.0 + (fx.grow - 1.0) * (fx.age / fx.life);
+        tf.scale *= now / before;
     }
 }
 

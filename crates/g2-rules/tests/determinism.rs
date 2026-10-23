@@ -121,10 +121,35 @@ fn ai_vs_ai_is_deterministic_for_every_faction_pairing() {
     }
 }
 
+/// Every faction pairing, played AI against AI, ends with exactly one winner within 15 minutes,
+/// and the recorded match reproduces exactly: combat (targeting, hits, deaths, the AI's
+/// waves and rebuilding) is deterministic end to end.
+#[test]
+fn ai_matches_end_with_a_winner_and_replay_exactly() {
+    for f0 in Faction::ALL {
+        for f1 in Faction::ALL {
+            let s = setup(1, [true, true], [f0, f1]);
+            let mut w = World::new(&s, rules());
+            while w.winner().is_none() && w.tick() < 30 * 60 * 15 {
+                w.step();
+            }
+            let winner = w.winner().unwrap_or_else(|| panic!("{f0:?} vs {f1:?}: no winner in 15 minutes"));
+            let loser = PlayerId(1 - winner.0);
+            assert!(w.player(loser).defeated);
+            assert!(w.entities().all(|e| e.owner != Some(loser)), "{f0:?} vs {f1:?}: loser's assets remain");
+            let (end, replay) = record(World::new(&s, rules()), &s, w.tick(), |_| {});
+            assert_eq!(end.state_hash(), w.state_hash());
+            assert_eq!(verify_replay(&replay, crater_ridge(), rules()), Ok(w.state_hash()));
+        }
+    }
+}
+
+/// The opponent is passive: since combat, an AI opponent can end the match before five
+/// minutes, and this measures one AI's economy, not who wins.
 #[test]
 fn ai_builds_an_economy() {
     for f in Faction::ALL {
-        let s = setup(5, [true, true], [f, Faction::Eu]);
+        let s = setup(5, [true, false], [f, Faction::Eu]);
         let (w, _) = record(World::new(&s, rules()), &s, 30 * 300, |_| {});
         let p = w.player(PlayerId(0));
         let collectors =

@@ -44,6 +44,16 @@ pub enum CommandKind {
     },
     /// Concede: the player is defeated and all their assets are removed.
     Surrender,
+    /// Armed units chase and fire at one enemy entity.
+    Attack {
+        units: Vec<EntityId>,
+        target: EntityId,
+    },
+    /// Armed units walk to `target`, fighting anything they meet on the way.
+    AttackMove {
+        units: Vec<EntityId>,
+        target: Vec2,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.
@@ -57,6 +67,8 @@ pub enum Reject {
     InvalidPlacement,
     NotACollector,
     NotAConstructor,
+    /// The units can't fire, or the target is not an enemy.
+    CannotAttack,
     /// Every reachable supply center is at its faction's collector cap.
     DepotFull,
     QueueFull,
