@@ -17,6 +17,7 @@ mod camera;
 mod hud;
 mod input;
 mod look;
+mod menu;
 mod models;
 mod sim;
 mod terrain;
@@ -35,7 +36,13 @@ struct Args {
     spectate: bool,
     /// Level of every AI player in the match.
     ai: g2_sim::AiLevel,
+    /// A flag chose the match: skip the main menu and start playing.
+    direct: bool,
     reveal: bool,
+    /// Headless only: draw this menu screen over the battlefield.
+    menu: Option<menu::Screen>,
+    /// Headless only: freeze on the pause menu.
+    paused: bool,
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
@@ -51,7 +58,10 @@ fn parse_args() -> Result<Args, String> {
         seed: 1,
         spectate: false,
         ai: g2_sim::AiLevel::Normal,
+        direct: false,
         reveal: false,
+        menu: None,
+        paused: false,
         screenshot: None,
         record: None,
         ticks: 900,
@@ -66,6 +76,10 @@ fn parse_args() -> Result<Args, String> {
         other => Err(format!("expected eu|apa|gla, got {other:?}")),
     };
     while let Some(flag) = it.next() {
+        a.direct |= matches!(
+            flag.as_str(),
+            "--map" | "--faction" | "--enemy" | "--general" | "--enemy-general" | "--seed" | "--spectate"
+        );
         match flag.as_str() {
             "--map" => a.map = it.next().ok_or("--map needs a name")?,
             "--faction" => a.factions[0] = faction(it.next())?,
@@ -82,6 +96,19 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "--reveal" => a.reveal = true,
+            "--menu" => {
+                a.menu = Some(match it.next().as_deref() {
+                    Some("main") => menu::Screen::Main,
+                    Some("controls") => menu::Screen::Controls,
+                    Some("setup") => menu::Screen::Setup,
+                    Some("pause") => {
+                        a.paused = true;
+                        menu::Screen::Match
+                    }
+                    Some("end") => menu::Screen::End,
+                    other => return Err(format!("--menu expects main|controls|setup|pause|end, got {other:?}")),
+                })
+            }
             "--screenshot" => a.screenshot = Some(it.next().ok_or("--screenshot needs a path")?),
             "--record" => a.record = Some(it.next().ok_or("--record needs a path")?),
             "--ticks" => a.ticks = it.next().and_then(|v| v.parse().ok()).ok_or("--ticks needs a number")?,
@@ -120,8 +147,11 @@ fn main() -> AppExit {
         }
     };
     match args.screenshot {
-        Some(path) => headless::run(sim, args.ticks, path, args.view, args.size),
-        None => windowed(sim, args.record),
+        Some(path) => {
+            let ui = menu::Ui { screen: args.menu.unwrap_or(menu::Screen::Match), paused: args.paused, ..default() };
+            headless::run(sim, ui, args.ticks, path, args.view, args.size)
+        }
+        None => windowed(sim, args.record, args.direct),
     }
 }
 
@@ -169,15 +199,24 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
 #[derive(Resource)]
 struct RecordTo(String);
 
-fn windowed(sim: Sim, record: Option<String>) -> AppExit {
+fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
+    // The menu covers a frozen battlefield; a flag-chosen match starts running at once.
+    let mut ui = menu::Ui::default();
+    if direct {
+        ui.screen = menu::Screen::Match;
+    } else {
+        sim.speed = 0;
+    }
     let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(WindowPlugin {
-        primary_window: Some(Window { title: "Generals 2 (open-source recreation)".into(), ..default() }),
-        ..default()
-    }))
+    app.add_plugins(
+        DefaultPlugins
+            .set(WindowPlugin { primary_window: Some(Window { title: "Open RTS".into(), ..default() }), ..default() }),
+    )
     .insert_resource(sim)
+    .insert_resource(ui)
     .add_plugins((
         SimPlugin,
+        menu::MenuPlugin { blocking: false },
         terrain::TerrainPlugin,
         view::ViewPlugin,
         camera::CameraPlugin,
@@ -233,7 +272,7 @@ mod headless {
         Battle,
     }
 
-    pub fn run(mut sim: Sim, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
+    pub fn run(mut sim: Sim, ui: crate::menu::Ui, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
         sim.speed = 0;
         // The last few ticks' tracers and blasts, plus every shell still in the air, drawn
         // where it is along its flight, so the frame shows the battle as it stands.
@@ -275,8 +314,10 @@ mod headless {
                 .disable::<WinitPlugin>(),
         )
         .insert_resource(sim)
+        .insert_resource(ui)
         .add_plugins((
             crate::sim::SimPlugin,
+            crate::menu::MenuPlugin { blocking: true },
             crate::terrain::TerrainPlugin,
             crate::view::ViewPlugin,
             crate::hud::HudPlugin,

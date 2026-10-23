@@ -94,9 +94,19 @@ pub struct ViewPlugin;
 
 impl Plugin for ViewPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Mirror>()
-            .add_systems(Startup, setup_scene)
-            .add_systems(Update, (sync_entities, interpolate, spin_rotors, spawn_effects, age_effects).chain());
+        app.init_resource::<Mirror>().add_systems(
+            Update,
+            (
+                setup_scene.run_if(crate::menu::scene_start),
+                sync_entities,
+                interpolate,
+                spin_rotors,
+                spawn_effects,
+                age_effects,
+            )
+                .chain()
+                .after(crate::menu::MenuSet),
+        );
     }
 }
 
@@ -190,8 +200,12 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     let faction = e.owner.map(|o| sim.world.player(o).faction);
     let team = e.owner.map_or(0, |o| sim.teams[o.0 as usize]);
     let parts = models::parts_for(def, faction);
-    let mut root =
-        commands.spawn((SimRef(e.id), Transform::from_translation(sim.to_world(e.pos)), Visibility::default()));
+    let mut root = commands.spawn((
+        crate::menu::MatchEntity,
+        SimRef(e.id),
+        Transform::from_translation(sim.to_world(e.pos)),
+        Visibility::default(),
+    ));
     root.with_children(|c| {
         c.spawn((Body, Transform::default(), Visibility::default()))
             .with_children(|b| spawn_parts(b, assets, faction, team, &parts));
@@ -325,6 +339,7 @@ fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, m
                 let len = a.distance(b);
                 if tracer && len > 0.1 {
                     commands.spawn((
+                        crate::menu::MatchEntity,
                         Mesh3d(assets.cube.clone()),
                         MeshMaterial3d(assets.tracer.clone()),
                         Transform::from_translation((a + b) / 2.0)
@@ -335,6 +350,7 @@ fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, m
                 }
                 if killed {
                     commands.spawn((
+                        crate::menu::MatchEntity,
                         Mesh3d(assets.sphere.clone()),
                         MeshMaterial3d(assets.blast.clone()),
                         Transform::from_translation(b).with_scale(Vec3::splat(2.5)),
@@ -353,6 +369,7 @@ fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, m
                 let age = whole * done;
                 let start = a.lerp(b, done) + Vec3::Y * peak * 4.0 * done * (1.0 - done);
                 commands.spawn((
+                    crate::menu::MatchEntity,
                     Mesh3d(assets.sphere.clone()),
                     MeshMaterial3d(assets.tracer.clone()),
                     Transform::from_translation(start).with_scale(Vec3::splat(0.9)),
@@ -365,6 +382,7 @@ fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, m
                 }
                 let r = radius.to_f32();
                 commands.spawn((
+                    crate::menu::MatchEntity,
                     Mesh3d(assets.sphere.clone()),
                     MeshMaterial3d(assets.blast.clone()),
                     Transform::from_translation(sim.to_world(at) + Vec3::Y * 0.5).with_scale(Vec3::new(r, r * 0.5, r)),

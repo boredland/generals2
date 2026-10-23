@@ -29,7 +29,8 @@ pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, control);
+        app.add_systems(Update, control.run_if(crate::menu::playing))
+            .add_systems(Update, rehome.run_if(crate::menu::scene_start).after(crate::menu::MenuSet));
     }
 }
 
@@ -41,6 +42,15 @@ pub const MAX_DISTANCE: f32 = 170.0;
 pub fn spawn(commands: &mut Commands, pivot: Vec3) {
     let cam = RtsCamera { pivot, distance: DEFAULT_DISTANCE, yaw: crate::look::YAW, pitch: crate::look::PITCH };
     commands.spawn((crate::look::camera_bundle(), cam.transform(), cam));
+}
+
+/// Moves the camera over the local base when a match starts; the camera itself outlives matches.
+pub fn rehome(sim: Res<crate::sim::Sim>, mut cam: Query<&mut RtsCamera>) {
+    let Ok(mut cam) = cam.single_mut() else { return };
+    let home =
+        sim.world.entities().find(|e| e.owner == Some(crate::sim::LOCAL)).map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
+    cam.pivot = home;
+    cam.distance = DEFAULT_DISTANCE;
 }
 
 fn control(

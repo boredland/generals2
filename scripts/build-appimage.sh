@@ -70,7 +70,7 @@ chmod +x "$APPDIR/AppRun"
 cat > "$APPDIR/generals2.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Generals 2 (open-source recreation)
+Name=Open RTS
 Comment=Open-source RTS engine inspired by the cancelled Generals 2
 Exec=g2-client
 Icon=generals2

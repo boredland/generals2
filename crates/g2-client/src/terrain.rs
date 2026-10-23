@@ -29,7 +29,8 @@ pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_terrain).add_systems(Update, (clear_under_buildings, update_fog));
+        app.add_systems(Update, spawn_terrain.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
+            .add_systems(Update, (clear_under_buildings, update_fog).after(spawn_terrain));
     }
 }
 
@@ -50,7 +51,11 @@ fn clear_under_buildings(
     sim: Res<Sim>,
     mut seen: Local<(Vec<(Vec2, f32)>, usize)>,
     mut props: Query<(&Scenery, &mut Visibility)>,
+    fresh: Query<(), Added<Scenery>>,
 ) {
+    if !fresh.is_empty() {
+        *seen = Default::default();
+    }
     let world = &sim.world;
     let ghosts = world
         .vision(crate::sim::LOCAL)
@@ -139,8 +144,12 @@ fn update_fog(
     mut last: Local<Vec<u8>>,
     mut now: Local<Vec<u8>>,
     sheets: Query<&FogSheet>,
+    fresh: Query<(), Added<FogSheet>>,
     mut meshes: ResMut<Assets<Mesh>>,
 ) {
+    if !fresh.is_empty() {
+        last.clear();
+    }
     sim.fog_states(&mut now);
     if *now == *last {
         return;
@@ -641,7 +650,7 @@ fn spawn_terrain(
         reflectance: 0.2,
         ..default()
     });
-    commands.spawn((Mesh3d(meshes.add(ground_mesh(&layout))), MeshMaterial3d(ground)));
+    commands.spawn((crate::menu::MatchEntity, Mesh3d(meshes.add(ground_mesh(&layout))), MeshMaterial3d(ground)));
     let (sheet, points) = fog_sheet(&layout);
     let sheet = meshes.add(sheet);
     let fog = materials.add(StandardMaterial {
@@ -652,7 +661,12 @@ fn spawn_terrain(
         fog_enabled: false,
         ..default()
     });
-    commands.spawn((Mesh3d(sheet.clone()), MeshMaterial3d(fog), FogSheet { mesh: sheet, points }));
+    commands.spawn((
+        crate::menu::MatchEntity,
+        Mesh3d(sheet.clone()),
+        MeshMaterial3d(fog),
+        FogSheet { mesh: sheet, points },
+    ));
     if let Some(file) = layout.source {
         // Opaque: blended water would be sorted against the blended fog sheet per mesh, and
         // draw over it wherever its centre lies nearer the camera.
@@ -664,7 +678,7 @@ fn spawn_terrain(
         });
         for w in &file.water {
             if let Some(mesh) = water_mesh(file, w) {
-                commands.spawn((Mesh3d(meshes.add(mesh)), MeshMaterial3d(water.clone())));
+                commands.spawn((crate::menu::MatchEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(water.clone())));
             }
         }
     }
@@ -688,6 +702,7 @@ fn spawn_terrain(
                 let h = 4.0 * scale;
                 commands
                     .spawn((
+                        crate::menu::MatchEntity,
                         Scenery { at: p, radius: 3.6 * scale },
                         Transform::from_translation(base).with_rotation(rot),
                         Visibility::default(),
@@ -713,6 +728,7 @@ fn spawn_terrain(
             }
             Prop::Bush => {
                 commands.spawn((
+                    crate::menu::MatchEntity,
                     Scenery { at: p, radius: 1.8 * scale },
                     Mesh3d(crown.clone()),
                     MeshMaterial3d(canopy_dark.clone()),
@@ -723,6 +739,7 @@ fn spawn_terrain(
             }
             Prop::Rock => {
                 commands.spawn((
+                    crate::menu::MatchEntity,
                     Scenery { at: p, radius: 2.4 * scale },
                     Mesh3d(rock.clone()),
                     MeshMaterial3d(stone.clone()),
@@ -751,6 +768,7 @@ fn spawn_terrain(
         let p = edge_p + outward * (4.0 + hash(k, 0, 1700) * 14.0);
         let s = 2.0 + hash(k, 1, 1700) * 4.5;
         commands.spawn((
+            crate::menu::MatchEntity,
             Mesh3d(rock.clone()),
             MeshMaterial3d(stone.clone()),
             Transform::from_translation(Vec3::new(p.x, layout.height(p) + s * 0.25, p.y))

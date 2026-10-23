@@ -1,0 +1,41 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  appimage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      # The AppImage bundles the original maps from vendor/ea/CnC_Modding_Support.
+      - uses: actions/checkout@v4
+
+      - name: Fetch map sources
+        run: git submodule update --init --depth 1 vendor/ea/CnC_Modding_Support
+
+      # The script compiles in a rust:slim-bookworm container (pinned glibc), so the host needs
+      # no Rust toolchain; docker, curl, python3 and objdump are preinstalled on the runner.
+      # The script assumes rootless Docker, but this runner's Docker is rootful: creating
+      # target/ here keeps it runner-owned so the script's host-side steps can write into it.
+      - name: Prepare build directories
+        run: mkdir -p target "$HOME/.cargo/registry"
+
+      - name: Build AppImage
+        run: scripts/build-appimage.sh
+
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum Generals2-x86_64.AppImage > SHA256SUMS
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Generals2-x86_64.AppImage
+            dist/SHA256SUMS
+          generate_release_notes: true

@@ -19,14 +19,14 @@ use crate::camera::RtsCamera;
 use crate::input::{Placement, Selection};
 use crate::sim::{LOCAL, Sim};
 
-const PANEL: Color = Color::srgba(0.07, 0.08, 0.09, 0.92);
-const PANEL_EDGE: Color = Color::srgb(0.24, 0.27, 0.29);
-const SLOT: Color = Color::srgba(0.13, 0.15, 0.17, 0.95);
-const TEAL: Color = Color::srgb(0.18, 0.78, 0.86);
+pub(crate) const PANEL: Color = Color::srgba(0.07, 0.08, 0.09, 0.92);
+pub(crate) const PANEL_EDGE: Color = Color::srgb(0.24, 0.27, 0.29);
+pub(crate) const SLOT: Color = Color::srgba(0.13, 0.15, 0.17, 0.95);
+pub(crate) const TEAL: Color = Color::srgb(0.18, 0.78, 0.86);
 const MONEY: Color = Color::srgb(0.35, 0.95, 0.35);
 const XP: Color = Color::srgb(0.98, 0.86, 0.12);
-const TEXT: Color = Color::srgb(0.88, 0.90, 0.90);
-const DIM: Color = Color::srgb(0.55, 0.58, 0.60);
+pub(crate) const TEXT: Color = Color::srgb(0.88, 0.90, 0.90);
+pub(crate) const DIM: Color = Color::srgb(0.55, 0.58, 0.60);
 const MINIMAP: f32 = 196.0;
 
 #[derive(Component)]
@@ -75,7 +75,8 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn).add_systems(Update, (update_fields, tags, minimap, overlays, popups));
+        app.add_systems(Update, spawn.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
+            .add_systems(Update, (update_fields, tags, minimap, overlays, popups).after(spawn));
     }
 }
 
@@ -122,15 +123,15 @@ fn popups(
     }
 }
 
-fn text(s: &str, size: f32, color: Color) -> impl Bundle {
+pub(crate) fn text(s: &str, size: f32, color: Color) -> impl Bundle {
     (Text::new(s), TextFont { font_size: FontSize::Px(size), ..default() }, TextColor(color))
 }
 
-fn abs(left: Val, right: Val, top: Val, bottom: Val) -> Node {
+pub(crate) fn abs(left: Val, right: Val, top: Val, bottom: Val) -> Node {
     Node { position_type: PositionType::Absolute, left, right, top, bottom, ..default() }
 }
 
-fn panel_node(mut node: Node) -> impl Bundle {
+pub(crate) fn panel_node(mut node: Node) -> impl Bundle {
     node.border = UiRect::all(px(1));
     node.padding = UiRect::all(px(6));
     (node, BackgroundColor(PANEL), BorderColor::all(PANEL_EDGE))
@@ -148,13 +149,14 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
     let world = &sim.world;
 
     // Top left: the in-match menu key; top right: neutral project label (no EA trademarks).
-    commands.spawn((abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, DIM)));
-    commands.spawn((abs(auto(), px(14), px(8), auto()), text("OPEN RTS", 12.0, DIM)));
+    commands.spawn((crate::menu::MatchEntity, abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, DIM)));
+    commands.spawn((crate::menu::MatchEntity, abs(auto(), px(14), px(8), auto()), text("OPEN RTS", 12.0, DIM)));
 
     // Top centre: one compact match bar: own tag, clock, then every opponent's tag in its
     // team colour (struck out once defeated); a general shows after its faction.
     commands
         .spawn((
+            crate::menu::MatchEntity,
             Node {
                 position_type: PositionType::Absolute,
                 top: px(6),
@@ -188,7 +190,7 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
     // Bottom left: power/money strip above the minimap.
     let mut corner = abs(px(0), auto(), auto(), px(0));
     corner.flex_direction = FlexDirection::Column;
-    commands.spawn(panel_node(corner)).with_children(|p| {
+    commands.spawn((crate::menu::MatchEntity, panel_node(corner))).with_children(|p| {
         p.spawn(Node {
             width: px(MINIMAP),
             justify_content: JustifyContent::SpaceBetween,
@@ -215,15 +217,18 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
 
     // Bottom right: selection panel with queue and the production grid.
     commands
-        .spawn(panel_node(Node {
-            position_type: PositionType::Absolute,
-            right: px(0),
-            bottom: px(0),
-            width: px(360),
-            flex_direction: FlexDirection::Column,
-            row_gap: px(4),
-            ..default()
-        }))
+        .spawn((
+            crate::menu::MatchEntity,
+            panel_node(Node {
+                position_type: PositionType::Absolute,
+                right: px(0),
+                bottom: px(0),
+                width: px(360),
+                flex_direction: FlexDirection::Column,
+                row_gap: px(4),
+                ..default()
+            }),
+        ))
         .with_children(|p| {
             p.spawn((text("", 14.0, TEXT), Field::SelName));
             p.spawn((text("", 12.0, DIM), Field::SelInfo));
@@ -275,27 +280,31 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
 
     // Status line (pause/speed/victory), centred above the bottom panels.
     commands
-        .spawn((Node {
-            position_type: PositionType::Absolute,
-            top: px(58),
-            left: percent(50),
-            margin: UiRect::left(px(-200)),
-            width: px(400),
-            justify_content: JustifyContent::Center,
-            ..default()
-        },))
+        .spawn((
+            crate::menu::MatchEntity,
+            Node {
+                position_type: PositionType::Absolute,
+                top: px(58),
+                left: percent(50),
+                margin: UiRect::left(px(-200)),
+                width: px(400),
+                justify_content: JustifyContent::Center,
+                ..default()
+            },
+        ))
         .with_children(|s| {
             s.spawn((text("", 14.0, XP), Field::Status));
         });
 }
 
-fn clock(ticks: u32) -> String {
+pub(crate) fn clock(ticks: u32) -> String {
     let s = ticks / TICKS_PER_SECOND;
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
 fn update_fields(
     sim: Res<Sim>,
+    ui: Option<Res<crate::menu::Ui>>,
     sel: Res<Selection>,
     placing: Res<Placement>,
     mut fields: Query<(&Field, &mut Text, Option<&mut Node>), Without<QueueRow>>,
@@ -332,13 +341,15 @@ fn update_fields(
             }
             Field::Money => t.0 = format!("${}", me.credits),
             Field::Status => {
+                // The end screen and the Esc pause menu announce themselves; Space pauses
+                // with no menu, so that one needs its label here.
+                let menu_open = ui.as_ref().is_some_and(|u| u.paused || u.screen != crate::menu::Screen::Match);
                 t.0 = match (world.winner(), sim.speed, placing.0) {
-                    (Some(w), _, _) if w == LOCAL => "VICTORY".into(),
-                    (Some(_), _, _) => "DEFEAT".into(),
+                    (Some(_), _, _) => String::new(),
                     (_, _, Some(def)) => format!("Place {}  -  Esc cancels", rules.def(def).name),
-                    (_, 0, _) => "PAUSED".into(),
-                    (_, 1, _) => String::new(),
-                    (_, s, _) => format!("×{s}"),
+                    (_, 0, _) if !menu_open => "PAUSED".into(),
+                    (_, 0 | 1, _) => String::new(),
+                    (_, s, _) => format!("x{s}"),
                 }
             }
             Field::SelName => {

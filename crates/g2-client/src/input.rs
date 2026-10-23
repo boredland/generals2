@@ -40,10 +40,10 @@ pub struct InputPlugin;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Selection>()
-            .init_resource::<Placement>()
-            .init_resource::<Drag>()
-            .add_systems(Update, (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays).chain());
+        app.init_resource::<Selection>().init_resource::<Placement>().init_resource::<Drag>().add_systems(
+            Update,
+            (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays).chain().run_if(crate::menu::playing),
+        );
     }
 }
 

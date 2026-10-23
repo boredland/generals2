@@ -41,6 +41,7 @@ pub fn camera_bundle() -> impl Bundle {
 
 pub fn spawn_lights(commands: &mut Commands, map_size: f32) {
     commands.spawn((
+        crate::menu::MatchEntity,
         DirectionalLight {
             color: Color::srgb(1.0, 0.93, 0.80),
             illuminance: 110_000.0,

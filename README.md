@@ -4,7 +4,7 @@ Open-source recreation of the cancelled *Command & Conquer: Generals 2*, as a ne
 
 The engine needs no game files. EA's GPL release of *Generals/Zero Hour* in `vendor/` is reference for the engine: no code from it is ported or copied into `crates/`. The one runtime use of `vendor/` is map data: the original Generals and Zero Hour **maps** can be played, read at runtime from EA's GPL map sources (`vendor/ea/CnC_Modding_Support`, a git submodule) and never copied into this repository. All art is original and procedural: meshes built from primitives, generated terrain and textures, our own HUD design. The archived 2013 footage sets the target mood (warm hard light, steep camera, savanna ground); `docs/STYLE.md` describes it as requirements, not as elements to copy.
 
-## Status: milestone 4, artillery
+## Status: milestone 5, skirmish and menus
 
 What works:
 
@@ -115,8 +115,8 @@ Rust 1.99+.
 
 ```
 cargo test --workspace                               # unit, economy, determinism, golden replay
-cargo run -p g2-client --release                     # play EU vs GLA AI
-cargo run -p g2-client --release -- --faction gla --enemy apa --seed 4
+cargo run -p g2-client --release                     # main menu: Skirmish, Controls, Quit
+cargo run -p g2-client --release -- --faction gla --enemy apa --seed 4   # any match flag skips the menu
 cargo run -p g2-client --release -- --spectate       # AI vs AI
 cargo run -p g2-client --release -- --spectate --reveal   # AI vs AI without fog
 cargo run -p g2-tools --release -- maps             # list the original maps that can host a skirmish
@@ -160,6 +160,7 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 | Tab | Select the next own collector and centre the camera on it |
 | T | Deploy the selected Thunderfists (howitzer), or pack them up if all are deployed |
 | F10 | Surrender |
+| Esc | Pause menu (resume, surrender, quit to menu); in the main menu, Esc goes back |
 
 ## Determinism rules for `g2-sim`
 
