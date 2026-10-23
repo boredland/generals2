@@ -1,0 +1,193 @@
+use crate::defs::DefId;
+use crate::fixed::Vec2;
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct EntityId {
+    pub index: u32,
+    pub generation: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct PlayerId(pub u8);
+
+/// What an entity is currently doing. Every variant is plain data so the whole state
+/// serialises into the replay hash.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Order {
+    Idle,
+    Move { target: Vec2 },
+    /// Collector loop: walk to `pile`, load, walk to a supply center, unload, repeat.
+    Gather { pile: EntityId, phase: GatherPhase },
+    /// Constructor walking to (then working on) a placed foundation.
+    Construct { site: EntityId },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GatherPhase {
+    ToPile,
+    Loading { ticks_left: u32 },
+    ToDepot { depot: EntityId },
+    Unloading { depot: EntityId, ticks_left: u32 },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Production {
+    pub def: DefId,
+    /// Progress in "full-speed ticks"; unpowered buildings add half a tick per tick.
+    pub progress_halves: u32,
+}
+
+#[derive(Clone, Debug)]
+pub struct Entity {
+    pub id: EntityId,
+    pub def: DefId,
+    pub owner: Option<PlayerId>,
+    pub pos: Vec2,
+    pub hp: i32,
+    pub order: Order,
+    /// Credits carried by a collector.
+    pub cargo: i64,
+    /// For buildings under construction: completed build ticks. `None` once finished.
+    pub construction: Option<u32>,
+    pub queue: Vec<Production>,
+    /// Supply pile credits left / oil well reserve left.
+    pub resource: i64,
+    /// Oil derrick: the well it sits on.
+    pub on_well: Option<EntityId>,
+    /// Supply center the collector is bound to (counts against that center's cap).
+    pub home: Option<EntityId>,
+    pub powered: bool,
+    /// Fractional oil income accumulator (ticks into the current second).
+    pub income_ticks: u32,
+}
+
+impl Entity {
+    pub fn is_complete(&self) -> bool {
+        self.construction.is_none()
+    }
+}
+
+#[derive(Clone, Debug)]
+enum Slot {
+    Occupied(Entity),
+    Free { generation: u32, next_free: Option<u32> },
+}
+
+/// Generational arena. Iteration is always in index order, which keeps every system
+/// deterministic without sorting.
+#[derive(Clone, Debug, Default)]
+pub struct Entities {
+    slots: Vec<Slot>,
+    free_head: Option<u32>,
+}
+
+impl Entities {
+    pub fn spawn(&mut self, make: impl FnOnce(EntityId) -> Entity) -> EntityId {
+        let (index, generation) = match self.free_head {
+            Some(index) => {
+                let Slot::Free { generation, next_free } = self.slots[index as usize] else {
+                    unreachable!("free list points at an occupied slot")
+                };
+                self.free_head = next_free;
+                (index, generation)
+            }
+            None => {
+                self.slots.push(Slot::Free { generation: 0, next_free: None });
+                (self.slots.len() as u32 - 1, 0)
+            }
+        };
+        let id = EntityId { index, generation };
+        self.slots[index as usize] = Slot::Occupied(make(id));
+        id
+    }
+
+    pub fn despawn(&mut self, id: EntityId) -> Option<Entity> {
+        let slot = self.slots.get_mut(id.index as usize)?;
+        match slot {
+            Slot::Occupied(e) if e.id == id => {
+                let next = Slot::Free { generation: id.generation.wrapping_add(1), next_free: self.free_head };
+                let Slot::Occupied(entity) = core::mem::replace(slot, next) else { unreachable!() };
+                self.free_head = Some(id.index);
+                Some(entity)
+            }
+            _ => None,
+        }
+    }
+
+    pub fn get(&self, id: EntityId) -> Option<&Entity> {
+        match self.slots.get(id.index as usize)? {
+            Slot::Occupied(e) if e.id == id => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn get_mut(&mut self, id: EntityId) -> Option<&mut Entity> {
+        match self.slots.get_mut(id.index as usize)? {
+            Slot::Occupied(e) if e.id == id => Some(e),
+            _ => None,
+        }
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Entity> {
+        self.slots.iter().filter_map(|s| match s {
+            Slot::Occupied(e) => Some(e),
+            Slot::Free { .. } => None,
+        })
+    }
+
+    /// Ids in index order; snapshot first when the loop body needs `&mut self`.
+    pub fn ids(&self) -> Vec<EntityId> {
+        self.iter().map(|e| e.id).collect()
+    }
+
+    pub fn len(&self) -> usize {
+        self.iter().count()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub(crate) fn slot_count(&self) -> usize {
+        self.slots.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn blank(id: EntityId) -> Entity {
+        Entity {
+            id,
+            def: DefId(0),
+            owner: None,
+            pos: Vec2::ZERO,
+            hp: 1,
+            order: Order::Idle,
+            cargo: 0,
+            construction: None,
+            queue: Vec::new(),
+            resource: 0,
+            on_well: None,
+            home: None,
+            powered: false,
+            income_ticks: 0,
+        }
+    }
+
+    #[test]
+    fn stale_ids_do_not_resolve_after_slot_reuse() {
+        let mut es = Entities::default();
+        let a = es.spawn(blank);
+        let b = es.spawn(blank);
+        assert!(es.despawn(a).is_some());
+        assert!(es.despawn(a).is_none(), "double despawn must be a no-op");
+        let c = es.spawn(blank);
+        assert_eq!(c.index, a.index);
+        assert_ne!(c.generation, a.generation);
+        assert!(es.get(a).is_none());
+        assert!(es.get(c).is_some());
+        assert_eq!(es.ids(), vec![c, b]);
+    }
+}

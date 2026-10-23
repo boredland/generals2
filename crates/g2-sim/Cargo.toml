@@ -1,0 +1,10 @@
+[package]
+name = "g2-sim"
+description = "Deterministic Generals 2 simulation: fixed-point, no IO, no dependencies"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

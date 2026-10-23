@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/g2-sim", "crates/g2-rules", "crates/g2-client", "crates/g2-tools"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+g2-sim = { path = "crates/g2-sim" }
+g2-rules = { path = "crates/g2-rules" }
+# Explicit feature list: the "ui"/"2d"/"3d"/"default_platform" groups pull in Wayland, whose
+# dev headers are not available on the build host. X11 only.
+bevy = { version = "0.20", default-features = false, features = [
+    "default_app",
+    "std",
+    "multi_threaded",
+    "bevy_winit",
+    "x11",
+    "default_font",
+    "3d_bevy_render",
+    "ui_bevy_render",
+    "bevy_state",
+] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

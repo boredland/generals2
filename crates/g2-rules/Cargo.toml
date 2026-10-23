@@ -1,0 +1,13 @@
+[package]
+name = "g2-rules"
+description = "Generals 2 faction, unit and building definitions, and built-in maps"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+g2-sim.workspace = true
+
+[lints]
+workspace = true
