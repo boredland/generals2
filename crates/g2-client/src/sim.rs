@@ -113,10 +113,11 @@ impl Sim {
         std::fs::write(path, self.world.replay(&self.setup).encode())
     }
 
-    /// Rendered ground height at world `(x, z)`: the imported map's terrain, or 0 on the
-    /// built-in map. The sim itself is flat; this only places models and the cursor.
+    /// Rendered height of what units stand on at world `(x, z)`: the imported map's terrain or
+    /// bridge deck, or 0 on the built-in map. The sim itself is flat; this only places models
+    /// and the cursor.
     pub fn ground_y(&self, x: f32, z: f32) -> f32 {
-        self.source.as_ref().map_or(0.0, |m| m.ground_y(x, z))
+        self.source.as_ref().map_or(0.0, |m| m.surface_y(x, z))
     }
 
     /// Sim position → rendered position on the ground.

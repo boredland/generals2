@@ -171,7 +171,7 @@ fn maps() -> Result<(), String> {
                 m.height.to_f32(),
                 m.supply_piles.len(),
                 m.oil_wells.len(),
-                if g2_maps::BRIDGE_ONLY.contains(&e.name.as_str()) { "  starts joined only by bridges" } else { "" }
+                if g2_maps::BRIDGE_ONLY.contains(&e.name.as_str()) { "  starts joined by bridges" } else { "" }
             ),
             Ok(_) => {} // campaign and test maps: no skirmish starts
             Err(err) => println!("{}  (unreadable: {err})", e.name),

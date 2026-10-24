@@ -709,6 +709,7 @@ fn spawn_terrain(
         FogSheet { mesh: sheet, points },
     ));
     if let Some(file) = layout.source {
+        spawn_bridges(&mut commands, &mut meshes, &mut materials, file);
         // Opaque: blended water would be sorted against the blended fog sheet per mesh, and
         // draw over it wherever its centre lies nearer the camera.
         let water = materials.add(StandardMaterial {
@@ -816,6 +817,94 @@ fn spawn_terrain(
                 .with_rotation(Quat::from_rotation_y(hash(k, 2, 1700) * std::f32::consts::TAU))
                 .with_scale(Vec3::new(s * 1.3, s * 0.7, s)),
         ));
+    }
+}
+
+/// Every bridge of an imported map as a concrete deck: a slab along the walkable deck
+/// (`MapFile::bridge_deck_at`, `BRIDGE_DECK_WIDTH` wide), a low parapet on each side and piers
+/// down to the ground. Our own shapes; the original bridge models aren't used.
+fn spawn_bridges(
+    commands: &mut Commands,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+    file: &MapFile,
+) {
+    if file.bridges.is_empty() {
+        return;
+    }
+    let deck = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.46, 0.43, 0.38),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    let rail = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.36, 0.34, 0.30),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
+    let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let per = g2_maps::SAGE_PER_WORLD as f32;
+    let width = g2_maps::BRIDGE_DECK_WIDTH / per;
+    for b in &file.bridges {
+        let a = Vec2::from(file.to_world(b.a.0, b.a.1));
+        let z = Vec2::from(file.to_world(b.b.0, b.b.1));
+        let len = a.distance(z);
+        if len < 1.0 {
+            continue;
+        }
+        let dir = (z - a) / len;
+        // The walkable deck reaches one height cell past each end so it meets the banks.
+        let reach = g2_maps::SAGE_PER_CELL as f32 / per;
+        let (ya, yz) = (file.surface_y(a.x, a.y), file.surface_y(z.x, z.y));
+        let mid = (a + z) / 2.0;
+        let pitch = ((yz - ya) / len).atan();
+        let rot = Quat::from_rotation_y(-dir.y.atan2(dir.x)) * Quat::from_rotation_z(pitch);
+        let thick = 0.8;
+        let centre = Vec3::new(mid.x, (ya + yz) / 2.0 - thick / 2.0, mid.y);
+        commands
+            .spawn((
+                crate::menu::MatchEntity,
+                Transform::from_translation(centre).with_rotation(rot),
+                Visibility::default(),
+            ))
+            .with_children(|c| {
+                c.spawn((
+                    Mesh3d(cube.clone()),
+                    MeshMaterial3d(deck.clone()),
+                    Transform::from_scale(Vec3::new(len + 2.0 * reach, thick, width)),
+                ));
+                for side in [-1.0, 1.0] {
+                    c.spawn((
+                        Mesh3d(cube.clone()),
+                        MeshMaterial3d(rail.clone()),
+                        Transform::from_xyz(0.0, thick / 2.0 + 0.5, side * (width / 2.0 - 0.35)).with_scale(Vec3::new(
+                            len + 2.0 * reach,
+                            1.0,
+                            0.7,
+                        )),
+                    ));
+                }
+            });
+        // Piers every ~12 units, from the deck down to the ground below (bed or bank).
+        let piers = (len / 12.0).floor() as i32;
+        for k in 1..piers {
+            let t = k as f32 / piers as f32;
+            let p = a.lerp(z, t);
+            let top = ya + (yz - ya) * t - thick;
+            let bottom = file.ground_y(p.x, p.y) - 1.0;
+            let h = top - bottom;
+            if h < 0.5 {
+                continue;
+            }
+            commands.spawn((
+                crate::menu::MatchEntity,
+                Mesh3d(cube.clone()),
+                MeshMaterial3d(rail.clone()),
+                Transform::from_translation(Vec3::new(p.x, bottom + h / 2.0, p.y))
+                    .with_rotation(Quat::from_rotation_y(-dir.y.atan2(dir.x)))
+                    .with_scale(Vec3::new(1.6, h, width * 0.8)),
+            ));
+        }
     }
 }
 

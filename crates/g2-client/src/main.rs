@@ -2,7 +2,7 @@
 //!
 //!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--general NAME]
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle] [...]
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [...]
 //!             headless: simulate N ticks, render one frame
 //!
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
@@ -117,7 +117,12 @@ fn parse_args() -> Result<Args, String> {
                     Some("base") => headless::View::Base,
                     Some("map") => headless::View::Map,
                     Some("battle") => headless::View::Battle,
-                    other => return Err(format!("--view expects base|map|battle, got {other:?}")),
+                    Some(v) if let Some((x, z)) = v.strip_prefix("at:").and_then(|p| p.split_once(',')) => {
+                        let n =
+                            |s: &str| s.parse::<f32>().map_err(|_| format!("--view at:X,Z needs numbers, got {v:?}"));
+                        headless::View::At(n(x)?, n(z)?)
+                    }
+                    other => return Err(format!("--view expects base|map|battle|at:X,Z, got {other:?}")),
                 }
             }
             "--size" => {
@@ -270,6 +275,8 @@ mod headless {
         Map,
         /// The in-game camera over the latest shots (the local base if there are none).
         Battle,
+        /// The in-game camera over world position `(x, z)`.
+        At(f32, f32),
     }
 
     pub fn run(mut sim: Sim, ui: crate::menu::Ui, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
@@ -340,6 +347,12 @@ mod headless {
             match view {
                 View::Battle if let Some(f) = fight => RtsCamera {
                     pivot: Vec3::new(f.x, sim.ground_y(f.x, f.y), f.y),
+                    distance: crate::camera::DEFAULT_DISTANCE,
+                    yaw: crate::look::YAW,
+                    pitch: crate::look::PITCH,
+                },
+                View::At(x, z) => RtsCamera {
+                    pivot: Vec3::new(x, sim.ground_y(x, z), z),
                     distance: crate::camera::DEFAULT_DISTANCE,
                     yaw: crate::look::YAW,
                     pitch: crate::look::PITCH,

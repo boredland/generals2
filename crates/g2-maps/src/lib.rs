@@ -74,6 +74,8 @@ pub struct MapFile {
     pub water: Vec<Water>,
     pub world: Props,
     pub objects: Vec<MapObject>,
+    /// Bridges, from `objects` (see `read_bridges`), in SAGE units.
+    pub bridges: Vec<Road>,
 }
 
 /// A named terrain texture (e.g. `GrassMediumType3`) covering a range of tile indices.
@@ -102,6 +104,12 @@ pub struct Road {
 
 /// SAGE units per raw height step (`MAP_HEIGHT_SCALE`).
 pub const SAGE_PER_HEIGHT_STEP: f32 = 10.0 / 16.0;
+
+/// Walkable deck width of every bridge, in SAGE units. The engine takes it from each bridge
+/// model's extent (`W3DBridge::getBridgeInfo`), and those models aren't in any vendored
+/// source; 60 is the retail `FourLane`/`TwoLaneOld` road width (`Roads.ini`), so a bridge is
+/// as wide as the roads leading onto it.
+pub const BRIDGE_DECK_WIDTH: f32 = 60.0;
 
 #[derive(Debug)]
 pub enum Error {
@@ -160,6 +168,7 @@ pub fn load(bytes: &[u8]) -> Result<MapFile, Error> {
         water: Vec::new(),
         world: Props::new(),
         objects: Vec::new(),
+        bridges: Vec::new(),
     };
     while !c.at_end() {
         let (name, version, payload) = read_chunk(&mut c, &toc)?;
@@ -181,6 +190,7 @@ pub fn load(bytes: &[u8]) -> Result<MapFile, Error> {
         map.cliffs = map.cliffs_from_heights();
     }
     map.base_height = map.most_common_height();
+    map.bridges = map.read_bridges();
     Ok(map)
 }
 
@@ -208,6 +218,16 @@ impl MapFile {
     pub fn ground_y(&self, x: f32, z: f32) -> f32 {
         let (sx, sy) = self.to_sage(x, z);
         (self.height_at(sx, sy) - self.base_height) / SAGE_PER_WORLD as f32
+    }
+
+    /// Height in world units of what units stand on at world `(x, z)`: a bridge deck where one
+    /// crosses, else the terrain (`ground_y`).
+    pub fn surface_y(&self, x: f32, z: f32) -> f32 {
+        let (sx, sy) = self.to_sage(x, z);
+        match self.bridge_deck_at(sx, sy) {
+            Some(deck) => (deck - self.base_height) / SAGE_PER_WORLD as f32,
+            None => self.ground_y(x, z),
+        }
     }
 
     fn most_common_height(&self) -> f32 {
@@ -316,6 +336,8 @@ impl MapFile {
     /// (`Pathfinder::classifyMapCell`). The engine's pathfind cell is one height cell and reads
     /// the cliff bit at a single point; ours is 12 SAGE units wide, so it reads one point too
     /// (the centre) rather than every height cell it overlaps, which would widen cliff lines.
+    /// A cell whose centre is on a bridge deck is open: the engine paths bridges on their own
+    /// layer above the water, and the sim has one layer, so the deck replaces what is below.
     fn impassable_nav_cells(&self, width: Fx, height: Fx) -> Vec<bool> {
         let (nw, nh) = g2_sim::nav::Grid::dims(width, height);
         let per = SAGE_PER_WORLD as f32;
@@ -333,6 +355,9 @@ impl MapFile {
                 let (cx, cy) = (c.x.to_f32() * per, (world_h - c.y.to_f32()) * per);
                 let (x0, x1) = (cx - half * per, cx + half * per);
                 let (y0, y1) = (cy - half * per, cy + half * per);
+                if self.bridge_deck_at(cx, cy).is_some() {
+                    return false;
+                }
                 let cliff = self.cliffs[hcell(cy, self.grid_h) * w + hcell(cx, self.grid_w)];
                 cliff || [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].iter().any(|&(x, y)| underwater(x, y))
             })
@@ -485,20 +510,49 @@ impl MapFile {
 
     /// Road segments: consecutive objects flagged as a road's first and second point.
     pub fn roads(&self) -> Vec<Road> {
-        const POINT1: i32 = 0x2;
-        const POINT2: i32 = 0x4;
+        self.segments(0x2, 0x4)
+    }
+
+    /// Bridges: consecutive objects flagged as a bridge's first and second point
+    /// (`FLAG_BRIDGE_POINT1`/`2`). `name` is the bridge type (`EuropeanBridge`, ...).
+    fn read_bridges(&self) -> Vec<Road> {
+        self.segments(0x10, 0x20)
+    }
+
+    fn segments(&self, first: i32, second: i32) -> Vec<Road> {
         let mut out = Vec::new();
         let mut it = self.objects.iter().peekable();
         while let Some(o) = it.next() {
-            if o.flags & POINT1 == 0 {
+            if o.flags & first == 0 {
                 continue;
             }
-            if let Some(b) = it.next_if(|b| b.flags & POINT2 != 0) {
+            if let Some(b) = it.next_if(|b| b.flags & second != 0) {
                 let short = |n: &str| n.rsplit('/').next().unwrap_or(n).to_owned();
                 out.push(Road { name: short(&o.name), a: (o.x, o.y), b: (b.x, b.y) });
             }
         }
         out
+    }
+
+    /// Deck height in SAGE units where `(x, y)` lies on a bridge, else `None`. As in the engine
+    /// (`W3DBridgeBuffer::loadBridges`), the deck runs straight from the ground at one end to
+    /// the ground at the other, raised by `BRIDGE_FLOAT_AMT`, and reaches one pathfind cell
+    /// past each end so it meets the banks.
+    pub fn bridge_deck_at(&self, x: f32, y: f32) -> Option<f32> {
+        const FLOAT: f32 = 0.25;
+        let reach = SAGE_PER_CELL as f32;
+        self.bridges.iter().find_map(|b| {
+            let (dx, dy) = (b.b.0 - b.a.0, b.b.1 - b.a.1);
+            let len = (dx * dx + dy * dy).sqrt().max(1.0);
+            let along = ((x - b.a.0) * dx + (y - b.a.1) * dy) / len;
+            let across = ((x - b.a.0) * dy - (y - b.a.1) * dx).abs() / len;
+            if across > BRIDGE_DECK_WIDTH / 2.0 || along < -reach || along > len + reach {
+                return None;
+            }
+            let t = (along / len).clamp(0.0, 1.0);
+            let (ha, hb) = (self.height_at(b.a.0, b.a.1), self.height_at(b.b.0, b.b.1));
+            Some(ha + (hb - ha) * t + FLOAT)
+        })
     }
 
     fn read_objects(&mut self, c: &mut Cursor, toc: &BTreeMap<u32, String>) -> Result<(), Error> {
@@ -822,9 +876,9 @@ pub fn resolve(name: &str) -> Result<MapDef, String> {
     }
 }
 
-/// Skirmish maps whose starts are connected only by bridges, which the sim can't cross yet
-/// (README, "Not yet"). Every start on them still reaches its own supply; a terrain test checks
-/// this list against the maps.
+/// Skirmish maps whose starts are joined only by bridges: without the decks (`bridge_deck_at`)
+/// water cuts them apart. A terrain test checks this list against the maps, so a bridge that
+/// stops connecting shows up as a failure rather than a silently split map.
 pub const BRIDGE_ONLY: [&str; 5] =
     ["gen:Final Crusade", "gen:Heartland Shield", "zh:FloodedPlains", "zh:Heartland Shield", "zh:Winding River"];
 
@@ -836,14 +890,11 @@ pub struct SkirmishMap {
 }
 
 /// Every playable skirmish map: the built-in Crater Ridge, then each official map under `root`
-/// with at least two starts that can reach each other (not `BRIDGE_ONLY`). Unreadable files
-/// are skipped.
+/// with at least two starts. Every start reaches every other (bridges included); a terrain test
+/// checks it. Unreadable files are skipped.
 pub fn skirmish_maps(root: &std::path::Path) -> Vec<SkirmishMap> {
     let mut out = vec![SkirmishMap { name: "Crater Ridge".to_owned(), starts: 2 }];
     for e in catalogue(root) {
-        if BRIDGE_ONLY.contains(&e.name.as_str()) {
-            continue;
-        }
         let Ok(bytes) = std::fs::read(&e.path) else { continue };
         let Ok(map) = load(&bytes) else { continue };
         let starts = map.to_map_def(&e.name).spawns.len();
@@ -883,7 +934,7 @@ mod tests {
             }
             playable += usize::from(def.spawns.len() >= 2);
             if def.spawns.len() >= 2 {
-                assert_skirmish_terrain(&e.name, &def);
+                assert_skirmish_terrain(&e.name, &map);
             }
         }
         // Skirmish maps; the rest are campaign and test maps without player starts.
@@ -891,26 +942,34 @@ mod tests {
     }
 
     /// Cliffs and water must leave a skirmish map playable: every start is on free ground,
-    /// can walk to a supply source and to every other start (except on `BRIDGE_ONLY` maps).
+    /// can walk to a supply source and to every other start. On `BRIDGE_ONLY` maps the starts
+    /// are joined only through the bridge decks: the same map with its bridges removed is split.
     /// Coverage varies a lot (Dark Mountain is a plateau in a lake), so it isn't bounded.
-    fn assert_skirmish_terrain(name: &str, def: &MapDef) {
-        let grid = g2_sim::nav::Grid::new(def.width, def.height, &[], &def.terrain);
-        assert!(def.terrain.iter().any(|&b| b), "{name}: no cliffs or water at all");
-        let reaches = |from: Vec2, to: Vec2, near: Fx| {
-            grid.find(from, to, |c| c.distance(to) <= near).unwrap().last().unwrap().distance(to) <= near
+    fn assert_skirmish_terrain(name: &str, file: &MapFile) {
+        let split = |file: &MapFile| {
+            let def = file.to_map_def(name);
+            let grid = g2_sim::nav::Grid::new(def.width, def.height, &[], &def.terrain);
+            let reaches = |from: Vec2, to: Vec2, near: Fx| {
+                grid.find(from, to, |c| c.distance(to) <= near).unwrap().last().unwrap().distance(to) <= near
+            };
+            for &s in &def.spawns {
+                let c = grid.cell(s);
+                assert!(!grid.blocked(c.0, c.1), "{name}: start {s:?} is on a cliff or in water");
+                let supply = def.supply_piles.iter().any(|&(p, _)| reaches(s, p, Fx::from_int(8)));
+                assert!(supply, "{name}: start {s:?} cannot reach any supply");
+            }
+            def.spawns
+                .iter()
+                .enumerate()
+                .any(|(i, &a)| def.spawns[i + 1..].iter().any(|&b| !reaches(a, b, Fx::from_int(12))))
         };
-        for &s in &def.spawns {
-            let c = grid.cell(s);
-            assert!(!grid.blocked(c.0, c.1), "{name}: start {s:?} is on a cliff or in water");
-            let supply = def.supply_piles.iter().any(|&(p, _)| reaches(s, p, Fx::from_int(8)));
-            assert!(supply, "{name}: start {s:?} cannot reach any supply");
+        assert!(file.to_map_def(name).terrain.iter().any(|&b| b), "{name}: no cliffs or water at all");
+        assert!(!split(file), "{name}: starts cut off from each other");
+        if BRIDGE_ONLY.contains(&name) {
+            let mut unbridged = load_file_named(&vendored_root(), name).unwrap();
+            unbridged.bridges.clear();
+            assert!(split(&unbridged), "{name}: starts joined without bridges; drop it from BRIDGE_ONLY");
         }
-        let split = def
-            .spawns
-            .iter()
-            .enumerate()
-            .any(|(i, &a)| def.spawns[i + 1..].iter().any(|&b| !reaches(a, b, Fx::from_int(12))));
-        assert_eq!(split, BRIDGE_ONLY.contains(&name), "{name}: starts cut off from each other: {split}");
     }
 
     #[test]
@@ -940,6 +999,39 @@ mod tests {
         // Woodcrest Circle is stored as ZL5 (zlib) rather than RefPack.
         let map = load_official("Generals", "Woodcrest Circle", "Woodcrest Circle.map");
         assert_eq!(map.heights.len() as u32, map.grid_w * map.grid_h);
+    }
+
+    /// Bridge decks: Winding River's four bridges are read from the object list; a point on a
+    /// deck stands above the river's surface, the deck stops at its width and its end reach,
+    /// and the nav cell under the middle of each deck is open though water lies below it.
+    #[test]
+    fn bridge_decks_span_the_water() {
+        let map = load_official("Zero Hour", "Winding River", "Winding River.map");
+        assert_eq!(map.bridges.len(), 4);
+        assert!(map.bridges.iter().all(|b| b.name == "KandaharBridge"));
+        let def = map.to_map_def("zh:Winding River");
+        let (nw, _) = g2_sim::nav::Grid::dims(def.width, def.height);
+        for b in &map.bridges {
+            let (dx, dy) = (b.b.0 - b.a.0, b.b.1 - b.a.1);
+            let len = (dx * dx + dy * dy).sqrt();
+            let (ux, uy) = (dx / len, dy / len);
+            let mid = ((b.a.0 + b.b.0) / 2.0, (b.a.1 + b.b.1) / 2.0);
+            let deck = map.bridge_deck_at(mid.0, mid.1).expect("deck at the middle");
+            let water =
+                map.water.iter().find(|w| in_polygon(&w.outline, mid.0, mid.1)).expect("river under the middle");
+            assert!(deck > water.z, "deck {deck} under the water surface {}", water.z);
+            // Across: inside half the deck width, and just past it.
+            let side = |d: f32| map.bridge_deck_at(mid.0 - uy * d, mid.1 + ux * d);
+            assert!(side(BRIDGE_DECK_WIDTH / 2.0 - 1.0).is_some());
+            assert!(side(BRIDGE_DECK_WIDTH / 2.0 + 1.0).is_none());
+            // Along: one height cell past each end, not two.
+            let past = |d: f32| map.bridge_deck_at(b.b.0 + ux * d, b.b.1 + uy * d);
+            assert!(past(SAGE_PER_CELL as f32 - 1.0).is_some());
+            assert!(past(2.0 * SAGE_PER_CELL as f32).is_none());
+            let (x, z) = map.to_world(mid.0, mid.1);
+            let (cx, cy) = ((x / g2_sim::nav::CELL as f32) as usize, (z / g2_sim::nav::CELL as f32) as usize);
+            assert!(!def.terrain[cy * nw + cx], "nav cell on the deck at {:?} is blocked", (x, z));
+        }
     }
 
     /// A match on an imported map is deterministic and its replay re-resolves the map by name.
