@@ -587,4 +587,45 @@ mod tests {
         app.insert_resource(fresh());
         assert_eq!(clicks_for(&mut app, 1), 1, "the new match's first order");
     }
+
+    /// Through the menu: each choice clicks once (Surrender too, though it is also an order),
+    /// and a match's cues still queued when the next match starts are dropped, not heard over it.
+    #[test]
+    fn menu_choices_click_once_and_a_new_match_starts_quiet() {
+        use crate::menu::{Act, MenuPlugin, Pending};
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+            .insert_resource(Sim::new(crater_ridge(), None, 3, Sim::players([Faction::Eu, Faction::Gla], false)))
+            .init_resource::<crate::input::Selection>()
+            .init_resource::<crate::input::Placement>()
+            .init_resource::<crate::view::Mirror>()
+            .init_resource::<ButtonInput<MouseButton>>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins((crate::sim::SimPlugin, MenuPlugin { blocking: true }, SoundPlugin));
+        // Two frames per choice: the sound runs before the menu applies it, so an order the
+        // choice gives is heard on the next frame.
+        let act = |app: &mut App, a: Act| {
+            app.world_mut().resource_mut::<Pending>().0.push(a);
+            let mut n = 0;
+            for _ in 0..2 {
+                app.update();
+                let mut q = app.world_mut().query_filtered::<Entity, With<AudioPlayer<Sound>>>();
+                let ids: Vec<Entity> = q.iter(app.world()).collect();
+                ids.iter().for_each(|&e| {
+                    app.world_mut().despawn(e);
+                });
+                n += ids.len();
+            }
+            n
+        };
+        act(&mut app, Act::Start);
+        assert_eq!(act(&mut app, Act::Pause), 1, "pause");
+        assert_eq!(act(&mut app, Act::Surrender), 1, "surrender: one click, not two");
+        // A blast of the old match still queued (gathered by a fixed step after this frame's
+        // sound ran) when the next match is swapped in: the new match must not hear it.
+        app.world_mut().resource_mut::<crate::sim::Heard>().0.push((Cue::Blast, None));
+        let fresh = Sim::new(crater_ridge(), None, 4, Sim::players([Faction::Eu, Faction::Gla], false));
+        crate::menu::swap_world(app.world_mut(), fresh);
+        assert!(app.world().resource::<crate::sim::Heard>().0.is_empty(), "the swap dropped the old match's cues");
+    }
 }

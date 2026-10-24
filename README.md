@@ -146,7 +146,7 @@ chmod +x Generals2-x86_64.AppImage
 ./Generals2-x86_64.AppImage --map "zh:Tournament Desert"
 ```
 
-Requirements: x86-64 Linux with glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, Fedora 36+), an X11 session or XWayland, and a GPU with a Vulkan driver (Mesa or the vendor's). Nothing else is bundled: X11, Vulkan and the driver come from the host. Without FUSE, run it with `--appimage-extract-and-run`. Imported maps are found in the AppImage; `G2_MAPS_DIR` still overrides them.
+Requirements: x86-64 Linux with glibc 2.35 or newer (Ubuntu 22.04+, Debian 12+, Fedora 36+), an X11 session or XWayland, a GPU with a Vulkan driver (Mesa or the vendor's) and ALSA's `libasound.so.2` (installed on every desktop; sound goes through PipeWire or PulseAudio's ALSA plugin, and the game runs silently without a sound device). Nothing else is bundled: X11, Vulkan, ALSA and the driver come from the host. Without FUSE, run it with `--appimage-extract-and-run`. Imported maps are found in the AppImage; `G2_MAPS_DIR` still overrides them.
 
 Verified on the build host: the AppImage renders headless (`--screenshot`) on the built-in map and on `zh:Tournament Desert` and `gen:Alpine Assault`, with the source tree's own Zero Hour maps moved out of the way so only the bundled copy could be read. It has not been run on another machine or in a window.
 

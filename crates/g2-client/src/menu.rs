@@ -349,7 +349,10 @@ fn apply_one(world: &mut World, act: Act) {
             Act::Surrender => {
                 world.resource_mut::<Ui>().paused = false;
                 world.resource_mut::<Sim>().speed = 1;
-                world.resource_mut::<Sim>().order(CommandKind::Surrender);
+                let mut sim = world.resource_mut::<Sim>();
+                sim.order(CommandKind::Surrender);
+                // The button already clicked as a menu choice; the order is the same action.
+                sim.unheard_orders = sim.unheard_orders.saturating_sub(1);
             }
             Act::MapPage(d) => {
                 let pages = map_list(world).map_or(1, |m| m.len().div_ceil(MAPS_PER_PAGE).max(1));
@@ -419,13 +422,14 @@ fn apply_one(world: &mut World, act: Act) {
 
 /// Swaps in a fresh match: the old scene goes, the new world arrives, and the epoch bump
 /// respawns everything from it this same frame (scene systems run after `MenuSet`).
-fn swap_world(world: &mut World, sim: Sim) {
+pub(crate) fn swap_world(world: &mut World, sim: Sim) {
     world.despawn_all::<With<MatchEntity>>();
     world.insert_resource(sim);
     world.insert_resource(crate::view::Mirror::default());
     world.insert_resource(crate::sim::Previous::default());
     world.insert_resource(crate::sim::Hits::default());
     world.insert_resource(crate::sim::Deliveries::default());
+    world.insert_resource(crate::sim::Heard::default());
     world.insert_resource(crate::input::Selection::default());
     world.insert_resource(crate::input::Placement::default());
     world.resource_mut::<MatchEpoch>().0 += 1;
