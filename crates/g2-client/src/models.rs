@@ -1,11 +1,17 @@
-//! Procedural models (docs/STYLE.md): chunky buildings with busy roofs, EU grey/white panels with
-//! hazard-striped edges, APA dark steel with red accents, GLA scrap walls and crate yards. Units are
-//! small; constructors are yellow-black; the EU collector is a ducted-fan lifter. Every shape is
-//! original and built from primitives.
+//! Procedural models (docs/STYLE.md): chunky buildings with busy roofs and layered walls,
+//! EU grey/white panels with hazard-striped edges, APA dark steel with red accents, GLA scrap
+//! walls, sandbags and crate yards. Units are small; constructors are yellow-black; the EU
+//! collector is a ducted-fan lifter. Every shape is original and built from primitives.
 //!
 //! A model is a list of parts. Each part is a primitive, a material slot and a local transform
 //! relative to the entity's ground footprint (origin on the ground, Y up). The sim radius sets the
 //! scale, so the footprint matches what the sim collides with.
+//!
+//! The camera looks down at about 57 degrees, so roofs and the front wall carry the silhouette:
+//! railings, catwalks, pipe runs, ribs and greebles. Every part is its own entity, so the helpers
+//! stay coarse and the tests cap the counts (120 per building, 30 per unit).
+
+use std::f32::consts::{FRAC_PI_2, TAU};
 
 use bevy::prelude::*;
 use g2_sim::{BuildingRole, Class, Def, Faction};
@@ -80,42 +86,216 @@ fn h(n: u32) -> f32 {
     (x & 0xffff) as f32 / 65535.0
 }
 
-/// Yellow/black chevron trim along the four top edges of a `w × d` roof at height `y`.
+// ---- Detail helpers ----------------------------------------------------------------------
+// The camera sees roofs and the front wall, so every building gets its silhouette from these.
+
+/// Yellow/black chevron edging along the four top edges of a `w × d` roof at height `y`.
+/// Segments are coarse: at game zoom a striped band reads the same and costs a quarter of the
+/// parts that fine chevrons would.
 fn hazard_trim(parts: &mut Vec<Part>, w: f32, d: f32, y: f32) {
-    let t = 0.5;
-    let n = ((w + d) / 1.6) as i32;
+    hazard_trim_at(parts, 0.0, 0.0, w, d, y);
+}
+
+/// `hazard_trim` around a roof patch centred at `(x, z)`, e.g. a landing pad.
+fn hazard_trim_at(parts: &mut Vec<Part>, x: f32, z: f32, w: f32, d: f32, y: f32) {
+    let t = 0.42;
+    let per = 2.0 * (w + d);
+    let n = (per / 3.2) as i32;
+    let seg = per / n as f32 * 1.15;
     for i in 0..n {
         let slot = if i % 2 == 0 { Slot::Hazard } else { Slot::Dark };
-        let f = (i as f32 + 0.5) / n as f32;
-        let (seg_w, seg_d) = (w / n as f32 * 2.0, d / n as f32 * 2.0);
-        parts.push(bx(slot, Vec3::new(-w / 2.0 + f * w, y, -d / 2.0), Vec3::new(seg_w * 0.5, t, t)));
-        parts.push(bx(slot, Vec3::new(-w / 2.0 + f * w, y, d / 2.0), Vec3::new(seg_w * 0.5, t, t)));
-        parts.push(bx(slot, Vec3::new(-w / 2.0, y, -d / 2.0 + f * d), Vec3::new(t, t, seg_d * 0.5)));
-        parts.push(bx(slot, Vec3::new(w / 2.0, y, -d / 2.0 + f * d), Vec3::new(t, t, seg_d * 0.5)));
+        // Walk the perimeter from the front-left corner, front edge first.
+        let s = (i as f32 + 0.5) * per / n as f32;
+        let (px, pz, yaw) = if s < w {
+            (x - w / 2.0 + s, z + d / 2.0, 0.0)
+        } else if s < w + d {
+            (x + w / 2.0, z + d / 2.0 - (s - w), FRAC_PI_2)
+        } else if s < 2.0 * w + d {
+            (x + w / 2.0 - (s - w - d), z - d / 2.0, 0.0)
+        } else {
+            (x - w / 2.0, z - d / 2.0 + (s - 2.0 * w - d), FRAC_PI_2)
+        };
+        let mut p = bx(slot, Vec3::new(px, y, pz), Vec3::new(seg, t, t));
+        p.yaw = yaw;
+        parts.push(p);
     }
 }
 
-/// Roof clutter: vents, AC boxes, pipes, an antenna. `seed` varies the layout per building type.
-fn greebles(parts: &mut Vec<Part>, w: f32, d: f32, y: f32, seed: u32, count: u32) {
-    for k in 0..count {
-        let (u, v) = (h(seed + k * 7) - 0.5, h(seed + k * 7 + 1) - 0.5);
-        let (x, z) = (u * w * 0.75, v * d * 0.75);
-        let s = 0.8 + h(seed + k * 7 + 2) * 1.8;
-        match k % 4 {
-            0 => parts.push(block(Slot::Dark, x, z, y, s * 1.4, s * 0.6, s)),
-            1 => parts.push(cyl(Slot::Panel, Vec3::new(x, y + s * 0.35, z), Vec3::new(s, s * 0.7, s))),
-            2 => parts.push(block(Slot::Panel, x, z, y, s * 0.9, s * 0.9, s * 0.9)),
-            _ => parts.push(block(Slot::Dark, x, z, y, s * 2.4, 0.35, 0.35)),
+/// Railing along the roof edges of a `w × d` patch centred on the origin: posts plus a top rail.
+/// `sides` picks the edges: 1 front, 2 right, 4 back, 8 left.
+fn roof_rail(parts: &mut Vec<Part>, w: f32, d: f32, y: f32, h: f32, sides: u8) {
+    let t = 0.15;
+    let edges = [(true, w, d / 2.0), (false, d, w / 2.0), (true, w, -d / 2.0), (false, d, -w / 2.0)];
+    for (i, &(along_x, len, off)) in edges.iter().enumerate() {
+        if sides & (1u8 << i) == 0 {
+            continue;
+        }
+        parts.push(if along_x {
+            bx(Slot::Dark, Vec3::new(0.0, y + h, off), Vec3::new(len, t, t))
+        } else {
+            bx(Slot::Dark, Vec3::new(off, y + h, 0.0), Vec3::new(t, t, len))
+        });
+        let n = (len / 4.2).max(1.0) as i32;
+        for k in 0..=n {
+            let s = -len / 2.0 + len * k as f32 / n as f32;
+            let (px, pz) = if along_x { (s, off) } else { (off, s) };
+            parts.push(block(Slot::Dark, px, pz, y, t, h, t));
         }
     }
-    let (ax, az) = ((h(seed + 99) - 0.5) * w * 0.6, (h(seed + 98) - 0.5) * d * 0.6);
-    parts.push(cyl(Slot::Dark, Vec3::new(ax, y + 2.5, az), Vec3::new(0.18, 5.0, 0.18)));
-    parts.push(cyl(Slot::Team, Vec3::new(ax, y + 5.1, az), Vec3::new(0.45, 0.3, 0.45)));
+}
+
+/// A catwalk over a roof edge or between blocks: deck, legs and an outer rail.
+fn catwalk(parts: &mut Vec<Part>, x: f32, z: f32, len: f32, y: f32, along_x: bool) {
+    parts.push(if along_x {
+        bx(Slot::Panel, Vec3::new(x, y, z), Vec3::new(len, 0.18, 1.4))
+    } else {
+        bx(Slot::Panel, Vec3::new(x, y, z), Vec3::new(1.4, 0.18, len))
+    });
+    for k in 0..2 {
+        let s = (k as f32 - 0.5) * len * 0.75;
+        let (px, pz) = if along_x { (x + s, z) } else { (x, z + s) };
+        parts.push(block(Slot::Dark, px, pz, y - 1.1, 0.3, 1.1, 0.3));
+    }
+    let (rx, rz) = if along_x { (x, z + 0.65) } else { (x + 0.65, z) };
+    parts.push(if along_x {
+        bx(Slot::Dark, Vec3::new(rx, y + 0.75, rz), Vec3::new(len, 0.16, 0.16))
+    } else {
+        bx(Slot::Dark, Vec3::new(rx, y + 0.75, rz), Vec3::new(0.16, 0.16, len))
+    });
+}
+
+/// A pipe run along a wall or roof: the pipe, its brackets and a riser at the start. The pipe is
+/// a box, since cylinders only stand upright.
+fn pipe_run(parts: &mut Vec<Part>, x: f32, z: f32, len: f32, y: f32, along_x: bool) {
+    let t = 0.34;
+    parts.push(if along_x {
+        bx(Slot::Panel, Vec3::new(x, y, z), Vec3::new(len, t, t))
+    } else {
+        bx(Slot::Panel, Vec3::new(x, y, z), Vec3::new(t, t, len))
+    });
+    for k in 0..2 {
+        let s = (k as f32 - 0.5) * len * 0.8;
+        let (px, pz) = if along_x { (x + s, z) } else { (x, z + s) };
+        parts.push(block(Slot::Dark, px, pz, y - 0.45, 0.5, 0.22, 0.5));
+    }
+    let (rx, rz) = if along_x { (x - len / 2.0, z) } else { (x, z - len / 2.0) };
+    parts.push(cyl(Slot::Panel, Vec3::new(rx, y / 2.0, rz), Vec3::new(t, y, t)));
+}
+
+/// Thin ribs standing proud of a wall face: the panel seams of painted metal siding. The face is
+/// centred at `(x, z)` and spans `span` along `along_x`, from `y0` up to `y1`.
+#[allow(clippy::too_many_arguments)]
+fn wall_ribs(parts: &mut Vec<Part>, x: f32, z: f32, y0: f32, y1: f32, span: f32, n: u32, along_x: bool) {
+    for k in 0..n {
+        let s = -span / 2.0 + (k as f32 + 0.5) * span / n as f32;
+        let (px, pz) = if along_x { (x + s, z) } else { (x, z + s) };
+        let (w, d) = if along_x { (0.35, 0.18) } else { (0.18, 0.35) };
+        parts.push(block(Slot::Panel, px, pz, y0, w, y1 - y0, d));
+    }
+}
+
+/// Horizontal panel seams across a wall face: thin dark strips that break up big flat walls the
+/// way the alpha's panelled siding does.
+fn wall_seams(parts: &mut Vec<Part>, x: f32, z: f32, y0: f32, span: f32, n: u32, along_x: bool) {
+    for k in 1..=n {
+        let (w, d) = if along_x { (span, 0.16) } else { (0.16, span) };
+        parts.push(bx(Slot::Dark, Vec3::new(x, y0 + k as f32, z), Vec3::new(w, 0.18, d)));
+    }
+}
+
+/// Vertical corner trim on a `w × d` hall: the painted edge strips that give the alpha's
+/// buildings a bright outline against their darker walls.
+#[allow(clippy::too_many_arguments)]
+fn corner_trim(parts: &mut Vec<Part>, x: f32, z: f32, w: f32, d: f32, y0: f32, h: f32, slot: Slot) {
+    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        parts.push(block(slot, x + sx * w / 2.0, z + sz * d / 2.0, y0, 0.5, h, 0.5));
+    }
+}
+
+/// A stepped roof tier: the block plus a trim lip along its front edge. Returns the new top `y`,
+/// so callers can stack tiers.
+#[allow(clippy::too_many_arguments)]
+fn tier(parts: &mut Vec<Part>, x: f32, z: f32, y0: f32, w: f32, d: f32, h: f32, slot: Slot) -> f32 {
+    parts.push(block(slot, x, z, y0, w, h, d));
+    parts.push(bx(Slot::Dark, Vec3::new(x, y0 + h * 0.2, z + d / 2.0 + 0.06), Vec3::new(w, 0.22, 0.12)));
+    y0 + h
+}
+
+/// Antenna mast: pole, crossbar and a warning light on top.
+fn mast(parts: &mut Vec<Part>, x: f32, z: f32, y: f32) {
+    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 1.3, z), Vec3::new(0.22, 2.6, 0.22)));
+    parts.push(bx(Slot::Dark, Vec3::new(x, y + 1.9, z), Vec3::new(1.6, 0.14, 0.14)));
+    parts.push(part(Prim::Sphere, Slot::Team, Vec3::new(x, y + 2.7, z), Vec3::splat(0.34)));
+}
+
+/// A small radar dish on a pedestal, yawed so it is not a flat disc from above.
+fn dish(parts: &mut Vec<Part>, x: f32, z: f32, y: f32) {
+    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 0.45, z), Vec3::new(0.55, 0.9, 0.55)));
+    let mut bowl = cyl(Slot::Panel, Vec3::new(x, y + 1.5, z), Vec3::new(2.2, 0.35, 2.2));
+    bowl.yaw = 0.6;
+    parts.push(bowl);
+    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 1.95, z), Vec3::new(0.3, 0.7, 0.3)));
+}
+
+/// Roof clutter centred at `(x, z)`: louvered vents, AC units with fan discs, pipe clusters and
+/// small tanks. `seed` varies the layout per building type; every item is two parts or fewer.
+#[allow(clippy::too_many_arguments)]
+fn greebles(parts: &mut Vec<Part>, x: f32, z: f32, w: f32, d: f32, y: f32, seed: u32, count: u32) {
+    for k in 0..count {
+        let (u, v) = (h(seed + k * 7) - 0.5, h(seed + k * 7 + 1) - 0.5);
+        let (x, z) = (x + u * w * 0.75, z + v * d * 0.75);
+        let s = 1.0 + h(seed + k * 7 + 2) * 1.7;
+        match k % 4 {
+            0 => {
+                parts.push(block(Slot::Dark, x, z, y, s * 1.5, s * 0.8, s * 1.1));
+                parts.push(bx(Slot::Panel, Vec3::new(x, y + s * 0.45, z), Vec3::new(s * 1.3, 0.16, s * 0.9)));
+            }
+            1 => {
+                parts.push(block(Slot::Panel, x, z, y, s * 1.6, s * 0.7, s * 1.3));
+                parts.push(cyl(Slot::Dark, Vec3::new(x, y + s * 0.72, z), Vec3::new(s, 0.12, s)));
+            }
+            2 => {
+                parts.push(bx(Slot::Panel, Vec3::new(x, y + s * 0.5, z), Vec3::new(s * 2.2, s * 0.35, s * 0.35)));
+                parts.push(block(Slot::Dark, x, z, y, s * 0.5, s * 0.5, s * 0.5));
+            }
+            _ => {
+                parts.push(cyl(Slot::Panel, Vec3::new(x, y + s * 0.75, z), Vec3::new(s * 1.1, s * 1.3, s * 1.1)));
+                parts.push(cyl(Slot::Dark, Vec3::new(x, y + s * 1.45, z), Vec3::new(s * 1.15, 0.14, s * 1.15)));
+            }
+        }
+    }
+}
+
+/// A sandbag wall along a line: alternating bags, each nudged so the row is not a rail.
+fn sandbags(parts: &mut Vec<Part>, x0: f32, z0: f32, x1: f32, z1: f32, y: f32, n: u32) {
+    for k in 0..n {
+        let t = (k as f32 + 0.5) / n as f32;
+        let mut bag = block(Slot::Crate(2), x0 + (x1 - x0) * t, z0 + (z1 - z0) * t, y, 1.15, 0.55, 0.8);
+        bag.yaw = if k % 2 == 0 { 0.14 } else { -0.14 };
+        parts.push(bag);
+    }
+}
+
+/// Leaning scrap sheets against a GLA wall: mismatched panels in mixed colours.
+fn scrap(parts: &mut Vec<Part>, x: f32, z: f32, y: f32, w: f32, d: f32, seed: u32) {
+    for k in 0..4 {
+        let mut sheet = block(
+            Slot::Crate((k % 5) as u8),
+            x + (h(seed + k + 9) - 0.5) * w,
+            z + (h(seed + k + 17) - 0.5) * d,
+            y,
+            2.3 + h(seed + k + 3) * 1.5,
+            0.22,
+            1.9,
+        );
+        sheet.yaw = k as f32 * 1.6 + (h(seed + k) - 0.5) * 0.8;
+        parts.push(sheet);
+    }
 }
 
 /// A field of stacked crates and barrels, the GLA look (and supply piles).
 fn crate_yard(parts: &mut Vec<Part>, w: f32, d: f32, y: f32, seed: u32, rows: i32) {
-    let cell = 2.1;
+    let cell = 2.4;
     let (nx, nz) = ((w / cell) as i32, (d / cell) as i32);
     for i in 0..nx {
         for j in 0..nz {
@@ -142,133 +322,300 @@ fn crate_yard(parts: &mut Vec<Part>, w: f32, d: f32, y: f32, seed: u32, rows: i3
     }
 }
 
+// ---- Buildings ---------------------------------------------------------------------------
+
 pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
     let mut p = Vec::new();
     let w = r * 1.75;
     match (faction, role) {
         (_, BuildingRole::OilDerrick { .. }) => derrick(&mut p, faction, r),
-        (Faction::Gla, BuildingRole::SupplyCenter { .. }) => {
-            // The GLA stash: a crate yard on a wooden platform with a lookout post.
-            p.push(block(Slot::Wood, 0.0, 0.0, 0.0, w * 1.05, 0.7, w * 1.05));
-            crate_yard(&mut p, w * 0.95, w * 0.95, 0.7, 41, 3);
-            p.push(cyl(Slot::Dark, Vec3::new(w * 0.42, 4.0, -w * 0.42), Vec3::new(0.4, 8.0, 0.4)));
-            p.push(block(Slot::Team, w * 0.42, -w * 0.42, 7.8, 2.6, 0.4, 2.6));
-        }
-        (Faction::Gla, BuildingRole::CommandCenter) => {
-            // Scrap fortress: uneven sandbag-and-sheet walls around a squat bunker.
-            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.5, w * 1.05));
-            p.push(block(Slot::Hull, 0.0, 0.0, 0.5, w * 0.62, 5.5, w * 0.62));
-            p.push(block(Slot::Panel, 0.0, 0.0, 6.0, w * 0.5, 2.2, w * 0.5));
-            for k in 0..12 {
-                let a = k as f32 / 12.0 * std::f32::consts::TAU;
-                let (x, z) = (a.cos() * w * 0.46, a.sin() * w * 0.46);
-                let mut seg = block(Slot::Panel, x, z, 0.5, w * 0.26, 2.0 + h(k * 5) * 1.6, 0.9);
-                seg.yaw = -a + std::f32::consts::FRAC_PI_2;
-                p.push(seg);
-            }
-            crate_yard(&mut p, w * 0.9, w * 0.25, 0.5, 77, 2);
-            greebles(&mut p, w * 0.5, w * 0.5, 8.2, 11, 6);
-            p.push(block(Slot::Team, 0.0, w * 0.32, 5.0, w * 0.4, 1.4, 0.3));
-        }
-        (Faction::Gla, BuildingRole::Factory) => {
-            // Salvage shed: a corrugated hall with an open front and scrap piled along a side.
-            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.02, 0.4, w * 1.02));
-            p.push(block(Slot::Hull, 0.0, -w * 0.12, 0.4, w * 0.82, 4.4, w * 0.62));
-            p.push(block(Slot::Dark, 0.0, w * 0.2, 0.4, w * 0.5, 3.4, 0.25));
-            p.push(block(Slot::Panel, 0.0, -w * 0.12, 4.8, w * 0.86, 0.5, w * 0.66));
-            crate_yard(&mut p, w * 0.95, w * 0.25, 0.4, 61, 2);
-            p.push(block(Slot::Team, w * 0.3, -w * 0.12, 5.3, 0.3, 1.8, 0.2));
-        }
+        (Faction::Gla, BuildingRole::SupplyCenter { .. }) => stash(&mut p, w),
+        (Faction::Gla, BuildingRole::CommandCenter) => fortress(&mut p, w),
+        (Faction::Gla, BuildingRole::Factory) if r < 8.0 => camp(&mut p, w),
+        (Faction::Gla, BuildingRole::Factory) => workshop(&mut p, w),
         (Faction::Gla, _) => {
-            p.push(block(Slot::Hull, 0.0, 0.0, 0.0, w * 0.8, 4.0, w * 0.8));
-            crate_yard(&mut p, w, w * 0.3, 0.0, 91, 2);
+            let top = tier(&mut p, 0.0, 0.0, 0.0, w * 0.8, w * 0.8, 3.6, Slot::Hull);
+            sandbags(&mut p, -w * 0.4, w * 0.42, w * 0.4, w * 0.42, 0.0, 6);
+            scrap(&mut p, -w * 0.4, -w * 0.1, 0.0, w * 0.18, w * 0.3, 91);
+            crate_yard(&mut p, w, w * 0.28, 0.0, 91, 2);
+            roof_rail(&mut p, w * 0.8, w * 0.8, 3.6, 0.8, 0b1011);
+            mast(&mut p, w * 0.2, -w * 0.2, top);
         }
-        (_, BuildingRole::CommandCenter) => {
-            let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
-            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.08, 0.6, w * 1.08));
-            p.push(block(Slot::Hull, 0.0, 0.0, 0.6, w, 6.5, w * 0.82));
-            p.push(block(Slot::Panel, -w * 0.18, 0.0, 7.1, w * 0.58, 2.6, w * 0.6));
-            p.push(block(Slot::Glow, -w * 0.18, w * 0.302, 8.0, w * 0.5, 0.9, 0.12));
-            // Landing pad on the open side of the roof.
-            p.push(cyl(Slot::Dark, Vec3::new(w * 0.27, 7.25, 0.0), Vec3::new(w * 0.36, 0.3, w * 0.36)));
-            p.push(cyl(accent, Vec3::new(w * 0.27, 7.45, 0.0), Vec3::new(w * 0.26, 0.12, w * 0.26)));
-            p.push(block(Slot::Team, -w * 0.5, 0.0, 3.0, 0.3, 2.5, w * 0.5));
-            greebles(&mut p, w * 0.55, w * 0.6, 9.7, 3, 7);
-            if faction == Faction::Eu {
-                hazard_trim(&mut p, w, w * 0.82, 7.1);
-            }
-            if faction == Faction::Apa {
-                p.push(block(Slot::Panel, -w * 0.18, 0.0, 9.7, w * 0.4, 1.4, w * 0.42));
-            }
-        }
-        (_, BuildingRole::SupplyCenter { .. }) => {
-            // Long depot with an unloading bay and a pad for the airborne harvesters.
-            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.08, 0.5, w * 1.08));
-            p.push(block(Slot::Hull, -w * 0.12, 0.0, 0.5, w * 0.72, 4.2, w * 0.86));
-            p.push(block(Slot::Dark, -w * 0.12, w * 0.44, 0.5, w * 0.4, 3.2, 0.3));
-            p.push(cyl(Slot::Concrete, Vec3::new(w * 0.36, 0.7, -w * 0.18), Vec3::new(w * 0.34, 0.4, w * 0.34)));
-            p.push(cyl(Slot::Team, Vec3::new(w * 0.36, 0.95, -w * 0.18), Vec3::new(w * 0.22, 0.08, w * 0.22)));
-            crate_yard(&mut p, w * 0.28, w * 0.3, 0.5, 13, 2);
-            greebles(&mut p, w * 0.6, w * 0.7, 4.7, 21, 6);
-            if faction == Faction::Eu {
-                hazard_trim(&mut p, w * 0.72, w * 0.86, 4.7);
-            }
-        }
-        (_, BuildingRole::PowerPlant) => {
-            // Twin cooling stacks over a turbine hall.
-            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.5, w * 1.05));
-            p.push(block(Slot::Hull, 0.0, w * 0.15, 0.5, w * 0.9, 3.5, w * 0.5));
-            for x in [-0.22, 0.22] {
-                p.push(cyl(Slot::Panel, Vec3::new(w * x, 4.0, -w * 0.22), Vec3::new(w * 0.36, 8.0, w * 0.36)));
-                p.push(cyl(Slot::Dark, Vec3::new(w * x, 8.1, -w * 0.22), Vec3::new(w * 0.3, 0.3, w * 0.3)));
-                p.push(cyl(Slot::Team, Vec3::new(w * x, 6.0, -w * 0.22), Vec3::new(w * 0.37, 0.5, w * 0.37)));
-            }
-            p.push(block(Slot::Glow, 0.0, w * 0.405, 1.5, w * 0.6, 0.6, 0.1));
-            greebles(&mut p, w * 0.8, w * 0.4, 4.0, 31, 4);
-        }
-        (_, BuildingRole::Factory) if r < 8.0 => {
-            // Barracks: a low block with a lit front, a striped curb along the yard side and a flag.
-            let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
-            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.4, w * 1.05));
-            p.push(block(Slot::Hull, 0.0, -w * 0.18, 0.4, w * 0.9, 3.4, w * 0.55));
-            p.push(block(Slot::Panel, 0.0, -w * 0.18, 3.8, w * 0.7, 0.9, w * 0.4));
-            p.push(block(Slot::Glow, 0.0, w * 0.1, 1.6, w * 0.6, 0.5, 0.1));
-            p.push(block(accent, 0.0, w * 0.48, 0.4, w * 0.9, 0.7, 0.2));
-            p.push(cyl(Slot::Dark, Vec3::new(w * 0.38, 3.0, w * 0.38), Vec3::new(0.25, 6.0, 0.25)));
-            p.push(block(Slot::Team, w * 0.38 + 0.8, w * 0.38, 5.2, 1.6, 0.9, 0.08));
-            greebles(&mut p, w * 0.7, w * 0.4, 4.7, 71, 4);
-        }
-        (_, BuildingRole::Factory) => {
-            // War factory: a tall assembly hall with a wide vehicle door and a hazard-striped roof beam.
-            p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.5, w * 1.05));
-            p.push(block(Slot::Hull, 0.0, -w * 0.1, 0.5, w * 0.92, 6.0, w * 0.72));
-            p.push(block(Slot::Dark, 0.0, w * 0.27, 0.5, w * 0.5, 4.2, 0.2));
-            p.push(block(Slot::Panel, 0.0, -w * 0.1, 6.5, w * 0.8, 1.0, w * 0.6));
-            p.push(block(Slot::Hazard, 0.0, -w * 0.1, 7.5, w * 0.95, 0.4, 0.5));
-            p.push(block(Slot::Team, -w * 0.47, -w * 0.1, 3.5, 0.3, 2.0, w * 0.4));
-            greebles(&mut p, w * 0.75, w * 0.55, 7.5, 81, 6);
-            if faction == Faction::Eu {
-                hazard_trim(&mut p, w * 0.92, w * 0.72, 6.5);
-            }
-        }
+        (_, BuildingRole::CommandCenter) => command_center(&mut p, faction, w),
+        (_, BuildingRole::SupplyCenter { .. }) => depot(&mut p, faction, w),
+        (_, BuildingRole::PowerPlant) => plant(&mut p, faction, w),
+        (_, BuildingRole::Factory) if r < 8.0 => barracks(&mut p, faction, w),
+        (_, BuildingRole::Factory) => war_factory(&mut p, faction, w),
     }
     p
+}
+
+/// Command center: a stepped mass with a recessed entry, a landing pad on the roof and the
+/// busiest roof of any building.
+fn command_center(p: &mut Vec<Part>, faction: Faction, w: f32) {
+    let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.08, 0.6, w * 1.08));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.6, w, 3.4, w * 0.82));
+    corner_trim(p, 0.0, 0.0, w, w * 0.82, 0.6, 3.4, accent);
+    wall_ribs(p, 0.0, w * 0.415, 0.6, 4.0, w * 0.88, 7, true);
+    wall_ribs(p, -w * 0.505, 0.0, 0.6, 4.0, w * 0.62, 5, false);
+    wall_seams(p, 0.0, w * 0.415, 1.1, w * 0.88, 2, true);
+    p.push(block(Slot::Panel, 0.0, -w * 0.06, 4.0, w * 0.86, 2.8, w * 0.7));
+    // Recessed entry bay on the front face.
+    p.push(block(Slot::Dark, 0.0, w * 0.41, 0.6, w * 0.3, 2.8, 0.35));
+    p.push(block(Slot::Glow, 0.0, w * 0.44, 1.9, w * 0.26, 0.7, 0.12));
+    p.push(block(accent, 0.0, w * 0.41, 3.5, w * 0.34, 0.35, 0.3));
+    // Command tier at the back-left, then a penthouse and mast on top of it.
+    let top = tier(p, -w * 0.2, -w * 0.12, 6.8, w * 0.52, w * 0.5, 2.6, Slot::Panel);
+    let top = tier(p, -w * 0.22, -w * 0.14, top, w * 0.32, w * 0.3, 1.7, Slot::Hull);
+    mast(p, -w * 0.22, -w * 0.14, top);
+    dish(p, w * 0.34, w * 0.24, 6.8);
+    // Landing pad on the open side of the roof: hazard deck markings, team flash at the centre.
+    p.push(cyl(Slot::Dark, Vec3::new(w * 0.26, 6.95, 0.0), Vec3::new(w * 0.34, 0.3, w * 0.34)));
+    p.push(cyl(Slot::Hazard, Vec3::new(w * 0.26, 7.15, 0.0), Vec3::new(w * 0.26, 0.12, w * 0.26)));
+    p.push(cyl(Slot::Team, Vec3::new(w * 0.26, 7.24, 0.0), Vec3::new(w * 0.1, 0.1, w * 0.1)));
+    hazard_trim_at(p, w * 0.26, 0.0, w * 0.42, w * 0.42, 7.2);
+    hazard_trim(p, w, w * 0.82, 6.8);
+    roof_rail(p, w, w * 0.82, 6.8, 0.9, 0b0011);
+    catwalk(p, -w * 0.36, w * 0.3, w * 0.34, 4.6, true);
+    pipe_run(p, w * 0.5, -w * 0.18, w * 0.42, 5.0, false);
+    greebles(p, -w * 0.22, w * 0.22, w * 0.26, w * 0.14, 6.8, 3, 4);
+    if faction == Faction::Apa {
+        let top = tier(p, w * 0.22, -w * 0.3, 6.8, w * 0.22, w * 0.18, 1.6, Slot::Panel);
+        p.push(bx(
+            Slot::Team,
+            Vec3::new(w * 0.22, top - 0.45, -w * 0.3 + w * 0.09 + 0.08),
+            Vec3::new(w * 0.22, 0.32, 0.14),
+        ));
+    }
+}
+
+/// Supply depot: a long hall with an unloading bay, a collector pad and yard crates.
+fn depot(p: &mut Vec<Part>, faction: Faction, w: f32) {
+    let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.08, 0.5, w * 1.08));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, w * 0.78, 3.6, w * 0.86));
+    corner_trim(p, 0.0, 0.0, w * 0.78, w * 0.86, 0.5, 3.6, accent);
+    wall_ribs(p, 0.0, w * 0.435, 0.5, 4.1, w * 0.72, 6, true);
+    wall_seams(p, 0.0, w * 0.435, 1.0, w * 0.72, 2, true);
+    // Unloading bay: recessed door, lintel and apron.
+    p.push(block(Slot::Dark, 0.0, w * 0.43, 0.5, w * 0.4, 2.8, 0.32));
+    p.push(block(Slot::Glow, 0.0, w * 0.46, 1.4, w * 0.34, 0.6, 0.12));
+    p.push(block(accent, 0.0, w * 0.43, 3.5, w * 0.46, 0.4, 0.3));
+    p.push(block(Slot::Concrete, 0.0, w * 0.62, 0.5, w * 0.5, 0.18, w * 0.22));
+    let top = tier(p, -w * 0.08, -w * 0.14, 4.1, w * 0.58, w * 0.54, 2.2, Slot::Panel);
+    mast(p, -w * 0.28, -w * 0.3, top);
+    // Pad for the airborne collectors, off the hall's side.
+    p.push(cyl(Slot::Concrete, Vec3::new(w * 0.56, 0.7, -w * 0.18), Vec3::new(w * 0.3, 0.4, w * 0.3)));
+    p.push(cyl(Slot::Hazard, Vec3::new(w * 0.56, 0.95, -w * 0.18), Vec3::new(w * 0.22, 0.1, w * 0.22)));
+    p.push(cyl(Slot::Team, Vec3::new(w * 0.56, 1.03, -w * 0.18), Vec3::new(w * 0.08, 0.1, w * 0.08)));
+    catwalk(p, 0.0, w * 0.5, w * 0.52, 3.4, true);
+    crate_yard(p, w * 0.26, w * 0.28, 0.5, 13, 2);
+    hazard_trim(p, w * 0.78, w * 0.86, 4.1);
+    roof_rail(p, w * 0.78, w * 0.86, 4.1, 0.85, 0b1011);
+    greebles(p, w * 0.3, w * 0.3, w * 0.16, w * 0.18, 4.1, 21, 4);
+    pipe_run(p, w * 0.4, -w * 0.05, w * 0.5, 2.8, false);
+}
+
+/// Power plant: a turbine hall between two tall cooling stacks, pipework between them.
+fn plant(p: &mut Vec<Part>, faction: Faction, w: f32) {
+    let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.5, w * 1.05));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, w * 0.9, 3.2, w * 0.5));
+    corner_trim(p, 0.0, 0.0, w * 0.9, w * 0.5, 0.5, 3.2, accent);
+    wall_ribs(p, 0.0, w * 0.255, 0.5, 3.7, w * 0.84, 6, true);
+    wall_seams(p, 0.0, w * 0.255, 1.0, w * 0.84, 2, true);
+    let top = tier(p, 0.0, 0.0, 3.7, w * 0.68, w * 0.38, 1.6, Slot::Panel);
+    p.push(block(Slot::Glow, 0.0, w * 0.255, 1.6, w * 0.6, 0.6, 0.12));
+    // Twin cooling stacks: shell, rim cap, accent band and a plinth each.
+    for x in [-0.22, 0.22] {
+        p.push(cyl(Slot::Panel, Vec3::new(w * x, 4.6, -w * 0.36), Vec3::new(w * 0.3, 8.2, w * 0.3)));
+        p.push(cyl(Slot::Dark, Vec3::new(w * x, 8.85, -w * 0.36), Vec3::new(w * 0.34, 0.35, w * 0.34)));
+        p.push(cyl(accent, Vec3::new(w * x, 6.6, -w * 0.36), Vec3::new(w * 0.31, 0.5, w * 0.31)));
+        p.push(block(Slot::Dark, w * x, -w * 0.36, 0.5, w * 0.36, 0.7, w * 0.36));
+    }
+    pipe_run(p, 0.0, -w * 0.36, w * 0.44, 2.6, true);
+    pipe_run(p, 0.0, w * 0.32, w * 0.7, 3.2, true);
+    hazard_trim(p, w * 0.68, w * 0.38, 3.7);
+    roof_rail(p, w * 0.9, w * 0.5, 3.7, 0.85, 0b1011);
+    greebles(p, 0.0, 0.0, w * 0.4, w * 0.22, top, 31, 3);
+    p.push(block(accent, 0.0, w * 0.28, 3.1, w * 0.5, 0.4, 0.25));
+}
+
+/// Barracks: a low block with lit door bays, a stepped roof and a striped yard curb.
+fn barracks(p: &mut Vec<Part>, faction: Faction, w: f32) {
+    let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.4, w * 1.05));
+    p.push(block(Slot::Hull, 0.0, -w * 0.1, 0.4, w * 0.9, 3.2, w * 0.62));
+    corner_trim(p, 0.0, -w * 0.1, w * 0.9, w * 0.62, 0.4, 3.2, accent);
+    wall_ribs(p, 0.0, w * 0.215, 0.4, 3.6, w * 0.84, 6, true);
+    wall_seams(p, 0.0, w * 0.215, 2.5, w * 0.84, 1, true);
+    // Door bays along the front face.
+    for x in [-0.26, 0.0, 0.26] {
+        p.push(block(Slot::Dark, w * x, w * 0.215, 0.4, w * 0.16, 2.2, 0.28));
+        p.push(block(Slot::Glow, w * x, w * 0.24, 2.0, w * 0.13, 0.4, 0.1));
+    }
+    let top = tier(p, 0.0, -w * 0.1, 3.6, w * 0.68, w * 0.42, 1.5, Slot::Panel);
+    p.push(block(accent, 0.0, w * 0.38, 0.4, w * 0.9, 0.7, 0.22));
+    // Flag on the yard corner.
+    p.push(block(Slot::Dark, w * 0.42, w * 0.36, 0.4, 0.26, 3.2, 0.26));
+    p.push(block(Slot::Team, w * 0.42 + 0.8, w * 0.36, 2.9, 1.5, 0.85, 0.1));
+    hazard_trim(p, w * 0.68, w * 0.42, 3.6);
+    roof_rail(p, w * 0.9, w * 0.62, 3.6, 0.85, 0b1011);
+    greebles(p, 0.0, -w * 0.12, w * 0.4, w * 0.22, top, 71, 3);
+    pipe_run(p, -w * 0.46, -w * 0.08, w * 0.45, 2.6, false);
+}
+
+/// War factory: a tall assembly hall with a wide vehicle door, a gantry over it and stepped roofs.
+fn war_factory(p: &mut Vec<Part>, faction: Faction, w: f32) {
+    let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.5, w * 1.05));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, w * 0.92, 5.6, w * 0.72));
+    corner_trim(p, 0.0, 0.0, w * 0.92, w * 0.72, 0.5, 5.6, accent);
+    wall_ribs(p, -w * 0.465, 0.0, 0.5, 6.1, w * 0.62, 5, false);
+    wall_ribs(p, w * 0.465, 0.0, 0.5, 6.1, w * 0.62, 5, false);
+    wall_seams(p, -w * 0.465, 0.0, 1.4, w * 0.62, 3, false);
+    wall_seams(p, w * 0.465, 0.0, 1.4, w * 0.62, 3, false);
+    // Vehicle door: dark opening, glow strip, columns and a hazard lintel.
+    p.push(block(Slot::Dark, 0.0, w * 0.365, 0.5, w * 0.52, 4.0, 0.32));
+    p.push(block(Slot::Glow, 0.0, w * 0.39, 1.6, w * 0.44, 0.8, 0.12));
+    for x in [-0.34, 0.34] {
+        p.push(block(Slot::Panel, w * x, w * 0.365, 0.5, 0.5, 5.6, 0.5));
+    }
+    p.push(block(accent, 0.0, w * 0.365, 4.7, w * 0.62, 0.45, 0.35));
+    catwalk(p, 0.0, w * 0.44, w * 0.7, 5.3, true);
+    let top = tier(p, 0.0, -w * 0.1, 6.1, w * 0.78, w * 0.52, 1.6, Slot::Panel);
+    let top = tier(p, -w * 0.16, -w * 0.16, top, w * 0.4, w * 0.32, 1.5, Slot::Hull);
+    mast(p, -w * 0.16, -w * 0.16, top);
+    dish(p, w * 0.2, -w * 0.1, 7.7);
+    hazard_trim(p, w * 0.78, w * 0.52, 6.1);
+    roof_rail(p, w * 0.92, w * 0.72, 6.1, 0.9, 0b1011);
+    pipe_run(p, -w * 0.475, -w * 0.05, w * 0.5, 3.6, false);
+    pipe_run(p, w * 0.475, -w * 0.15, w * 0.4, 2.6, false);
+    greebles(p, 0.0, w * 0.27, w * 0.68, w * 0.14, 6.1, 81, 4);
+    // Side annex and a team banner on the opposite wall.
+    p.push(block(Slot::Panel, -w * 0.52, w * 0.1, 0.5, w * 0.16, 2.8, w * 0.4));
+    p.push(block(accent, w * 0.48, 0.0, 3.5, 0.28, 2.2, w * 0.36));
+}
+
+/// GLA supply stash: a wooden platform of mixed crates with a lookout post and sandbagged edges.
+fn stash(p: &mut Vec<Part>, w: f32) {
+    p.push(block(Slot::Wood, 0.0, 0.0, 0.0, w * 1.02, 0.7, w * 1.02));
+    for k in 0..3 {
+        // Plank seams across the platform.
+        let z = -w * 0.3 + k as f32 * w * 0.3;
+        p.push(bx(Slot::Dark, Vec3::new(0.0, 0.72, z), Vec3::new(w * 1.02, 0.08, 0.12)));
+    }
+    crate_yard(p, w * 0.88, w * 0.88, 0.7, 41, 2);
+    // Lookout post with a flag at the back-right corner.
+    let (tx, tz) = (w * 0.42, -w * 0.42);
+    for (dx, dz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        p.push(block(Slot::Wood, tx + dx * 0.9, tz + dz * 0.9, 0.7, 0.32, 5.4, 0.32));
+    }
+    p.push(block(Slot::Wood, tx, tz, 6.1, 3.0, 0.35, 3.0));
+    p.push(block(Slot::Team, tx, tz, 6.45, 2.4, 0.12, 2.4));
+    mast(p, tx, tz, 6.45);
+    sandbags(p, -w * 0.45, w * 0.42, w * 0.45, w * 0.42, 0.7, 6);
+    sandbags(p, w * 0.42, -w * 0.3, w * 0.42, w * 0.32, 0.7, 5);
+    scrap(p, -w * 0.42, -w * 0.18, 0.7, w * 0.16, w * 0.4, 3);
+}
+
+/// GLA command center: a sandbag-and-sheet ring around a squat stepped bunker.
+fn fortress(p: &mut Vec<Part>, w: f32) {
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.05, 0.5, w * 1.05));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, w * 0.6, 4.2, w * 0.6));
+    let mid = tier(p, 0.0, 0.0, 4.7, w * 0.38, w * 0.38, 1.9, Slot::Panel);
+    let top = tier(p, 0.0, 0.0, mid, w * 0.22, w * 0.22, 1.6, Slot::Hull);
+    mast(p, w * 0.1, w * 0.1, top);
+    dish(p, -w * 0.26, -w * 0.26, 4.7);
+    // Uneven scrap wall ring: alternating sheets and posts around the bunker.
+    for k in 0..10 {
+        let a = k as f32 / 10.0 * TAU;
+        let (x, z) = (a.cos() * w * 0.46, a.sin() * w * 0.46);
+        let slot = if k % 2 == 0 { Slot::Panel } else { Slot::Crate((k % 5) as u8) };
+        let mut seg = block(slot, x, z, 0.5, w * 0.28, 1.8 + h(k * 5) * 1.8, 0.85);
+        seg.yaw = -a + FRAC_PI_2;
+        p.push(seg);
+    }
+    sandbags(p, -w * 0.38, w * 0.38, w * 0.38, w * 0.38, 0.5, 6);
+    scrap(p, -w * 0.42, -w * 0.1, 0.5, w * 0.2, w * 0.3, 5);
+    crate_yard(p, w * 0.86, w * 0.22, 0.5, 77, 2);
+    roof_rail(p, w * 0.6, w * 0.6, 4.7, 0.8, 0b1010);
+    greebles(p, w * 0.26, w * 0.26, w * 0.16, w * 0.16, 4.7, 11, 3);
+    p.push(block(Slot::Team, 0.0, w * 0.3, 4.4, w * 0.36, 1.3, 0.3));
+}
+
+/// GLA war factory: a salvage hall with an open bay, scrap roofing and chimney pipes.
+fn workshop(p: &mut Vec<Part>, w: f32) {
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.02, 0.4, w * 1.02));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.4, w * 0.82, 4.2, w * 0.62));
+    wall_ribs(p, 0.0, w * 0.315, 0.4, 4.6, w * 0.76, 7, true);
+    wall_seams(p, -w * 0.415, 0.0, 1.2, w * 0.62, 2, false);
+    // Open bay: dark interior, lintel and a raised scrap roof over it.
+    p.push(block(Slot::Dark, 0.0, w * 0.315, 0.4, w * 0.5, 3.2, 0.3));
+    p.push(block(Slot::Hazard, 0.0, w * 0.315, 3.6, w * 0.56, 0.4, 0.35));
+    p.push(block(Slot::Panel, 0.0, 0.0, 4.6, w * 0.88, 0.5, w * 0.68));
+    let top = tier(p, -w * 0.16, -w * 0.16, 5.1, w * 0.5, w * 0.4, 1.7, Slot::Panel);
+    mast(p, -w * 0.3, -w * 0.3, top);
+    // Salvage kept on the roofs, the way the alpha fills every flat surface.
+    scrap(p, w * 0.26, w * 0.14, 5.1, w * 0.3, w * 0.3, 43);
+    crate_yard(p, w * 0.28, w * 0.2, top, 29, 1);
+    // Chimney pipes clear of the roof tier.
+    for x in [0.18, 0.36] {
+        p.push(cyl(Slot::Dark, Vec3::new(w * x, 6.2, -w * 0.32), Vec3::new(0.75, 4.0, 0.75)));
+        p.push(cyl(Slot::Panel, Vec3::new(w * x, 8.35, -w * 0.32), Vec3::new(0.95, 0.3, 0.95)));
+    }
+    scrap(p, -w * 0.42, w * 0.05, 0.4, w * 0.16, w * 0.4, 61);
+    sandbags(p, -w * 0.42, w * 0.42, w * 0.42, w * 0.42, 0.4, 7);
+    crate_yard(p, w * 0.9, w * 0.2, 0.4, 61, 2);
+    roof_rail(p, w * 0.82, w * 0.62, 4.6, 0.85, 0b1011);
+    pipe_run(p, w * 0.42, -w * 0.1, w * 0.5, 3.0, false);
+    greebles(p, -w * 0.32, w * 0.02, w * 0.26, w * 0.2, top, 51, 4);
+    p.push(block(Slot::Team, w * 0.3, 0.0, 5.1, 0.3, 1.8, 0.2));
+}
+
+/// GLA barracks: a walled camp of tent ridges between sandbag lines.
+fn camp(p: &mut Vec<Part>, w: f32) {
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.02, 0.4, w * 1.02));
+    p.push(block(Slot::Hull, 0.0, -w * 0.1, 0.4, w * 0.8, 2.8, w * 0.52));
+    let top = tier(p, 0.0, -w * 0.1, 3.2, w * 0.6, w * 0.38, 1.4, Slot::Panel);
+    for (k, x) in [-0.28, 0.0, 0.28].into_iter().enumerate() {
+        let mut ridge = block(Slot::Crate(k as u8 + 1), w * x, w * 0.32, 0.4, w * 0.2, 1.7, w * 0.26);
+        ridge.yaw = (h(k as u32 * 7) - 0.5) * 0.3;
+        p.push(ridge);
+    }
+    sandbags(p, -w * 0.46, w * 0.44, w * 0.46, w * 0.44, 0.4, 7);
+    sandbags(p, -w * 0.44, -w * 0.3, -w * 0.44, w * 0.3, 0.4, 5);
+    scrap(p, w * 0.36, -w * 0.2, 0.4, w * 0.16, w * 0.3, 71);
+    crate_yard(p, w * 0.3, w * 0.22, 0.4, 91, 2);
+    roof_rail(p, w * 0.8, w * 0.52, 3.2, 0.8, 0b1010);
+    mast(p, -w * 0.24, -w * 0.22, top);
+    scrap(p, w * 0.28, -w * 0.05, top, w * 0.22, w * 0.18, 53);
+    greebles(p, 0.0, -w * 0.1, w * 0.24, w * 0.16, top, 27, 4);
 }
 
 fn derrick(p: &mut Vec<Part>, faction: Faction, r: f32) {
     let w = r * 1.6;
     p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w, 0.4, w));
-    // Pumpjack: frame, walking beam, horse head, counterweight; plus storage tanks.
+    // Pumpjack: A-frame, walking beam, horse head, counterweight and the wellhead it pumps.
     let frame = if faction == Faction::Gla { Slot::Wood } else { Slot::Dark };
-    p.push(block(frame, 0.0, 0.0, 0.4, 0.6, 4.2, 0.6));
-    let mut beam = block(Slot::Hull, 0.0, 0.0, 4.6, w * 0.95, 0.5, 0.6);
-    beam.yaw = 0.0;
-    p.push(beam);
-    p.push(block(Slot::Hazard, w * 0.48, 0.0, 3.4, 0.6, 1.8, 0.8));
-    p.push(block(Slot::Dark, -w * 0.4, 0.0, 2.0, 1.2, 1.4, 1.0));
-    p.push(cyl(Slot::Hull, Vec3::new(-w * 0.25, 1.6, w * 0.3), Vec3::new(1.8, 2.8, 1.8)));
-    p.push(cyl(Slot::Team, Vec3::new(-w * 0.25, 2.4, w * 0.3), Vec3::new(1.85, 0.3, 1.85)));
+    p.push(block(frame, 0.0, 0.0, 0.4, 0.7, 4.4, 0.7));
+    p.push(block(frame, -w * 0.16, 0.0, 0.4, 0.5, 3.2, 0.5));
+    p.push(block(Slot::Hull, 0.0, 0.0, 4.8, w * 0.95, 0.55, 0.65));
+    p.push(block(Slot::Hazard, w * 0.48, 0.0, 3.6, 0.65, 1.9, 0.85));
+    p.push(cyl(Slot::Dark, Vec3::new(-w * 0.42, 1.3, 0.0), Vec3::new(1.25, 1.8, 1.25)));
+    p.push(cyl(Slot::Dark, Vec3::new(w * 0.2, 0.7, 0.0), Vec3::new(0.6, 1.4, 0.6)));
+    p.push(bx(Slot::Hazard, Vec3::new(w * 0.2, 1.5, 0.0), Vec3::new(0.9, 0.25, 0.9)));
+    // Storage tanks with accent bands, tied to the wellhead by a pipe run.
+    p.push(cyl(Slot::Hull, Vec3::new(-w * 0.22, 1.8, w * 0.3), Vec3::new(1.9, 2.9, 1.9)));
+    p.push(cyl(Slot::Team, Vec3::new(-w * 0.22, 2.7, w * 0.3), Vec3::new(1.95, 0.3, 1.95)));
+    p.push(cyl(Slot::Hull, Vec3::new(-w * 0.02, 1.5, w * 0.36), Vec3::new(1.5, 2.3, 1.5)));
+    pipe_run(p, -w * 0.12, w * 0.32, w * 0.5, 2.6, true);
+    roof_rail(p, w * 0.86, w * 0.86, 0.4, 0.7, 0b1001);
+    sandbags(p, -w * 0.42, -w * 0.42, w * 0.42, -w * 0.42, 0.4, 6);
 }
+
+// ---- Units -------------------------------------------------------------------------------
 
 pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
     let mut p = Vec::new();
@@ -285,15 +632,20 @@ pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
             p.push(block(Slot::Crate(2), 0.0, -0.35, 0.7, 0.6, 0.5, 0.4));
         }
         (_, true, _) => {
-            // Construction vehicle: yellow/black body, crane arm, cab.
+            // Construction vehicle: yellow-black tracked body, cab, crane arm and blade.
             let (l, wd) = (r * 2.2, r * 1.3);
-            p.push(block(Slot::Dark, 0.0, 0.0, 0.0, wd, 0.6, l));
-            p.push(block(Slot::Hazard, 0.0, -l * 0.1, 0.6, wd * 0.95, 1.0, l * 0.7));
-            p.push(block(Slot::Glow, 0.0, l * 0.25, 0.6, wd * 0.7, 1.2, l * 0.3));
-            let mut arm = block(Slot::Hazard, 0.0, -l * 0.15, 1.6, 0.35, 0.35, l * 0.9);
-            arm.yaw = 0.15;
+            for side in [-1.0, 1.0] {
+                track(&mut p, side * wd * 0.42, l, 0.0, Slot::Hazard);
+            }
+            p.push(block(Slot::Hazard, 0.0, -l * 0.08, 0.75, wd * 0.78, 1.05, l * 0.72));
+            p.push(block(Slot::Glow, 0.0, l * 0.26, 0.75, wd * 0.72, 1.15, l * 0.3));
+            p.push(block(Slot::Dark, 0.0, l * 0.42, 1.1, wd * 0.5, 0.4, 0.25));
+            let mut arm = block(Slot::Hazard, 0.0, -l * 0.18, 1.8, 0.38, 0.38, l * 0.95);
+            arm.yaw = 0.12;
             p.push(arm);
-            p.push(block(Slot::Team, wd * 0.5, 0.0, 0.7, 0.08, 0.4, l * 0.5));
+            p.push(block(Slot::Dark, 0.0, -l * 0.62, 1.1, wd * 0.95, 0.75, 0.28));
+            p.push(block(Slot::Team, wd * 0.5, 0.0, 1.9, 0.12, 0.35, l * 0.5));
+            p.push(block(Slot::Crate(2), -wd * 0.3, -l * 0.35, 1.85, 0.65, 0.5, 0.55));
         }
         (Faction::Eu, _, true) => {
             // Airborne collector (sourced: the EU harvester flies). Our design: a flat lifting
@@ -315,13 +667,18 @@ pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
             p.push(block(Slot::Crate(0), 0.0, 0.0, y - 2.1, 1.5, 1.1, 1.8));
         }
         (_, _, true) => {
-            // Ground supply truck.
+            // Ground supply truck: wheels under a flatbed, cab forward, covered load.
             let (l, wd) = (r * 2.3, r * 1.2);
-            p.push(block(Slot::Dark, 0.0, 0.0, 0.0, wd, 0.6, l));
-            p.push(block(Slot::Hull, 0.0, l * 0.32, 0.6, wd, 1.3, l * 0.3));
-            p.push(block(Slot::Team, 0.0, l * 0.32, 1.9, wd * 0.9, 0.15, l * 0.25));
-            p.push(block(Slot::Panel, 0.0, -l * 0.15, 0.6, wd, 1.1, l * 0.62));
-            p.push(block(Slot::Crate(3), 0.0, -l * 0.15, 1.7, wd * 0.8, 0.6, l * 0.5));
+            for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                p.push(cyl(Slot::Dark, Vec3::new(x * wd * 0.47, 0.5, z * l * 0.33), Vec3::new(1.0, 0.55, 1.0)));
+            }
+            p.push(block(Slot::Dark, 0.0, 0.0, 0.35, wd * 0.85, 0.35, l * 0.95));
+            p.push(block(Slot::Hull, 0.0, l * 0.3, 0.7, wd * 0.95, 1.35, l * 0.32));
+            p.push(block(Slot::Glow, 0.0, l * 0.46, 1.25, wd * 0.7, 0.55, 0.1));
+            p.push(block(Slot::Panel, 0.0, -l * 0.18, 0.7, wd * 0.95, 1.15, l * 0.6));
+            p.push(block(Slot::Crate(3), 0.0, -l * 0.18, 1.85, wd * 0.78, 0.55, l * 0.5));
+            p.push(block(Slot::Team, 0.0, l * 0.3, 2.1, wd * 0.85, 0.14, l * 0.22));
+            p.push(block(Slot::Crate(1), wd * 0.35, -l * 0.42, 1.6, 0.6, 0.5, 0.5));
         }
         _ => {
             let (l, wd) = (r * 2.0, r * 1.3);
@@ -330,6 +687,17 @@ pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
         }
     }
     p
+}
+
+/// One side of tracked running gear: the track band, three road-wheel discs sitting proud on it
+/// and an armour skirt hanging on the outer face, leaving the wheel tops visible.
+fn track(parts: &mut Vec<Part>, x: f32, l: f32, y0: f32, skirt: Slot) {
+    parts.push(block(Slot::Dark, x, 0.0, y0, 0.66, 0.8, l));
+    for k in 0..3 {
+        let z = (k as f32 - 1.0) * l * 0.33;
+        parts.push(cyl(Slot::Panel, Vec3::new(x, y0 + 0.82, z), Vec3::new(0.8, 0.18, 0.8)));
+    }
+    parts.push(block(skirt, x + x.signum() * 0.45, 0.0, y0 + 0.35, 0.18, 0.75, l * 0.95));
 }
 
 /// Infantry squads (several small figures) and tanks (hull, tracks, turret, barrel). Our own
@@ -364,29 +732,48 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
         light_vehicle(p, faction, r);
         return;
     }
+    // Tracked main battle tanks.
     let (l, wd) = (r * 2.0, r * 1.3);
+    let skirt = if faction == Faction::Eu { Slot::Panel } else { Slot::Hull };
     for side in [-1.0, 1.0] {
-        p.push(block(Slot::Dark, side * wd * 0.42, 0.0, 0.0, wd * 0.22, 0.8, l));
+        track(p, side * wd * 0.44, l, 0.0, skirt);
     }
-    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, wd * 0.7, 0.9, l * 0.9));
-    p.push(block(Slot::Team, 0.0, -l * 0.3, 1.4, wd * 0.72, 0.15, l * 0.3));
-    let (turret_y, barrel_y) = (1.4, 1.9);
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.55, wd * 0.72, 0.85, l * 0.92));
+    p.push(block(Slot::Hull, 0.0, -l * 0.34, 1.4, wd * 0.66, 0.5, l * 0.22));
+    p.push(block(Slot::Dark, 0.0, l * 0.4, 0.85, wd * 0.5, 0.5, l * 0.12));
     match faction {
         Faction::Eu => {
-            p.push(block(Slot::Panel, 0.0, -l * 0.05, turret_y, wd * 0.55, 0.7, l * 0.42));
-            p.push(block(Slot::Dark, 0.0, l * 0.4, barrel_y - 0.15, 0.22, 0.22, l * 0.55));
-            hazard_trim(p, wd * 0.7, l * 0.9, 1.4);
+            // Long flat turret: ring, mantlet, single long gun, cupola and deck stowage.
+            p.push(cyl(Slot::Dark, Vec3::new(0.0, 1.5, -l * 0.02), Vec3::new(wd * 0.62, 0.22, wd * 0.62)));
+            p.push(block(Slot::Panel, 0.0, -l * 0.02, 1.65, wd * 0.58, 0.75, l * 0.46));
+            p.push(block(Slot::Dark, 0.0, l * 0.24, 1.95, wd * 0.3, 0.5, 0.5));
+            p.push(block(Slot::Dark, 0.0, l * 0.42, 1.95, 0.24, 0.24, l * 0.5));
+            p.push(cyl(Slot::Dark, Vec3::new(0.0, 2.15, -l * 0.12), Vec3::new(0.5, 0.35, 0.5)));
+            p.push(block(Slot::Team, 0.0, -l * 0.18, 2.05, wd * 0.5, 0.14, l * 0.14));
+            p.push(block(Slot::Crate(3), wd * 0.22, -l * 0.3, 2.1, 0.7, 0.45, 0.6));
+            p.push(block(Slot::Crate(1), -wd * 0.22, -l * 0.3, 2.1, 0.7, 0.45, 0.6));
+            hazard_trim(p, wd * 0.72, l * 0.92, 1.42);
         }
         Faction::Apa => {
-            p.push(cyl(Slot::Panel, Vec3::new(0.0, turret_y + 0.4, 0.0), Vec3::new(wd * 0.6, 0.8, wd * 0.6)));
+            // Twin-barrelled turret on a round mount.
+            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.85, -l * 0.02), Vec3::new(wd * 0.62, 0.85, wd * 0.62)));
             for x in [-0.2, 0.2] {
-                p.push(block(Slot::Dark, x, l * 0.38, barrel_y, 0.18, 0.18, l * 0.5));
+                p.push(block(Slot::Dark, x, l * 0.16, 2.15, 0.42, 0.55, 0.5));
+                p.push(block(Slot::Dark, x, l * 0.36, 2.15, 0.2, 0.2, l * 0.46));
             }
+            p.push(cyl(Slot::Dark, Vec3::new(0.0, 2.45, -l * 0.14), Vec3::new(0.55, 0.4, 0.55)));
+            p.push(block(Slot::Team, 0.0, -l * 0.14, 2.3, wd * 0.5, 0.15, l * 0.16));
+            p.push(block(Slot::Crate(2), -wd * 0.24, -l * 0.32, 2.15, 0.75, 0.5, 0.65));
         }
         Faction::Gla => {
-            p.push(block(Slot::Panel, 0.0, -l * 0.1, turret_y, wd * 0.5, 0.9, l * 0.35));
-            p.push(block(Slot::Dark, 0.0, l * 0.3, barrel_y, 0.2, 0.2, l * 0.45));
-            p.push(block(Slot::Crate(2), wd * 0.2, -l * 0.38, 1.4, 0.8, 0.6, 0.7));
+            // Small boxy turret with a scrap plate and salvaged stowage.
+            p.push(cyl(Slot::Dark, Vec3::new(0.0, 1.5, -l * 0.06), Vec3::new(wd * 0.55, 0.2, wd * 0.55)));
+            p.push(block(Slot::Panel, 0.0, -l * 0.08, 1.6, wd * 0.5, 0.85, l * 0.34));
+            p.push(block(Slot::Dark, 0.0, l * 0.14, 1.95, wd * 0.28, 0.5, 0.45));
+            p.push(block(Slot::Dark, 0.0, l * 0.32, 1.95, 0.2, 0.2, l * 0.42));
+            p.push(block(Slot::Crate(2), wd * 0.2, -l * 0.32, 1.95, 0.85, 0.6, 0.7));
+            p.push(block(Slot::Crate(4), -wd * 0.22, -l * 0.3, 1.95, 0.7, 0.5, 0.6));
+            p.push(block(Slot::Team, 0.0, -l * 0.16, 2.08, wd * 0.44, 0.14, l * 0.12));
         }
     }
 }
@@ -397,22 +784,32 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
 fn light_vehicle(p: &mut Vec<Part>, faction: Faction, r: f32) {
     let (l, wd) = (r * 2.1, r * 1.2);
     for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-        p.push(cyl(Slot::Dark, Vec3::new(x * wd * 0.48, 0.45, z * l * 0.32), Vec3::new(0.9, 0.5, 0.9)));
+        p.push(cyl(Slot::Dark, Vec3::new(x * wd * 0.46, 0.5, z * l * 0.32), Vec3::new(1.05, 0.6, 1.05)));
+    }
+    // Fenders over the wheels leave the wheel tops showing.
+    for side in [-1.0, 1.0] {
+        p.push(block(Slot::Panel, side * wd * 0.46, 0.0, 0.72, wd * 0.18, 0.22, l * 0.92));
     }
     match faction {
         Faction::Eu => {
-            p.push(block(Slot::Hull, 0.0, 0.0, 0.6, wd * 0.9, 1.4, l * 0.95));
-            p.push(block(Slot::Team, 0.0, -l * 0.2, 2.0, wd * 0.8, 0.15, l * 0.35));
-            p.push(block(Slot::Dark, 0.0, l * 0.15, 2.3, 0.18, 0.18, l * 0.4));
-            hazard_trim(p, wd * 0.9, l * 0.95, 1.9);
+            p.push(block(Slot::Hull, 0.0, 0.0, 0.6, wd * 0.82, 1.3, l * 0.95));
+            p.push(block(Slot::Glow, 0.0, l * 0.34, 1.35, wd * 0.62, 0.55, 0.1));
+            p.push(cyl(Slot::Dark, Vec3::new(0.0, 2.05, -l * 0.05), Vec3::new(wd * 0.42, 0.35, wd * 0.42)));
+            p.push(block(Slot::Panel, 0.0, -l * 0.05, 2.25, wd * 0.38, 0.5, l * 0.24));
+            p.push(block(Slot::Dark, 0.0, l * 0.16, 2.35, 0.18, 0.18, l * 0.36));
+            p.push(block(Slot::Team, 0.0, -l * 0.22, 1.95, wd * 0.7, 0.15, l * 0.3));
+            p.push(block(Slot::Crate(3), -wd * 0.28, -l * 0.36, 1.95, 0.7, 0.5, 0.6));
+            hazard_trim(p, wd * 0.82, l * 0.95, 1.9);
         }
         Faction::Apa => {
-            p.push(block(Slot::Hull, 0.0, 0.0, 0.55, wd * 0.9, 0.9, l * 0.9));
-            p.push(block(Slot::Team, 0.0, -l * 0.3, 1.45, wd * 0.7, 0.15, l * 0.3));
-            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.75, 0.0), Vec3::new(wd * 0.5, 0.6, wd * 0.5)));
-            for (x, y) in [(-0.15, 1.7), (0.15, 1.7), (0.0, 1.9)] {
-                p.push(block(Slot::Dark, x, l * 0.32, y, 0.12, 0.12, l * 0.45));
+            p.push(block(Slot::Hull, 0.0, 0.0, 0.55, wd * 0.82, 0.9, l * 0.9));
+            p.push(block(Slot::Team, 0.0, -l * 0.3, 1.45, wd * 0.6, 0.15, l * 0.3));
+            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.75, -l * 0.02), Vec3::new(wd * 0.5, 0.6, wd * 0.5)));
+            for (x, y) in [(-0.15, 1.75), (0.15, 1.75), (0.0, 2.0)] {
+                p.push(block(Slot::Dark, x, l * 0.3, y, 0.13, 0.13, l * 0.42));
             }
+            p.push(block(Slot::Dark, 0.0, l * 0.06, 1.95, wd * 0.34, 0.45, 0.4));
+            p.push(block(Slot::Crate(2), wd * 0.3, -l * 0.36, 1.5, 0.7, 0.5, 0.6));
         }
         Faction::Gla => {
             p.push(block(Slot::Hull, 0.0, l * 0.22, 0.55, wd * 0.9, 1.2, l * 0.35));
@@ -420,6 +817,8 @@ fn light_vehicle(p: &mut Vec<Part>, faction: Faction, r: f32) {
             p.push(block(Slot::Crate(1), 0.0, -l * 0.18, 0.55, wd * 0.9, 0.6, l * 0.5));
             p.push(block(Slot::Dark, 0.0, -l * 0.2, 1.15, 0.2, 0.9, 0.2));
             p.push(block(Slot::Dark, 0.0, -l * 0.05, 1.95, 0.14, 0.14, l * 0.4));
+            p.push(block(Slot::Crate(3), wd * 0.3, -l * 0.38, 1.35, 0.7, 0.55, 0.6));
+            p.push(block(Slot::Crate(2), -wd * 0.3, -l * 0.38, 1.35, 0.7, 0.55, 0.6));
         }
     }
 }
@@ -430,34 +829,43 @@ fn light_vehicle(p: &mut Vec<Part>, faction: Faction, r: f32) {
 fn artillery(p: &mut Vec<Part>, faction: Faction, r: f32) {
     let (l, wd) = (r * 2.4, r * 1.35);
     for side in [-1.0, 1.0] {
-        p.push(block(Slot::Dark, side * wd * 0.42, 0.0, 0.0, wd * 0.22, 0.8, l));
+        track(p, side * wd * 0.43, l, 0.0, Slot::Panel);
     }
-    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, wd * 0.72, 0.8, l * 0.95));
-    p.push(block(Slot::Team, 0.0, l * 0.32, 1.3, wd * 0.72, 0.15, l * 0.22));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.55, wd * 0.74, 0.85, l * 0.95));
+    p.push(block(Slot::Team, 0.0, l * 0.32, 1.4, wd * 0.74, 0.15, l * 0.22));
+    // Spade dug in at the rear.
+    p.push(block(Slot::Dark, 0.0, -l * 0.5, 0.6, wd * 0.9, 0.55, 0.3));
     let raised = |slot: Slot, x: f32, len: f32, thick: f32| {
         // Parts have no pitch, so the raised barrel is a stack of short segments, each a little
         // further forward and higher than the last.
-        (0..4).map(move |k| {
-            let t = k as f32 / 3.0;
-            block(slot, x, -l * 0.05 + len * t, 2.0 + len * t * 0.55, thick, thick, len * 0.36)
+        (0..3).map(move |k| {
+            let t = k as f32 / 2.0;
+            block(slot, x, -l * 0.05 + len * t, 2.1 + len * t * 0.55, thick, thick, len * 0.4)
         })
     };
     match faction {
         Faction::Eu => {
-            p.push(block(Slot::Panel, 0.0, -l * 0.12, 1.3, wd * 0.62, 0.9, l * 0.5));
-            p.extend(raised(Slot::Dark, 0.0, l * 0.5, 0.32));
-            hazard_trim(p, wd * 0.72, l * 0.95, 1.3);
+            p.push(block(Slot::Panel, 0.0, -l * 0.14, 1.4, wd * 0.64, 0.95, l * 0.52));
+            p.push(block(Slot::Dark, 0.0, l * 0.12, 2.15, wd * 0.34, 0.55, 0.5));
+            p.extend(raised(Slot::Dark, 0.0, l * 0.52, 0.34));
+            p.push(block(Slot::Crate(3), wd * 0.24, -l * 0.36, 2.45, 0.7, 0.5, 0.6));
+            p.push(block(Slot::Crate(1), -wd * 0.24, -l * 0.36, 2.45, 0.7, 0.5, 0.6));
+            hazard_trim(p, wd * 0.74, l * 0.95, 1.42);
         }
         Faction::Apa => {
-            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.9, -l * 0.1), Vec3::new(wd * 0.7, 0.9, wd * 0.7)));
+            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.95, -l * 0.1), Vec3::new(wd * 0.7, 0.9, wd * 0.7)));
+            p.push(block(Slot::Dark, 0.0, l * 0.1, 2.55, wd * 0.38, 0.6, 0.5));
             p.extend(raised(Slot::Dark, 0.0, l * 0.55, 0.4));
+            p.push(cyl(Slot::Dark, Vec3::new(0.0, 2.65, -l * 0.18), Vec3::new(0.55, 0.4, 0.55)));
+            p.push(block(Slot::Crate(2), -wd * 0.26, -l * 0.34, 2.35, 0.8, 0.55, 0.7));
         }
         Faction::Gla => {
-            p.push(block(Slot::Crate(1), 0.0, -l * 0.2, 1.3, wd * 0.7, 0.5, l * 0.5));
+            p.push(block(Slot::Crate(1), 0.0, -l * 0.2, 1.4, wd * 0.7, 0.5, l * 0.5));
             for x in [-0.35, 0.0, 0.35] {
                 p.extend(raised(Slot::Dark, x, l * 0.42, 0.2));
             }
-            p.push(block(Slot::Crate(3), wd * 0.25, l * 0.3, 1.3, 0.8, 0.6, 0.7));
+            p.push(block(Slot::Crate(3), wd * 0.25, l * 0.3, 1.4, 0.8, 0.6, 0.7));
+            p.push(block(Slot::Crate(4), -wd * 0.25, l * 0.3, 1.4, 0.8, 0.6, 0.7));
         }
     }
 }
@@ -552,27 +960,29 @@ pub fn team_slots(factions: &[Faction]) -> Vec<usize> {
 pub fn color(faction: Option<Faction>, slot: Slot) -> Color {
     let f = faction.unwrap_or(Faction::Gla);
     match slot {
+        // Tuned against the 2013 footage under our grade: EU a warm mid grey (near-white blew
+        // out in the sun), APA dark steel, GLA rust-brown scrap; hazard trim leans orange.
         Slot::Hull => match f {
-            Faction::Eu => Color::srgb(0.78, 0.79, 0.78),
-            Faction::Apa => Color::srgb(0.36, 0.37, 0.38),
-            Faction::Gla => Color::srgb(0.56, 0.49, 0.38),
+            Faction::Eu => Color::srgb(0.60, 0.60, 0.58),
+            Faction::Apa => Color::srgb(0.32, 0.33, 0.34),
+            Faction::Gla => Color::srgb(0.46, 0.37, 0.27),
         },
         Slot::Panel => match f {
-            Faction::Eu => Color::srgb(0.58, 0.60, 0.61),
-            Faction::Apa => Color::srgb(0.24, 0.25, 0.26),
-            Faction::Gla => Color::srgb(0.43, 0.38, 0.31),
+            Faction::Eu => Color::srgb(0.44, 0.45, 0.45),
+            Faction::Apa => Color::srgb(0.21, 0.22, 0.23),
+            Faction::Gla => Color::srgb(0.36, 0.30, 0.23),
         },
-        Slot::Dark => Color::srgb(0.13, 0.13, 0.14),
+        Slot::Dark => Color::srgb(0.11, 0.11, 0.12),
         Slot::Team => TEAM_PALETTE[f as usize],
-        Slot::Hazard => Color::srgb(0.92, 0.70, 0.08),
-        Slot::Concrete => Color::srgb(0.50, 0.48, 0.44),
+        Slot::Hazard => Color::srgb(0.90, 0.52, 0.08),
+        Slot::Concrete => Color::srgb(0.42, 0.40, 0.36),
         Slot::Glow => Color::srgb(0.35, 0.75, 0.85),
         Slot::Crate(i) => [
-            Color::srgb(0.55, 0.30, 0.25),
-            Color::srgb(0.32, 0.42, 0.30),
-            Color::srgb(0.62, 0.55, 0.38),
-            Color::srgb(0.30, 0.38, 0.48),
-            Color::srgb(0.66, 0.36, 0.30),
+            Color::srgb(0.50, 0.31, 0.25),
+            Color::srgb(0.35, 0.40, 0.28),
+            Color::srgb(0.58, 0.50, 0.36),
+            Color::srgb(0.34, 0.38, 0.41),
+            Color::srgb(0.56, 0.38, 0.26),
         ][i as usize % 5],
         Slot::Oil => Color::srgb(0.02, 0.02, 0.02),
         Slot::Wood => Color::srgb(0.38, 0.28, 0.17),
@@ -605,6 +1015,18 @@ mod tests {
                 let reach = Vec2::new(p.at.x, p.at.z).length() - p.size.x.max(p.size.z) / 2.0;
                 assert!(reach <= r * 1.3, "{} part at {:?} pokes out of its {r} footprint", def.name, p.at);
             }
+        }
+    }
+
+    /// Every part is a mesh and an entity, so the counts are a performance budget, not a
+    /// style choice.
+    #[test]
+    fn every_model_stays_inside_its_part_budget() {
+        let rules = g2_rules::rules();
+        for def in rules.defs.iter() {
+            let parts = parts_for(def, def.faction);
+            let cap = if def.is_building() { 120 } else { 30 };
+            assert!(parts.len() <= cap, "{} needs {} parts, its budget is {cap}", def.name, parts.len());
         }
     }
 }

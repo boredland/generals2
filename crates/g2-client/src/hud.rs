@@ -38,6 +38,8 @@ enum Field {
     Money,
     /// The general's power: "G <name>" when ready, else its countdown; hidden without one.
     GeneralPower,
+    /// Countdown to the next Onslaught wave; empty without an Onslaught opponent.
+    Waves,
     Status,
     SelName,
     SelInfo,
@@ -204,6 +206,7 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
             s.spawn((text("$0", 13.0, MONEY), Field::Money));
         });
         p.spawn((text("", 12.0, TEXT), Field::GeneralPower));
+        p.spawn((text("", 12.0, XP), Field::Waves));
         p.spawn((
             Node {
                 width: px(MINIMAP),
@@ -369,6 +372,7 @@ fn update_fields(
                     _ => String::new(),
                 }
             }
+            Field::Waves => t.0 = onslaught_status(world).unwrap_or_default(),
             Field::Status => {
                 // The end screen and the Esc pause menu announce themselves; Space pauses
                 // with no menu, so that one needs its label here. A network problem comes
@@ -381,14 +385,8 @@ fn update_fields(
                     (_, _, _, Some(def)) => format!("Place {}  -  Esc cancels", rules.def(def).name),
                     // Screenshot mode freezes the frame; a "PAUSED" label there would be a lie.
                     (_, _, 0, _) if !menu_open && frozen.is_none() => "PAUSED".into(),
-                    (_, _, s, _) => {
-                        let speed = if s > 1 { format!("x{s}") } else { String::new() };
-                        match onslaught_status(world) {
-                            Some(waves) if speed.is_empty() => waves,
-                            Some(waves) => format!("{waves}   {speed}"),
-                            None => speed,
-                        }
-                    }
+                    (_, _, 0 | 1, _) => String::new(),
+                    (_, _, s, _) => format!("x{s}"),
                 }
             }
             Field::SelName => {

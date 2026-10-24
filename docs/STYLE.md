@@ -18,22 +18,23 @@ Reference footage (local-only):
 - Strong, warm afternoon sun. Shadows are crisp and fall toward the lower right. They are a readability tool: they show height and separate units from the ground.
 - Warm ambient light, so shaded sides stay legible.
 - **Spotlight vignette**: the corners fall off toward black and the action stays bright. This is the single strongest mood cue.
-- Warm grade (temperature up, slight saturation boost), plus light distance haze.
+- Warm, contrasty grade (temperature up, saturation boost, deep brown shadows), plus light distance haze. Exposure is set so the lit centre of a base frame lands near the footage's (about 120-140 sRGB luminance on a centre crop).
+- Screen-space ambient occlusion grounds buildings and units and darkens model creases; FXAA smooths edges (MSAA is off for SSAO).
 
 ## Terrain (`terrain.rs`)
 
-- Dry savanna. Mostly ochre and olive grass, with patches of bare dirt and noise at several scales. A tiling procedural detail texture adds grass tufts and pebbles at close zoom.
+- Dry savanna in warm brown-ochre (the footage's open ground measures about sRGB 135/103/62), with olive only in scattered patches, bare dirt, dark speckle and noise at several scales. A tiling procedural detail texture adds dark tuft clumps, lit blades and grit, so the ground is busy at every zoom.
 - Light worn **dirt roads** link the bases, supply piles and oil wells, so the economy routes are readable at a glance.
-- Scattered trees with flat canopies, bushes and boulders, kept off roads, base areas and resources.
+- Acacias standing apart: a slender forked trunk under flat clumped crowns of lit and shaded lumps, casting wide broken shadows; low multi-lump bushes; boulders. Kept off roads, base areas and resources.
 - Dark rocky ridges frame the playable area; the vignette takes the edges to black.
 
 ## Models (`models.rs`)
 
-Requirements: you can tell a faction from its silhouette and colour, models stay inside their sim footprint (a test enforces this), and roofs are busy, because the camera mostly sees roofs.
+Requirements: you can tell a faction from its silhouette and colour, models stay inside their sim footprint, and roofs are busy, because the camera mostly sees roofs. Buildings are layered industrial structures with three or more height levels: stepped roof tiers, rails and catwalks along roof edges, pipe runs, ribbed and seamed walls, recessed bays, corner trims, masts and dishes. Vehicles have tracks with road wheels and skirts (or wheels with fenders), a turret with mantlet and barrel, and stowage. Budget: at most 120 parts per building and 30 per unit (tests enforce both, and the footprint).
 
-- **EU**: light grey industrial panels, hazard-striped roof edges, teal team accents.
+- **EU**: warm mid-grey industrial panels (near-white blows out in the sun), orange hazard trims, teal team accents.
 - **APA**: dark steel, red team accents, tiered rooftops.
-- **GLA**: improvised. Scrap walls, crate and barrel yards, and a lookout post on the supply stash; sand team colour.
+- **GLA**: improvised, rust-brown. Sandbag rings, scrap sheets, crate and barrel yards, tent camps, and a lookout post on the supply stash; sand team colour.
 - **Construction**: a coloured scaffold frame with crane arms surrounds the foundation, and the building grows upward inside it as the sim's construction progresses.
 - **Resources**: supply piles are stacks of mixed crates on a pallet that shrink as they deplete. Oil wells are black pools with a wellhead.
 - **Collectors**: the EU collector flies (sourced), as an original ducted-fan lifter with a cargo cradle. The APA collector is a supply truck. GLA workers are on foot and also build.
@@ -49,3 +50,7 @@ Requirements: every element shows live sim data, nothing is decorative, there ar
 - **Top centre**: a compact match bar with both factions' tags around the clock. Top left: menu label. Top right: neutral project label.
 - **World overlays**: `COLLECTORS n/cap` over own supply centers (red at the faction cap), and health bars over the selection and damaged entities.
 - Not shown until the systems exist: generals and perks, abilities, experience.
+
+## Budget
+
+The headless screenshot mode prints the mesh count and the average frame time over 30 frames. On the build host's integrated GPU at 1080p the densest original map (`zh:Red Rock`, about 35,000 meshes, mostly scenery) runs at 9-13 ms per frame; a typical base view at 720p at about 8 ms.

@@ -23,11 +23,13 @@ pub fn camera_bundle() -> impl Bundle {
         // Physical units: daylight exposure with a daylight-strength sun (see `spawn_lights`).
         Exposure::SUNLIGHT,
         Tonemapping::AgX,
+        // The 2013 footage is contrasty and warm: deep brown shadows, bright dusty highlights.
+        // Its lit centre measures about 140-150 sRGB luminance; exposure is set to match.
         ColorGrading {
-            global: ColorGradingGlobal { exposure: 0.7, temperature: 0.25, post_saturation: 1.18, ..default() },
-            shadows: ColorGradingSection { contrast: 1.15, saturation: 1.1, gamma: 0.95, ..default() },
-            midtones: ColorGradingSection { contrast: 1.12, saturation: 1.12, ..default() },
-            highlights: ColorGradingSection { contrast: 1.08, ..default() },
+            global: ColorGradingGlobal { exposure: 1.15, temperature: 0.3, post_saturation: 1.22, ..default() },
+            shadows: ColorGradingSection { contrast: 1.3, saturation: 1.15, gamma: 0.9, ..default() },
+            midtones: ColorGradingSection { contrast: 1.18, saturation: 1.15, ..default() },
+            highlights: ColorGradingSection { contrast: 1.1, ..default() },
         },
         DistanceFog {
             color: Color::srgb(0.32, 0.27, 0.18),
@@ -35,7 +37,15 @@ pub fn camera_bundle() -> impl Bundle {
             directional_light_exponent: 20.0,
             falloff: FogFalloff::Linear { start: 330.0, end: 900.0 },
         },
-        Vignette { intensity: 1.3, radius: 0.68, smoothness: 2.2, roundness: 1.4, ..default() },
+        // The footage darkens the top corners hard but keeps the left and right middle lit.
+        Vignette { intensity: 1.15, radius: 0.74, smoothness: 2.4, roundness: 1.2, ..default() },
+        // Contact shadows where buildings and units meet the ground, and in the creases of the
+        // models: what makes the footage's bases look heavy and grounded. Needs MSAA off; FXAA
+        // takes over the edges (SMAA would need the `smaa_luts` feature's lookup tables, which
+        // our feature list leaves out, and runs on 1×1 placeholders without them).
+        bevy::pbr::ScreenSpaceAmbientOcclusion { radius: 2.0, constant_object_thickness: 1.0, ..default() },
+        Msaa::Off,
+        bevy::anti_alias::fxaa::Fxaa::default(),
     )
 }
 

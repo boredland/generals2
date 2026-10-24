@@ -354,6 +354,14 @@ mod headless {
 
     pub fn run(mut sim: Sim, ui: crate::menu::Ui, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
         sim.speed = 0;
+        // The capture is awaited by polling for the file, so an old one at `path` would be
+        // taken for the new frame and nothing would be written.
+        if let Err(e) = std::fs::remove_file(&path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            eprintln!("can't replace {path}: {e}");
+            return AppExit::error();
+        }
         // The last few ticks' tracers and blasts, plus every shell still in the air, drawn
         // where it is along its flight, so the frame shows the battle as it stands.
         let mut hits = crate::sim::Hits::default();
@@ -500,6 +508,14 @@ mod headless {
             eprintln!("screenshot was not written to {path}");
             return AppExit::error();
         }
+        // What the frame costs: every mesh drawn, and the average of 30 more full frames
+        // (render, then wait for the GPU), so scenery and model detail can be budgeted.
+        let meshes = apps.main.world_mut().query::<&Mesh3d>().iter(apps.main.world()).count();
+        let start = std::time::Instant::now();
+        for _ in 0..30 {
+            wait(&mut apps);
+        }
+        let frame_ms = start.elapsed().as_secs_f64() * 1000.0 / 30.0;
         // Every sim entity must have exactly one mesh, at its sim position (ground plane x/z).
         // The only other meshes allowed are ghosts: remembered buildings destroyed out of sight.
         let world = apps.main.world_mut();
@@ -522,7 +538,7 @@ mod headless {
         let ghosts = mirrored.iter().filter(|(id, _)| sim.entity(*id).is_none()).count();
         let stray = mirrored.iter().filter(|(id, _)| sim.entity(*id).is_none() && !client.remembers(*id)).count();
         println!(
-            "wrote {path}; sim entities {total}, models {}, ghosts {ghosts}, misplaced {misplaced}",
+            "wrote {path}; sim entities {total}, models {}, ghosts {ghosts}, misplaced {misplaced}; meshes {meshes}, {frame_ms:.1} ms/frame",
             mirrored.len()
         );
         if mirrored.len() != total + ghosts || misplaced > 0 || stray > 0 {

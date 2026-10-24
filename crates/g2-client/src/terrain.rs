@@ -389,17 +389,19 @@ impl<'a> Layout<'a> {
     }
 
     fn color(&self, p: Vec2) -> [f32; 4] {
-        let dirt = Vec3::new(0.60, 0.48, 0.31);
-        let road = Vec3::new(0.74, 0.63, 0.45);
-        let ochre = Vec3::new(0.52, 0.44, 0.20);
-        let olive = Vec3::new(0.34, 0.33, 0.13);
-        let rock = Vec3::new(0.20, 0.18, 0.15);
-        let sand = Vec3::new(0.70, 0.60, 0.42);
+        // Measured against the 2013 alpha frames: its ground is warm brown-ochre dry grass
+        // (about sRGB 135/103/62), with darker olive only in scattered tufts and patches.
+        let dirt = Vec3::new(0.62, 0.47, 0.29);
+        let road = Vec3::new(0.74, 0.60, 0.40);
+        let ochre = Vec3::new(0.58, 0.45, 0.25);
+        let olive = Vec3::new(0.42, 0.37, 0.18);
+        let rock = Vec3::new(0.24, 0.20, 0.16);
+        let sand = Vec3::new(0.72, 0.58, 0.38);
         let snow = Vec3::new(0.86, 0.88, 0.90);
         let paved = Vec3::new(0.42, 0.41, 0.39);
         let big = fbm(p.x * 0.012, p.y * 0.012, 4, 21);
         let fine = fbm(p.x * 0.25, p.y * 0.25, 3, 31);
-        let grass = ochre.lerp(olive, fbm(p.x * 0.04, p.y * 0.04, 3, 41).powf(0.8));
+        let grass = ochre.lerp(olive, ((fbm(p.x * 0.04, p.y * 0.04, 3, 41) - 0.35) * 1.6).clamp(0.0, 0.7));
         let mut c = match self.ground_mix(p) {
             // Mostly dry grass, with large dirt patches and fine breakup.
             None => {
@@ -442,9 +444,11 @@ impl<'a> Layout<'a> {
         // Ridges go dark and rocky.
         let b = self.border(p);
         c = c.lerp(rock * (0.7 + fine * 0.6), (b * 1.4).clamp(0.0, 1.0));
-        // Fine luminance grain everywhere.
-        let grain = 0.88 + fbm(p.x * 0.7, p.y * 0.7, 2, 61) * 0.24;
-        let c = c * grain;
+        // Fine luminance grain everywhere, and dark speckle (stones, burnt tufts) as in the
+        // footage's busy ground.
+        let grain = 0.86 + fbm(p.x * 0.7, p.y * 0.7, 2, 61) * 0.28;
+        let speckle = if fbm(p.x * 1.9, p.y * 1.9, 1, 67) > 0.78 { 0.8 } else { 1.0 };
+        let c = c * grain * speckle;
         // Authored in sRGB; vertex colours are linear.
         Color::srgb(c.x, c.y, c.z).to_linear().to_f32_array()
     }
@@ -547,9 +551,12 @@ fn detail_image() -> Image {
             let tufts = tiled(u, v, period * 4, 3);
             let blades = tiled(u, v, period * 8, 5);
             let pebbles = tiled(u, v, period * 2, 7);
-            let tuft = ((tufts - 0.55) * 4.0).clamp(0.0, 1.0);
-            let shade = 0.82 + blades * 0.3 - tuft * 0.18 + (pebbles - 0.5) * 0.12;
-            let l = (shade.clamp(0.5, 1.3) / 1.3 * 255.0) as u8;
+            let grit = tiled(u, v, period * 16, 9);
+            // Dark tuft clumps with lit blade tips and a fine grit: the footage's ground is
+            // busy at every scale, not smooth.
+            let tuft = ((tufts - 0.5) * 4.0).clamp(0.0, 1.0);
+            let shade = 0.78 + blades * 0.38 - tuft * 0.3 + (pebbles - 0.5) * 0.16 + (grit - 0.5) * 0.2;
+            let l = (shade.clamp(0.4, 1.3) / 1.3 * 255.0) as u8;
             data.extend_from_slice(&[l, l, l, 255]);
         }
     }
@@ -628,20 +635,21 @@ fn scatter(layout: &Layout) -> Vec<(Prop, Vec2, f32, f32)> {
         for i in 0..nx {
             let r = |k: u32| hash(i, j, 900 + k);
             let p = Vec2::new((i as f32 + r(0)) * step, (j as f32 + r(1)) * step);
-            // Trees cluster where the big grass noise is high, forming groves.
+            // Trees cluster where the big grass noise is high, forming groves, but stay sparse:
+            // the footage's savanna is open ground with trees standing apart.
             let density = fbm(p.x * 0.015, p.y * 0.015, 3, 77);
             let roll = r(2);
-            let kind = if roll < (density - 0.40).max(0.0) * 0.7 {
+            let kind = if roll < (density - 0.42).max(0.0) * 0.45 + 0.012 {
                 Prop::Acacia
-            } else if roll < (density - 0.28).max(0.0) * 1.3 {
+            } else if roll < (density - 0.30).max(0.0) * 0.9 + 0.03 {
                 Prop::Bush
-            } else if roll > 0.98 {
+            } else if roll > 0.985 {
                 Prop::Rock
             } else {
                 continue;
             };
             if layout.is_clear(p, 3.0) {
-                out.push((kind, p, 0.75 + r(3) * 0.6, r(4) * std::f32::consts::TAU));
+                out.push((kind, p, 0.6 + r(3) * 0.45, r(4) * std::f32::consts::TAU));
             }
         }
     }
@@ -728,11 +736,12 @@ fn spawn_terrain(
     let mat = |m: &mut Assets<StandardMaterial>, c: Color| {
         m.add(StandardMaterial { base_color: c, perceptual_roughness: 0.9, ..default() })
     };
-    let canopy = mat(&mut materials, Color::srgb(0.22, 0.27, 0.10));
-    let canopy_dark = mat(&mut materials, Color::srgb(0.15, 0.19, 0.08));
-    let bark = mat(&mut materials, Color::srgb(0.25, 0.19, 0.13));
+    let canopy = mat(&mut materials, Color::srgb(0.20, 0.24, 0.09));
+    let canopy_dark = mat(&mut materials, Color::srgb(0.13, 0.16, 0.07));
+    let canopy_dry = mat(&mut materials, Color::srgb(0.30, 0.28, 0.12));
+    let bark = mat(&mut materials, Color::srgb(0.22, 0.17, 0.12));
     let stone = mat(&mut materials, Color::srgb(0.30, 0.27, 0.23));
-    let trunk = meshes.add(Cylinder::new(0.35, 1.0));
+    let trunk = meshes.add(Cylinder::new(0.25, 1.0));
     let crown = meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
     let rock = meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap());
 
@@ -741,43 +750,84 @@ fn spawn_terrain(
         let rot = Quat::from_rotation_y(yaw);
         match kind {
             Prop::Acacia => {
-                let h = 4.0 * scale;
+                let h = 5.0 * scale;
+                // Per-tree variety from its position, so neighbours differ.
+                let r = |k: u32| hash(p.x as i32, p.y as i32, 1300 + k);
+                let lean = Vec3::new(r(0) - 0.5, 0.0, r(1) - 0.5) * 0.5;
                 commands
                     .spawn((
                         crate::menu::MatchEntity,
-                        Scenery { at: p, radius: 3.6 * scale },
+                        // Reach of the farthest crown lump: limb tip (~1.7) + spread (~1.9) + lump
+                        // radius (~1.1), all × scale. Buildings clear props by this radius.
+                        Scenery { at: p, radius: 4.7 * scale },
                         Transform::from_translation(base).with_rotation(rot),
                         Visibility::default(),
                     ))
                     .with_children(|t| {
-                        t.spawn((
-                            Mesh3d(trunk.clone()),
-                            MeshMaterial3d(bark.clone()),
-                            Transform::from_xyz(0.0, h / 2.0, 0.0).with_scale(Vec3::new(1.0, h, 1.0)),
-                        ));
-                        // Flat, wide canopy: savanna acacia silhouette.
-                        t.spawn((
-                            Mesh3d(crown.clone()),
-                            MeshMaterial3d(canopy.clone()),
-                            Transform::from_xyz(0.0, h, 0.0).with_scale(Vec3::new(3.6, 1.1, 3.2) * scale),
-                        ));
-                        t.spawn((
-                            Mesh3d(crown.clone()),
-                            MeshMaterial3d(canopy_dark.clone()),
-                            Transform::from_xyz(1.4 * scale, h - 0.4, 0.8).with_scale(Vec3::new(2.0, 0.8, 1.9) * scale),
-                        ));
+                        // A slender trunk forking into two leaning limbs.
+                        let fork = Vec3::Y * h * 0.55 + lean * h * 0.3;
+                        let limb = |t: &mut ChildSpawnerCommands, from: Vec3, to: Vec3, thick: f32| {
+                            let d = to - from;
+                            t.spawn((
+                                Mesh3d(trunk.clone()),
+                                MeshMaterial3d(bark.clone()),
+                                Transform::from_translation((from + to) / 2.0)
+                                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, d.normalize()))
+                                    .with_scale(Vec3::new(thick, d.length(), thick)),
+                            ));
+                        };
+                        limb(t, Vec3::ZERO, fork, 1.0);
+                        let tips = [Vec3::new(1.6, h, 0.6) * scale, Vec3::new(-1.3, h * 0.92, -0.9) * scale];
+                        for tip in tips {
+                            limb(t, fork, tip + lean, 0.6);
+                        }
+                        // Each crown is a flat cluster of small lumps around a limb tip: a broken,
+                        // leafy edge instead of a solid plate, with lit and shaded lumps mixed.
+                        let crowns = [(tips[0] + lean, 2.4), (tips[1] + lean, 2.0)];
+                        for (c, (at, spread)) in crowns.into_iter().enumerate() {
+                            for k in 0..6u32 {
+                                let n = c as u32 * 16 + k;
+                                let a = k as f32 / 6.0 * std::f32::consts::TAU + r(10 + n);
+                                let d = if k == 0 { 0.0 } else { spread * (0.45 + r(30 + n) * 0.35) };
+                                let off = Vec3::new(a.cos() * d, (r(50 + n) - 0.5) * 0.5, a.sin() * d) * scale;
+                                let s = (1.1 + r(70 + n) * 0.6) * scale;
+                                let m = match (k + c as u32) % 3 {
+                                    0 => &canopy,
+                                    1 => &canopy_dark,
+                                    _ => &canopy_dry,
+                                };
+                                t.spawn((
+                                    Mesh3d(crown.clone()),
+                                    MeshMaterial3d(m.clone()),
+                                    Transform::from_translation(at + off).with_scale(Vec3::new(s, s * 0.32, s)),
+                                ));
+                            }
+                        }
                     });
             }
             Prop::Bush => {
-                commands.spawn((
-                    crate::menu::MatchEntity,
-                    Scenery { at: p, radius: 1.8 * scale },
-                    Mesh3d(crown.clone()),
-                    MeshMaterial3d(canopy_dark.clone()),
-                    Transform::from_translation(base + Vec3::Y * 0.6 * scale)
-                        .with_rotation(rot)
-                        .with_scale(Vec3::new(1.8, 1.0, 1.5) * scale),
-                ));
+                // A low clump of two or three lumps rather than one ball.
+                let r = |k: u32| hash(p.x as i32, p.y as i32, 1400 + k);
+                commands
+                    .spawn((
+                        crate::menu::MatchEntity,
+                        Scenery { at: p, radius: 1.8 * scale },
+                        Transform::from_translation(base).with_rotation(rot),
+                        Visibility::default(),
+                    ))
+                    .with_children(|t| {
+                        for k in 0..3 {
+                            let m = if k == 1 { &canopy } else { &canopy_dark };
+                            let off = Vec3::new(r(k * 2) - 0.5, 0.0, r(k * 2 + 1) - 0.5) * 1.8 * scale;
+                            let s = (0.7 + r(10 + k) * 0.6) * scale;
+                            t.spawn((
+                                Mesh3d(crown.clone()),
+                                MeshMaterial3d(m.clone()),
+                                Transform::from_translation(off + Vec3::Y * 0.45 * s)
+                                    .with_scale(Vec3::new(1.1, 0.75, 1.0) * s),
+                            ));
+                        }
+                    });
             }
             Prop::Rock => {
                 commands.spawn((
