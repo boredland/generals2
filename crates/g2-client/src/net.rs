@@ -351,6 +351,108 @@ mod tests {
         assert_eq!(upto(&l0).iter().map(|c| c.player.0).collect::<Vec<_>>(), vec![0, 1]);
     }
 
+    /// Quitting an online match through the menu saves each side's replay, whether both quit
+    /// on the same frame or the joiner a second after the host; both replays verify, and they
+    /// agree on every command up to the shorter one's end, with orders from both players in it.
+    #[test]
+    fn quitting_an_online_match_saves_replays_that_agree() {
+        for stagger in [0, 60] {
+            quit_online_match(stagger);
+        }
+    }
+
+    fn quit_online_match(stagger: usize) {
+        use crate::menu::{Act, MenuPlugin, Pending, Ui};
+        use bevy::prelude::*;
+        use bevy::time::TimeUpdateStrategy;
+        let players: Vec<PlayerSetup> = [Faction::Eu, Faction::Gla]
+            .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None })
+            .to_vec();
+        let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 3, players);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let setup = host_sim.world.replay(&host_sim.setup);
+        let hosting = std::thread::spawn(move || host(port, setup));
+        let (link, hello) = loop {
+            if let Ok(j) = join(&format!("127.0.0.1:{port}")) {
+                break j;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        accept(&link);
+        let mut joiner = Sim::new(g2_rules::crater_ridge(), None, hello.seed, hello.players);
+        joiner.local = PlayerId(1);
+        joiner.online = Some(Online::new(link, PlayerId(1), PlayerId(0)));
+        host_sim.online = Some(Online::new(hosting.join().unwrap().unwrap(), PlayerId(0), PlayerId(1)));
+        let dir = std::env::temp_dir().join(format!("g2-quit-{}-{port}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = [dir.join("host.g2rp"), dir.join("join.g2rp")];
+        let app = |sim: Sim, path: &std::path::Path| {
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(16)))
+                .insert_resource(sim)
+                .insert_resource(Ui { screen: crate::menu::Screen::Match, ..default() })
+                .init_resource::<crate::input::Selection>()
+                .init_resource::<crate::input::Placement>()
+                .init_resource::<crate::input::PowerAim>()
+                .init_resource::<crate::sim::Previous>()
+                .init_resource::<crate::sim::Hits>()
+                .init_resource::<crate::sim::Deliveries>()
+                .init_resource::<crate::view::Mirror>()
+                .init_resource::<ButtonInput<MouseButton>>()
+                .init_resource::<ButtonInput<KeyCode>>()
+                .add_plugins((crate::sim::SimPlugin, MenuPlugin { blocking: true }))
+                .insert_resource(crate::sim::RecordTo(path.to_string_lossy().into_owned()))
+                .add_systems(Last, crate::sim::save_replay_on_exit);
+            app
+        };
+        let mut apps = [app(host_sim, &paths[0]), app(joiner, &paths[1])];
+        let mut quit = [None, None];
+        for frame in 0..500 {
+            for (i, a) in apps.iter_mut().enumerate() {
+                if quit[i].is_some() {
+                    continue;
+                }
+                if frame == 60 {
+                    let mut sim = a.world_mut().resource_mut::<Sim>();
+                    let me = sim.local;
+                    let u = sim.world.entities().find(|e| e.owner == Some(me) && sim.world.rules.def(e.def).is_unit());
+                    let u = u.unwrap().id;
+                    sim.order(CommandKind::Move {
+                        units: vec![u],
+                        target: g2_sim::Vec2::from_int(150, 150 + 10 * i as i64),
+                    });
+                }
+                if frame == 400 + stagger * i {
+                    let mut pending = a.world_mut().resource_mut::<Pending>();
+                    pending.0.push(Act::QuitToMenu);
+                    pending.0.push(Act::QuitGame);
+                }
+                a.update();
+                if let Some(exit) = a.should_exit() {
+                    quit[i] = Some(exit);
+                }
+            }
+            std::thread::sleep(Duration::from_micros(200));
+        }
+        assert!(quit.iter().all(Option::is_some), "stagger {stagger}: both apps quit: {quit:?}");
+        let replays: Vec<g2_sim::Replay> =
+            paths.iter().map(|p| g2_sim::Replay::decode(&std::fs::read(p).expect("replay saved")).unwrap()).collect();
+        for r in &replays {
+            assert!(g2_sim::verify_replay(r, g2_rules::crater_ridge(), g2_rules::rules()).is_ok(), "stagger {stagger}");
+        }
+        let n = replays[0].length_ticks.min(replays[1].length_ticks);
+        // The host quits after 400 frames of 16 ms: about 190 ticks of play.
+        assert!(n > 150, "stagger {stagger}: the match ran {n} ticks");
+        let upto = |r: &g2_sim::Replay| r.commands.iter().filter(|c| c.tick < n).cloned().collect::<Vec<_>>();
+        assert_eq!(upto(&replays[0]), upto(&replays[1]), "stagger {stagger}");
+        let players: std::collections::BTreeSet<u8> = upto(&replays[0]).iter().map(|c| c.player.0).collect();
+        assert_eq!(players.into_iter().collect::<Vec<_>>(), vec![0, 1], "stagger {stagger}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// When the other side goes away, the match stops with a message instead of hanging.
     #[test]
     fn a_vanished_peer_stops_the_match_with_a_message() {

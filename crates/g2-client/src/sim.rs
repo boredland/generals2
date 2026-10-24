@@ -202,6 +202,20 @@ pub struct Heard(pub Vec<(crate::audio::Cue, Option<g2_sim::Vec2>)>);
 /// Far more than a frame can play (`audio::VOICES_PER_FRAME` per kind).
 const HEARD_MAX: usize = 256;
 
+/// Where `--record` saves the match when the app exits.
+#[derive(Resource)]
+pub struct RecordTo(pub String);
+
+/// Saves the match on any app exit: the menu's Quit, closing the window, Ctrl-C.
+pub fn save_replay_on_exit(mut exits: MessageReader<AppExit>, sim: Res<Sim>, to: Res<RecordTo>) {
+    if exits.read().next().is_some() {
+        match sim.save_replay(&to.0) {
+            Ok(()) => info!("replay saved to {} ({} ticks)", to.0, sim.world.tick()),
+            Err(e) => error!("could not save replay to {}: {e}", to.0),
+        }
+    }
+}
+
 /// What the view draws for combat.
 #[derive(Clone, Copy, Debug)]
 pub enum Shot {

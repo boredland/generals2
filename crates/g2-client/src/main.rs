@@ -273,9 +273,6 @@ fn join_sim(addr: &str, reveal: bool) -> Result<Sim, String> {
     Ok(sim)
 }
 
-#[derive(Resource)]
-struct RecordTo(String);
-
 fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
     // The menu covers a frozen battlefield; a flag-chosen match starts running at once.
     let mut ui = menu::Ui::default();
@@ -303,18 +300,9 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
     ))
     .add_systems(Startup, spawn_camera);
     if let Some(path) = record {
-        app.insert_resource(RecordTo(path)).add_systems(Last, save_replay_on_exit);
+        app.insert_resource(sim::RecordTo(path)).add_systems(Last, sim::save_replay_on_exit);
     }
     app.run()
-}
-
-fn save_replay_on_exit(mut exits: MessageReader<AppExit>, sim: Res<Sim>, to: Res<RecordTo>) {
-    if exits.read().next().is_some() {
-        match sim.save_replay(&to.0) {
-            Ok(()) => info!("replay saved to {} ({} ticks)", to.0, sim.world.tick()),
-            Err(e) => error!("could not save replay to {}: {e}", to.0),
-        }
-    }
 }
 
 fn spawn_camera(mut commands: Commands, sim: Res<Sim>) {
