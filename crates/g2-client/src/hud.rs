@@ -539,10 +539,25 @@ fn overlays(
     let world = &sim.world;
     for e in world.entities().filter(|e| sim.shows(e)) {
         let anchor = crate::view::overlay_anchor(&sim, e);
-        let Ok(screen) = camera.world_to_viewport(cam_tf, anchor) else { continue };
-        let Some(screen) = place(screen, 52.0) else { continue };
-        // Above the depot, or below it when there is no room above.
-        let label_y = if screen.y >= 52.0 { screen.y - 44.0 } else { screen.y + 10.0 };
+        // Raw placement is what decides whether an overlay is drawn at all: the HUD corners
+        // (menu and clock along the top, minimap and selection panel at the bottom) would
+        // cover a label here, and clamping one in from off-screen would pin it to the chrome.
+        let raw = match camera.world_to_viewport(cam_tf, anchor) {
+            Ok(p) if p.x >= 8.0 && p.x <= view.x - 8.0 && p.y >= 8.0 && p.y <= view.y - 8.0 => p,
+            _ => continue,
+        };
+        // The HUD owns the corners: the top strip (menu, clock, project label), the minimap
+        // bottom-left and the selection panel bottom-right. Nothing anchored there is drawn.
+        let under_hud = raw.y < 40.0
+            || (raw.x < 225.0 && raw.y > view.y - 235.0)
+            || (raw.x > view.x - 375.0 && raw.y > view.y - 175.0);
+        if under_hud {
+            continue;
+        }
+        let Some(screen) = place(raw, 52.0) else { continue };
+        // The label sits 44 px above its anchor: it needs that much clear sky, or it goes
+        // below the anchor instead of into the HUD strip along the top.
+        let label_y = if screen.y >= 88.0 { screen.y - 44.0 } else { screen.y + 10.0 };
         if let Some((n, cap)) = crate::view::depot_label(&sim, e) {
             let color = if n >= cap { Color::srgb(0.95, 0.25, 0.2) } else { Color::srgb(0.3, 0.95, 0.3) };
             commands.spawn((

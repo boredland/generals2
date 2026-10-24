@@ -48,5 +48,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      # Match-heavy tests (18 recorded matches per AI pairing) take far too long at the
+      # dev profile opt-level; the suite is measured in seconds when built optimised.
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --release

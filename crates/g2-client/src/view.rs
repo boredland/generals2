@@ -133,7 +133,6 @@ fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    sim: Res<Sim>,
 ) {
     let mut table = BTreeMap::new();
     let all_slots = [
@@ -191,8 +190,7 @@ fn setup_scene(
             ..default()
         }),
     });
-    let size = sim.world.map.width.to_f32().max(sim.world.map.height.to_f32());
-    crate::look::spawn_lights(&mut commands, size);
+    crate::look::spawn_lights(&mut commands);
 }
 
 /// Spawns `parts` in `faction`'s materials, with team-coloured parts in palette entry `team`.

@@ -39,31 +39,39 @@ pub fn camera_bundle() -> impl Bundle {
     )
 }
 
-pub fn spawn_lights(commands: &mut Commands, map_size: f32) {
+pub fn spawn_lights(commands: &mut Commands) {
     commands.spawn((
         crate::menu::MatchEntity,
         DirectionalLight {
             color: Color::srgb(1.0, 0.93, 0.80),
             illuminance: 110_000.0,
             shadow_maps_enabled: true,
-            // The ground is nearly flat under grazing light across cascades that span the whole
-            // map: the defaults leave it shadowing itself in distance bands (contour rings).
-            shadow_depth_bias: 0.08,
-            shadow_normal_bias: 4.5,
+            // The nearly flat ground under this sun shadows itself at the engine defaults,
+            // which reads as contour rings in the distance and as brown-black sand up close.
+            // These biases are large enough to stop it; watch that shadows still meet their
+            // casters rather than lifting off the bases.
+            shadow_depth_bias: 0.25,
+            shadow_normal_bias: 9.0,
             ..default()
         },
         // Afternoon sun from the upper left of the default view (camera looks toward -Z, screen
         // right is +X): light travels toward +X/+Z, so shadows fall to the lower right.
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -2.35, -0.85, 0.0)),
         CascadeShadowConfigBuilder {
-            num_cascades: 3,
+            // Fine splits near the camera, where coarse shadow texels band the ground into
+            // contour rings, over a short fixed range: everything the camera can see is
+            // inside 300 units, and tighter cascades buy texel density over map_size.
+            num_cascades: 4,
             minimum_distance: 1.0,
-            maximum_distance: map_size * 1.2,
-            first_cascade_far_bound: 140.0,
-            overlap_proportion: 0.2,
+            maximum_distance: 300.0,
+            first_cascade_far_bound: 60.0,
+            overlap_proportion: 0.15,
         }
         .build(),
     ));
+    // Twice the default texel density per cascade: the sun is the only shadow caster, so the
+    // extra memory buys clean shadows across the whole map.
+    commands.insert_resource(bevy::light::DirectionalLightShadowMap { size: 4096 });
     commands.insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.95, 0.85, 0.70),
         brightness: 9_000.0,
