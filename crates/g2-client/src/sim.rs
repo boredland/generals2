@@ -22,8 +22,8 @@ pub struct Sim {
     pub fog: bool,
     /// Each player's index into `models::TEAM_PALETTE` (index = player).
     pub teams: Vec<usize>,
-    /// Orders the local player has given, ever; the sound counts them to acknowledge each.
-    pub orders_given: u64,
+    /// Orders given since the sound last acknowledged them (drained every frame by `audio`).
+    pub unheard_orders: u32,
 }
 
 impl Sim {
@@ -31,7 +31,7 @@ impl Sim {
         let players = players.into();
         let teams = crate::models::team_slots(&players.iter().map(|p| p.faction).collect::<Vec<_>>());
         let setup = MatchSetup { map, seed, players };
-        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true, teams, orders_given: 0 }
+        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true, teams, unheard_orders: 0 }
     }
 
     /// Team colour of `player`.
@@ -107,7 +107,7 @@ impl Sim {
     pub fn order(&mut self, kind: CommandKind) {
         if !self.world.is_ai(LOCAL) {
             self.world.submit(LOCAL, kind);
-            self.orders_given += 1;
+            self.unheard_orders += 1;
         }
     }
 
@@ -156,9 +156,13 @@ pub struct Deliveries(pub Vec<(g2_sim::EntityId, i64)>);
 pub struct Hits(pub Vec<Shot>);
 
 /// Sounds the local player should hear, gathered per step like `Deliveries` (see
-/// `audio::sim_cues`), plus order acknowledgements; the sound drains it every frame.
+/// `audio::sim_cues`); the sound drains it every frame. Apps without sound (headless renders,
+/// tests) never drain it, so it keeps only the newest `HEARD_MAX`.
 #[derive(Resource, Default)]
 pub struct Heard(pub Vec<(crate::audio::Cue, Option<g2_sim::Vec2>)>);
+
+/// Far more than a frame can play (`audio::VOICES_PER_FRAME` per kind).
+const HEARD_MAX: usize = 256;
 
 /// What the view draws for combat.
 #[derive(Clone, Copy, Debug)]
@@ -207,6 +211,10 @@ fn step_sim(
         }
         collect_shots(&sim.world, &mut hits);
         heard.0.extend(crate::audio::sim_cues(&sim));
+        if heard.0.len() > HEARD_MAX {
+            let over = heard.0.len() - HEARD_MAX;
+            heard.0.drain(..over);
+        }
         if sim.world.winner().is_some() {
             sim.speed = 0;
             break;

@@ -159,23 +159,20 @@ fn toggle_mute(keys: Res<ButtonInput<KeyCode>>, mut muted: ResMut<Muted>) {
 }
 
 /// Plays what the sim gathered since the last frame (`sim::Heard`), a click for each order the
-/// local player gave and each menu choice about to apply.
-#[allow(clippy::too_many_arguments)]
+/// local player gave since (`Sim::unheard_orders`, drained here, so a new match starts at
+/// zero) and each menu choice about to apply.
 fn play_cues(
     mut commands: Commands,
-    sim: Res<Sim>,
+    mut sim: ResMut<Sim>,
     mut heard: ResMut<crate::sim::Heard>,
     pending: Option<Res<crate::menu::Pending>>,
     bank: Option<Res<Bank>>,
     muted: Res<Muted>,
     cam: Query<&RtsCamera>,
-    mut orders_heard: Local<u64>,
 ) {
     let mut cues = core::mem::take(&mut heard.0);
-    let orders = sim.orders_given;
-    let clicks = (orders - (*orders_heard).min(orders)) as usize + pending.map_or(0, |p| p.0.len());
-    *orders_heard = orders;
-    cues.extend(std::iter::repeat_n((Cue::Click, None), clicks));
+    let orders = core::mem::take(&mut sim.bypass_change_detection().unheard_orders) as usize;
+    cues.extend(std::iter::repeat_n((Cue::Click, None), orders + pending.map_or(0, |p| p.0.len())));
     let Some(bank) = bank else { return };
     if muted.0 {
         return;
@@ -549,5 +546,45 @@ mod tests {
         }
         assert!(app.world().resource::<Muted>().0);
         assert_eq!(while_muted, 0);
+    }
+
+    /// After a match with many orders, a fresh match (the menu swaps in a new `Sim`) clicks for
+    /// its very first order: acknowledgements don't wait for the old match's count.
+    #[test]
+    fn a_new_match_clicks_from_its_first_order() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins((crate::sim::SimPlugin, SoundPlugin));
+        let fresh = || {
+            let mut sim = Sim::new(crater_ridge(), None, 3, Sim::players([Faction::Eu, Faction::Gla], false));
+            sim.speed = 0;
+            sim
+        };
+        let clicks_for = |app: &mut App, orders: usize| {
+            let dozer = {
+                let sim = app.world().resource::<Sim>();
+                let rules = sim.world.rules;
+                sim.world.entities().find(|e| e.owner == Some(LOCAL) && rules.def(e.def).is_constructor()).unwrap().id
+            };
+            for k in 0..orders {
+                let target = g2_sim::Vec2::from_int(100 + k as i64, 100);
+                app.world_mut().resource_mut::<Sim>().order(g2_sim::CommandKind::Move { units: vec![dozer], target });
+            }
+            app.update();
+            let mut q = app.world_mut().query_filtered::<Entity, With<AudioPlayer<Sound>>>();
+            let ids: Vec<Entity> = q.iter(app.world()).collect();
+            ids.iter().for_each(|&e| {
+                app.world_mut().despawn(e);
+            });
+            ids.len()
+        };
+        app.insert_resource(fresh());
+        app.update();
+        for _ in 0..10 {
+            assert_eq!(clicks_for(&mut app, 2), 2);
+        }
+        app.insert_resource(fresh());
+        assert_eq!(clicks_for(&mut app, 1), 1, "the new match's first order");
     }
 }
