@@ -15,7 +15,7 @@ use bevy::window::PrimaryWindow;
 use g2_sim::{Class, CommandKind, DefId, EntityId};
 
 use crate::camera::RtsCamera;
-use crate::sim::{LOCAL, Sim, to_sim};
+use crate::sim::{Sim, to_sim};
 
 #[derive(Resource, Default)]
 pub struct Selection(pub Vec<EntityId>);
@@ -77,7 +77,7 @@ fn cycle_collectors(
     let world = &sim.world;
     let collectors: Vec<EntityId> = world
         .entities()
-        .filter(|e| e.owner == Some(LOCAL) && world.rules.def(e.def).collector().is_some())
+        .filter(|e| e.owner == Some(sim.local) && world.rules.def(e.def).collector().is_some())
         .map(|e| e.id)
         .collect();
     let Some(next) = next_after(&collectors, sel.0.first().copied()) else { return };
@@ -125,7 +125,7 @@ fn ray_ground(sim: &Sim, origin: Vec3, dir: Vec3) -> Option<Vec3> {
 }
 
 fn prune_selection(sim: Res<Sim>, mut sel: ResMut<Selection>) {
-    sel.0.retain(|&id| sim.world.entity(id).is_some_and(|e| e.owner == Some(LOCAL)));
+    sel.0.retain(|&id| sim.world.entity(id).is_some_and(|e| e.owner == Some(sim.local)));
 }
 
 /// The first selected entity whose def is a constructor, if any.
@@ -147,13 +147,16 @@ pub(crate) fn keyboard(
     mut placing: ResMut<Placement>,
     mut aim: ResMut<PowerAim>,
 ) {
-    if keys.just_pressed(KeyCode::Space) {
+    // Online the clock is shared: pausing or speeding up one machine would only stall the
+    // other, so these keys do nothing there.
+    let local_clock = sim.online.is_none();
+    if local_clock && keys.just_pressed(KeyCode::Space) {
         sim.speed = if sim.speed == 0 { 1 } else { 0 };
     }
-    if keys.any_just_pressed([KeyCode::Equal, KeyCode::NumpadAdd]) {
+    if local_clock && keys.any_just_pressed([KeyCode::Equal, KeyCode::NumpadAdd]) {
         sim.speed = (sim.speed * 2).clamp(1, 8);
     }
-    if keys.any_just_pressed([KeyCode::Minus, KeyCode::NumpadSubtract]) {
+    if local_clock && keys.any_just_pressed([KeyCode::Minus, KeyCode::NumpadSubtract]) {
         sim.speed = (sim.speed / 2).max(1);
     }
     if keys.just_pressed(KeyCode::F10) {
@@ -232,6 +235,7 @@ fn mouse(
         return;
     }
 
+    let me = sim.local;
     if let Some(def) = placing.0 {
         if buttons.just_pressed(MouseButton::Left)
             && let Some(builder) = selected_constructor(&sim, &sel)
@@ -258,12 +262,12 @@ fn mouse(
             sel.0.clear();
         }
         if start.distance(end) < 6.0 {
-            if let Some(id) = pick(&sim, here, |e| e.owner == Some(LOCAL)) {
+            if let Some(id) = pick(&sim, here, |e| e.owner == Some(me)) {
                 sel.0.push(id);
             }
         } else {
             let (lo, hi) = (start.min(end), start.max(end));
-            for e in sim.world.entities().filter(|e| e.owner == Some(LOCAL) && sim.world.rules.def(e.def).is_unit()) {
+            for e in sim.world.entities().filter(|e| e.owner == Some(me) && sim.world.rules.def(e.def).is_unit()) {
                 if let Ok(p) = cam.0.world_to_viewport(cam.1, sim.to_world(e.pos))
                     && p.cmpge(lo).all()
                     && p.cmple(hi).all()
@@ -287,14 +291,14 @@ fn mouse(
         }
         let rules = sim.world.rules;
         // An enemy under the cursor wins over our own entities or a pile it stands next to.
-        let enemy = pick(&sim, here, |e| e.owner.is_some_and(|o| o != LOCAL));
-        let target = enemy.or_else(|| pick(&sim, here, |e| e.owner.is_none() || e.owner == Some(LOCAL)));
+        let enemy = pick(&sim, here, |e| e.owner.is_some_and(|o| o != me));
+        let target = enemy.or_else(|| pick(&sim, here, |e| e.owner.is_none() || e.owner == Some(me)));
         let attack_move = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
         let armed = |id: &EntityId| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).weapon().is_some());
         let kinds = match target.and_then(|t| sim.world.entity(t)) {
             // Armed units attack; the rest of a mixed selection walks to the spot instead of
             // having the whole order rejected.
-            Some(t) if t.owner.is_some_and(|o| o != LOCAL) => {
+            Some(t) if t.owner.is_some_and(|o| o != me) => {
                 let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
                 [
                     (!fighters.is_empty()).then_some(CommandKind::Attack { units: fighters, target: t.id }),
@@ -304,7 +308,7 @@ fn mouse(
             Some(t) if matches!(rules.def(t.def).class, Class::SupplyPile) => {
                 [Some(CommandKind::Gather { units, pile: t.id }), None]
             }
-            Some(t) if t.owner == Some(LOCAL) && t.construction.is_some() => {
+            Some(t) if t.owner == Some(me) && t.construction.is_some() => {
                 [Some(CommandKind::Construct { units, site: t.id }), None]
             }
             _ if attack_move => {

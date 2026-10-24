@@ -58,7 +58,7 @@ fn clear_under_buildings(
     }
     let world = &sim.world;
     let ghosts = world
-        .vision(crate::sim::LOCAL)
+        .vision(sim.local)
         .memory
         .iter()
         .filter(|(id, _)| sim.fog && world.entity(**id).is_none())
@@ -70,7 +70,7 @@ fn clear_under_buildings(
         .chain(ghosts)
         .map(|(pos, def)| (to_world(pos).xz(), world.rules.def(def).radius.to_f32()))
         .collect();
-    let v = world.vision(crate::sim::LOCAL);
+    let v = world.vision(sim.local);
     let explored = (0..v.h).flat_map(|y| (0..v.w).map(move |x| (x, y))).filter(|&(x, y)| v.cell_state(x, y).0).count();
     if (buildings.as_slice(), explored) == (seen.0.as_slice(), seen.1) {
         return;
@@ -155,7 +155,7 @@ fn update_fog(
         return;
     }
     std::mem::swap(&mut *now, &mut *last);
-    let v = sim.world.vision(crate::sim::LOCAL);
+    let v = sim.world.vision(sim.local);
     for sheet in &sheets {
         let Some(mut mesh) = meshes.get_mut(&sheet.mesh) else { continue };
         let colors: Vec<[f32; 4]> =
@@ -1043,7 +1043,7 @@ mod tests {
         let dozer = sim
             .world
             .entities()
-            .find(|e| e.owner == Some(crate::sim::LOCAL) && sim.world.rules.def(e.def).is_constructor())
+            .find(|e| e.owner == Some(sim.local) && sim.world.rules.def(e.def).is_constructor())
             .unwrap();
         let (home, dozer) = (to_world(dozer.pos).xz(), dozer.id);
         let spot = home + Vec2::new(70.0, 0.0);
@@ -1088,25 +1088,25 @@ mod tests {
                 .unwrap()
                 .id
         };
-        let (ours, theirs) = (mine(&sim, crate::sim::LOCAL), mine(&sim, g2_sim::PlayerId(1)));
+        let (ours, theirs) = (mine(&sim, sim.local), mine(&sim, g2_sim::PlayerId(1)));
         let home = sim.world.entity(ours).unwrap().pos;
         let spot = g2_sim::Vec2::from_int(200, 140) + g2_sim::Vec2::from_int(30, 30);
         sim.order(g2_sim::CommandKind::Move { units: vec![ours], target: spot });
         for _ in 0..30 * 120 {
-            if sim.world.vision(crate::sim::LOCAL).is_visible(spot) {
+            if sim.world.vision(sim.local).is_visible(spot) {
                 break;
             }
             sim.world.step();
         }
         sim.order(g2_sim::CommandKind::Move { units: vec![ours], target: home });
         for _ in 0..30 * 120 {
-            if !sim.world.vision(crate::sim::LOCAL).is_visible(spot) {
+            if !sim.world.vision(sim.local).is_visible(spot) {
                 break;
             }
             sim.world.step();
         }
         let explored_out_of_sight = |s: &Sim| {
-            let v = s.world.vision(crate::sim::LOCAL);
+            let v = s.world.vision(s.local);
             v.is_explored(spot) && !v.is_visible(spot)
         };
         assert!(explored_out_of_sight(&sim), "the spot is explored, then left");
@@ -1140,12 +1140,8 @@ mod tests {
         let sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
         let enemy = g2_sim::PlayerId(1);
         let rules = sim.world.rules;
-        let dozer = sim
-            .world
-            .entities()
-            .find(|e| e.owner == Some(crate::sim::LOCAL) && rules.def(e.def).is_constructor())
-            .unwrap()
-            .id;
+        let dozer =
+            sim.world.entities().find(|e| e.owner == Some(sim.local) && rules.def(e.def).is_constructor()).unwrap().id;
         let cc = sim.world.entities().find(|e| e.owner == Some(enemy) && rules.def(e.def).is_building()).unwrap();
         let (cc, cc_pos) = (cc.id, cc.pos);
         let home = sim.world.entity(dozer).unwrap().pos;

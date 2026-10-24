@@ -47,8 +47,7 @@ pub fn spawn(commands: &mut Commands, pivot: Vec3) {
 /// Moves the camera over the local base when a match starts; the camera itself outlives matches.
 pub fn rehome(sim: Res<crate::sim::Sim>, mut cam: Query<&mut RtsCamera>) {
     let Ok(mut cam) = cam.single_mut() else { return };
-    let home =
-        sim.world.entities().find(|e| e.owner == Some(crate::sim::LOCAL)).map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
+    let home = sim.world.entities().find(|e| e.owner == Some(sim.local)).map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
     cam.pivot = home;
     cam.distance = DEFAULT_DISTANCE;
 }

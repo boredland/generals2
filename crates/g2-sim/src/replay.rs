@@ -157,25 +157,26 @@ impl Replay {
     }
 }
 
-struct Writer(Vec<u8>);
+/// Little-endian writer shared by replays and the lockstep wire format (`net`).
+pub(crate) struct Writer(pub(crate) Vec<u8>);
 
 impl Writer {
-    fn u8(&mut self, v: u8) {
+    pub(crate) fn u8(&mut self, v: u8) {
         self.0.push(v);
     }
-    fn u16(&mut self, v: u16) {
+    pub(crate) fn u16(&mut self, v: u16) {
         self.0.extend_from_slice(&v.to_le_bytes());
     }
-    fn u32(&mut self, v: u32) {
+    pub(crate) fn u32(&mut self, v: u32) {
         self.0.extend_from_slice(&v.to_le_bytes());
     }
-    fn u64(&mut self, v: u64) {
+    pub(crate) fn u64(&mut self, v: u64) {
         self.0.extend_from_slice(&v.to_le_bytes());
     }
     fn i64(&mut self, v: i64) {
         self.u64(v as u64);
     }
-    fn bytes(&mut self, b: &[u8]) {
+    pub(crate) fn bytes(&mut self, b: &[u8]) {
         self.u32(b.len() as u32);
         self.0.extend_from_slice(b);
     }
@@ -193,7 +194,7 @@ impl Writer {
         self.i64(p.x.0);
         self.i64(p.y.0);
     }
-    fn command(&mut self, k: &CommandKind) {
+    pub(crate) fn command(&mut self, k: &CommandKind) {
         match k {
             CommandKind::Move { units, target } => {
                 self.u8(0);
@@ -253,9 +254,9 @@ impl Writer {
     }
 }
 
-struct Reader<'a> {
-    b: &'a [u8],
-    at: usize,
+pub(crate) struct Reader<'a> {
+    pub(crate) b: &'a [u8],
+    pub(crate) at: usize,
 }
 
 impl Reader<'_> {
@@ -265,22 +266,22 @@ impl Reader<'_> {
         self.at = end;
         Ok(s)
     }
-    fn u8(&mut self) -> Result<u8, DecodeError> {
+    pub(crate) fn u8(&mut self) -> Result<u8, DecodeError> {
         Ok(self.take(1)?[0])
     }
-    fn u16(&mut self) -> Result<u16, DecodeError> {
+    pub(crate) fn u16(&mut self) -> Result<u16, DecodeError> {
         Ok(u16::from_le_bytes(self.take(2)?.try_into().unwrap()))
     }
-    fn u32(&mut self) -> Result<u32, DecodeError> {
+    pub(crate) fn u32(&mut self) -> Result<u32, DecodeError> {
         Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
     }
-    fn u64(&mut self) -> Result<u64, DecodeError> {
+    pub(crate) fn u64(&mut self) -> Result<u64, DecodeError> {
         Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
     }
     fn i64(&mut self) -> Result<i64, DecodeError> {
         Ok(self.u64()? as i64)
     }
-    fn bytes(&mut self) -> Result<&[u8], DecodeError> {
+    pub(crate) fn bytes(&mut self) -> Result<&[u8], DecodeError> {
         let n = self.u32()? as usize;
         self.take(n)
     }
@@ -298,7 +299,7 @@ impl Reader<'_> {
     fn pos(&mut self) -> Result<Vec2, DecodeError> {
         Ok(Vec2::new(Fx(self.i64()?), Fx(self.i64()?)))
     }
-    fn command(&mut self) -> Result<CommandKind, DecodeError> {
+    pub(crate) fn command(&mut self) -> Result<CommandKind, DecodeError> {
         Ok(match self.u8()? {
             0 => CommandKind::Move { units: self.ids()?, target: self.pos()? },
             1 => CommandKind::Gather { units: self.ids()?, pile: self.id()? },

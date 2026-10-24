@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use g2_sim::world::Event;
 
 use crate::camera::RtsCamera;
-use crate::sim::{LOCAL, Sim};
+use crate::sim::Sim;
 
 /// Output sample rate of every synthesized sound.
 const RATE: u32 = 44_100;
@@ -246,7 +246,8 @@ fn attenuation(d: f32) -> f32 {
 /// only for the local player, so the enemy's base gives nothing away.
 pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
     let world = &sim.world;
-    let vision = world.vision(LOCAL);
+    let me = sim.local;
+    let vision = world.vision(me);
     let seen = |p: g2_sim::Vec2| !sim.fog || vision.is_visible(p);
     let mut out = Vec::new();
     for e in world.events() {
@@ -267,12 +268,14 @@ pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
             }
             Event::Fired { from, .. } if seen(from) => out.push((Cue::Launch, Some(from))),
             Event::Landed { at, .. } if seen(at) => out.push((Cue::Blast, Some(at))),
-            Event::Produced { player: LOCAL, .. } => out.push((Cue::Ready, None)),
-            Event::Completed { player: LOCAL, .. } => out.push((Cue::Built, None)),
+            Event::Produced { player, .. } if player == me => out.push((Cue::Ready, None)),
+            Event::Completed { player, .. } if player == me => out.push((Cue::Built, None)),
             // Ours always, the enemy's where it lands in sight: a power is a big moment.
-            Event::PowerUsed { player, at } if player == LOCAL || seen(at) => out.push((Cue::Launch, Some(at))),
-            Event::Delivered { player: LOCAL, depot, .. } => out.push((Cue::Cash, world.entity(depot).map(|d| d.pos))),
-            Event::Rejected { player: LOCAL, .. } => out.push((Cue::Refused, None)),
+            Event::PowerUsed { player, at } if player == me || seen(at) => out.push((Cue::Launch, Some(at))),
+            Event::Delivered { player, depot, .. } if player == me => {
+                out.push((Cue::Cash, world.entity(depot).map(|d| d.pos)));
+            }
+            Event::Rejected { player, .. } if player == me => out.push((Cue::Refused, None)),
             _ => {}
         }
     }
@@ -499,7 +502,9 @@ mod tests {
             sim.world.step();
             for e in sim.world.events() {
                 match *e {
-                    Event::Produced { player, .. } | Event::Completed { player, .. } if player == LOCAL => ours += 1,
+                    Event::Produced { player, .. } | Event::Completed { player, .. } if player == sim.local => {
+                        ours += 1
+                    }
                     Event::Produced { .. } | Event::Completed { .. } => theirs += 1,
                     _ => {}
                 }
@@ -521,7 +526,7 @@ mod tests {
         let (mut hidden, mut heard_hidden, mut heard_with_fog_off) = (0, 0, 0);
         for _ in 0..30 * 600 {
             sim.world.step();
-            let vision = sim.world.vision(LOCAL);
+            let vision = sim.world.vision(sim.local);
             let unseen_hits = sim
                 .world
                 .events()
@@ -598,7 +603,7 @@ mod tests {
         let dozer = {
             let sim = app.world().resource::<Sim>();
             let rules = sim.world.rules;
-            sim.world.entities().find(|e| e.owner == Some(LOCAL) && rules.def(e.def).is_constructor()).unwrap().id
+            sim.world.entities().find(|e| e.owner == Some(sim.local) && rules.def(e.def).is_constructor()).unwrap().id
         };
         app.world_mut()
             .resource_mut::<Sim>()
@@ -650,7 +655,11 @@ mod tests {
             let dozer = {
                 let sim = app.world().resource::<Sim>();
                 let rules = sim.world.rules;
-                sim.world.entities().find(|e| e.owner == Some(LOCAL) && rules.def(e.def).is_constructor()).unwrap().id
+                sim.world
+                    .entities()
+                    .find(|e| e.owner == Some(sim.local) && rules.def(e.def).is_constructor())
+                    .unwrap()
+                    .id
             };
             for k in 0..orders {
                 let target = g2_sim::Vec2::from_int(100 + k as i64, 100);

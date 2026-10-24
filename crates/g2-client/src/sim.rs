@@ -6,9 +6,6 @@ use g2_maps::MapFile;
 use g2_rules::rules;
 use g2_sim::{CommandKind, MapDef, MatchSetup, PlayerId, PlayerSetup, TICKS_PER_SECOND, World};
 
-/// The local human player.
-pub const LOCAL: PlayerId = PlayerId(0);
-
 #[derive(Resource)]
 pub struct Sim {
     pub world: World,
@@ -24,6 +21,11 @@ pub struct Sim {
     pub teams: Vec<usize>,
     /// Orders given since the sound last acknowledged them (drained every frame by `audio`).
     pub unheard_orders: u32,
+    /// The player this client controls and sees through (0 unless joined over the network).
+    pub local: PlayerId,
+    /// A network match: orders go through the lockstep and the sim steps in time with the
+    /// other player's machine. `None` for a match on this machine alone.
+    pub online: Option<crate::net::Online>,
 }
 
 impl Sim {
@@ -31,7 +33,17 @@ impl Sim {
         let players = players.into();
         let teams = crate::models::team_slots(&players.iter().map(|p| p.faction).collect::<Vec<_>>());
         let setup = MatchSetup { map, seed, players };
-        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true, teams, unheard_orders: 0 }
+        Sim {
+            world: World::new(&setup, rules()),
+            setup,
+            speed: 1,
+            source,
+            fog: true,
+            teams,
+            unheard_orders: 0,
+            local: PlayerId(0),
+            online: None,
+        }
     }
 
     /// Team colour of `player`.
@@ -42,21 +54,21 @@ impl Sim {
     /// Ticks until the local player's general's power can be used (0: now); `None` without
     /// a power.
     pub fn power_ready_in(&self) -> Option<u32> {
-        self.world.player(LOCAL).power_ready.map(|t| t.saturating_sub(self.world.tick()))
+        self.world.player(self.local).power_ready.map(|t| t.saturating_sub(self.world.tick()))
     }
 
     /// The local player's general's power, if any.
     pub fn power(&self) -> Option<g2_sim::defs::Power> {
-        self.world.player(LOCAL).general.and_then(|g| self.world.rules.general(g).power)
+        self.world.player(self.local).general.and_then(|g| self.world.rules.general(g).power)
     }
 
     /// Whether the local player sees `e` right now: own entities always, neutral resources once
     /// their spot is explored (they never change hands or move), enemies only where visible.
     pub fn sees(&self, e: &g2_sim::Entity) -> bool {
-        let v = self.world.vision(LOCAL);
+        let v = self.world.vision(self.local);
         !self.fog
             || match e.owner {
-                Some(o) => o == LOCAL || v.is_visible(e.pos),
+                Some(o) => o == self.local || v.is_visible(e.pos),
                 None => v.is_explored(e.pos),
             }
     }
@@ -71,13 +83,13 @@ impl Sim {
     /// Whether the local player's fog still remembers entity `id` (an enemy building, possibly
     /// since destroyed). Always false with the fog off.
     pub fn remembers(&self, id: g2_sim::EntityId) -> bool {
-        self.fog && self.world.vision(LOCAL).memory.contains_key(&id)
+        self.fog && self.world.vision(self.local).memory.contains_key(&id)
     }
 
     /// The local player's fog cells for drawing, row-major on the sim's fog grid: 0 never
     /// explored, 1 explored but not visible now, 2 visible. All 2 with the fog off.
     pub fn fog_states(&self, out: &mut Vec<u8>) {
-        let v = self.world.vision(LOCAL);
+        let v = self.world.vision(self.local);
         out.clear();
         out.extend((0..v.h).flat_map(|y| (0..v.w).map(move |x| (x, y))).map(|(x, y)| match v.cell_state(x, y) {
             _ if !self.fog => 2,
@@ -89,7 +101,7 @@ impl Sim {
 
     /// Whether the local player has explored world point `(x, z)` (always, with the fog off).
     pub fn explored_at(&self, x: f32, z: f32) -> bool {
-        let v = self.world.vision(LOCAL);
+        let v = self.world.vision(self.local);
         let c = g2_sim::fog::CELL as f32;
         let (cx, cy) = ((x / c).floor() as i32, (z / c).floor() as i32);
         !self.fog || ((0..v.w).contains(&cx) && (0..v.h).contains(&cy) && v.cell_state(cx, cy).0)
@@ -116,9 +128,24 @@ impl Sim {
     }
 
     pub fn order(&mut self, kind: CommandKind) {
-        if !self.world.is_ai(LOCAL) {
-            self.world.submit(LOCAL, kind);
-            self.unheard_orders += 1;
+        if self.world.is_ai(self.local) {
+            return;
+        }
+        match &mut self.online {
+            Some(net) => net.order(kind),
+            None => {
+                self.world.submit(self.local, kind);
+            }
+        }
+        self.unheard_orders += 1;
+    }
+
+    /// Whether the sim may take its next step: always off the network; online, once the other
+    /// player's orders for it are in. `first`: the first step of this fixed update.
+    pub fn may_step(&mut self, first: bool) -> bool {
+        match &mut self.online {
+            Some(net) => net.ready(&mut self.world, first),
+            None => true,
         }
     }
 
@@ -213,10 +240,19 @@ fn step_sim(
     // Snapshot once per fixed step, so with fast-forward the render interpolates across all of
     // this step's sim ticks instead of only the last one.
     prev.0 = sim.world.entities().map(|e| (e.id, e.pos)).collect();
-    for _ in 0..sim.speed {
+    let me = sim.local;
+    // Online, a step beyond the first only catches up with the other player; there is no
+    // fast-forward (`speed` stays 1, and `+` is refused in `input`).
+    let steps = if sim.online.is_some() { 2 } else { sim.speed };
+    for i in 0..steps {
+        if !sim.may_step(i == 0) {
+            break;
+        }
         sim.world.step();
         for e in sim.world.events() {
-            if let g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } = *e {
+            if let g2_sim::world::Event::Delivered { player, depot, credits } = *e
+                && player == me
+            {
                 deliveries.0.push((depot, credits));
             }
         }
@@ -282,14 +318,16 @@ mod tests {
         run(&mut app, 20);
         {
             let mut sim = app.world_mut().resource_mut::<Sim>();
-            let worker = sim.world.entities().find(|e| e.owner == Some(LOCAL) && e.def == GLA_WORKER).unwrap().id;
+            let me = sim.local;
+            let worker = sim.world.entities().find(|e| e.owner == Some(me) && e.def == GLA_WORKER).unwrap().id;
             sim.order(CommandKind::Build { builder: worker, def: GLA_STASH, pos: to_sim(Vec3::new(110.3, 0.0, 79.8)) });
             sim.speed = 4;
         }
         run(&mut app, 600);
         {
             let mut sim = app.world_mut().resource_mut::<Sim>();
-            let stash = sim.world.entities().find(|e| e.owner == Some(LOCAL) && e.def == GLA_STASH).unwrap();
+            let me = sim.local;
+            let stash = sim.world.entities().find(|e| e.owner == Some(me) && e.def == GLA_STASH).unwrap();
             assert!(stash.is_complete(), "stash finished during the x4 burst");
             let stash = stash.id;
             sim.order(CommandKind::Train { producer: stash, def: GLA_WORKER });
@@ -298,7 +336,8 @@ mod tests {
         }
         run(&mut app, 60);
         let sim = app.world().resource::<Sim>();
-        let stash = sim.world.entities().find(|e| e.owner == Some(LOCAL) && e.def == GLA_STASH).unwrap();
+        let me = sim.local;
+        let stash = sim.world.entities().find(|e| e.owner == Some(me) && e.def == GLA_STASH).unwrap();
         assert_eq!(stash.queue.len(), 2, "both training orders were accepted");
         let path = std::env::temp_dir().join(format!("g2-client-test-{}.g2rp", std::process::id()));
         sim.save_replay(path.to_str().unwrap()).unwrap();
@@ -343,6 +382,7 @@ mod tests {
         let mut app = App::new();
         let mut sim = Sim::new(crater_ridge(), None, 1, Sim::players([Faction::Eu, Faction::Gla], true));
         sim.speed = 8;
+        let me = sim.local;
         let mut reference = World::new(&sim.setup, rules());
         app.add_plugins(MinimalPlugins)
             .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(10)))
@@ -358,7 +398,9 @@ mod tests {
         while reference.tick() < ticks {
             reference.step();
             for e in reference.events() {
-                if let g2_sim::world::Event::Delivered { player: LOCAL, depot, credits } = *e {
+                if let g2_sim::world::Event::Delivered { player, depot, credits } = *e
+                    && player == me
+                {
                     expected.push((depot, credits));
                 }
             }

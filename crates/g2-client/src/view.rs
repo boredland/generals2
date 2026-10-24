@@ -11,7 +11,7 @@ use bevy::prelude::*;
 use g2_sim::{BuildingRole, Class, EntityId, Faction};
 
 use crate::models::{self, Part, Prim, Slot};
-use crate::sim::{LOCAL, Previous, Sim, to_world};
+use crate::sim::{Previous, Sim, to_world};
 
 /// Links a render entity to its sim entity.
 #[derive(Component)]
@@ -353,7 +353,7 @@ fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
 /// what has an end the local player sees.
 fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, mut hits: ResMut<crate::sim::Hits>) {
     use crate::sim::Shot;
-    let vision = sim.world.vision(crate::sim::LOCAL);
+    let vision = sim.world.vision(sim.local);
     let seen = |p: g2_sim::Vec2| !sim.fog || vision.is_visible(p);
     let tick_secs = 1.0 / g2_sim::TICKS_PER_SECOND as f32;
     for shot in hits.0.drain(..) {
@@ -543,7 +543,7 @@ pub fn overlay_anchor(sim: &Sim, e: &g2_sim::Entity) -> Vec3 {
 /// Whether the local player should see a collector-count label on this entity.
 pub fn depot_label(sim: &Sim, e: &g2_sim::Entity) -> Option<(u32, u32)> {
     match sim.world.rules.def(e.def).role() {
-        Some(BuildingRole::SupplyCenter { collector_cap }) if e.owner == Some(LOCAL) && e.is_complete() => {
+        Some(BuildingRole::SupplyCenter { collector_cap }) if e.owner == Some(sim.local) && e.is_complete() => {
             Some((sim.world.depot_load(e.id), collector_cap))
         }
         _ => None,
@@ -566,7 +566,7 @@ mod tests {
         let first = |s: &Sim, owner, pred: fn(&g2_sim::Def) -> bool| {
             s.world.entities().find(|e| e.owner == Some(owner) && pred(rules.def(e.def))).unwrap().id
         };
-        let dozer = first(&sim, LOCAL, |d| d.is_constructor());
+        let dozer = first(&sim, sim.local, |d| d.is_constructor());
         let cc = first(&sim, enemy, |d| d.is_building());
         let (home, cc_pos) = (sim.world.entity(dozer).unwrap().pos, sim.world.entity(cc).unwrap().pos);
         let mut app = App::new();

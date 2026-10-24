@@ -38,6 +38,7 @@ What works:
   - Collectors: cargo pips over your own collectors, a "+credits" pop-up over the supply center on every delivery (none are lost at ×8; a test compares them with the sim), and Tab cycles through your collectors.
   - Interpolated movement between sim ticks.
   - `--record FILE` saves the match as a replay on exit, for `g2-tools verify`.
+- **Two players over the network** (`crates/g2-sim/src/net.rs`, `crates/g2-client/src/net.rs`): deterministic lockstep over TCP. One player hosts (`--host PORT`, with the usual match flags; the host is player 0), the other joins (`--join HOST:PORT`) and receives the match: map, seed, factions and generals. Each machine sends its orders in turns of a tenth of a second, to run two turns later on both machines, and never steps into a turn without the other player's orders for it, so a slow link makes both wait instead of drifting apart. Every second both send their state hash; a mismatch stops the match with an "out of sync" message, and so does a closed link. Both must run the same build, and the map file must be the same on both. The game runs at one shared speed: no pause or fast-forward online, and the Esc menu leaves the match running. Tests: two simulated machines over a link with delay and jitter stay in step and catch a planted desync, and two client apps play over a real loopback socket. Not yet: a lobby or server browser, NAT traversal (the host's port must be reachable), reconnecting, more than two players, AI players in a network match.
   - A headless `--screenshot` mode that renders one frame and checks that every sim entity has exactly one model at its sim position. `--view base|map|battle` picks the in-game camera over your base, a whole-map overview, or the in-game camera over the latest shots; the frame includes the last few ticks' tracers, kill flashes and blasts, and every shell still in the air at the point of its arc it has reached.
   - Combat: barracks, war factories, infantry squads, tanks and self-propelled guns in each faction's style (team-coloured helmets and roof bands), a glowing tracer per direct hit and a fireball per kill. Shells fly on an arc for their flight time and land in a blast the size of their radius; the Thunderfist's stabiliser legs slide out while it sets up. `T` deploys the selected Thunderfists, or packs them up if all are set up; the selection panel shows the mode.
   - Fog: a dark sheet over the ground, soft-edged between cells (black where unexplored, dimmed where explored but out of sight); scenery on unexplored ground is hidden. Enemy units show only where visible, remembered enemy buildings stand where they were seen, and the minimap has the same fog layer. A remembered building destroyed out of sight stays drawn (model and minimap dot) as a ghost until you see its spot again, so a kill you didn't watch isn't given away. Hits and kill flashes show only where one end is visible, and hidden enemies can't be clicked. A building hides the scenery it covers only once you can see it, so a clearing doesn't give away a base in the fog. `--reveal` turns your fog off for watching (the sim's fog still applies).
@@ -52,7 +53,7 @@ Not yet:
 - The AI doesn't use artillery on purpose: guns go out in the same waves as tanks and deploy only when an enemy comes into reach, rather than setting up behind the line.
 - Generals' unique units, more than one power each and the per-general perk progression (rank, perk slots; archived patch preview #2).
 - **Generals are strong.** In Normal-vs-Normal matches on three maps (each ordered faction pairing, with the general on either side: 54 matches), the side with a general wins 40 against 27 without; most of that comes from the cost and build-time modifiers (36 with modifiers alone, 29 with the power alone). Without generals the second seat wins 20 of 27 and GLA 14 of 27, so these counts mix seat, faction and general.
-- The Onslaught PvE mode, networking, real art, music and voice acknowledgements.
+- The Onslaught PvE mode, a network lobby, real art, music and voice acknowledgements.
 - **Balance is unexamined and lopsided.** In 72 Easy-vs-Easy matches on Crater Ridge with fog and artillery (all 9 pairings, seeds 1–8; the AI uses no randomness, so the seed changes nothing) the first start won 32 and the second 40; the EU won 40, the APA 16, the GLA 16. Every match ended, after 6 to 12 minutes. The split has flipped with every AI change (40/32 with fog alone, 32/40 before fog). The two AIs build mirror-image bases (a test checks it) and their units leave the side of each building facing the map centre, yet mirror matches still drift apart after about two minutes. The cause is in per-tick processing, not the layout: the AI of the first start thinks one tick earlier, and movement, separation and pathfinding work on a fixed grid and in entity order, which a 180° rotation does not preserve. Nothing here says anything about faction strength. The unit numbers come from three sourced weapons stretched over nine units.
 - A few Normal-vs-Easy survey matches on large imported maps outlast the survey's 20-minute cap (5 of 1,548 across the 86 skirmish maps). Run longer, the six checked earlier all end with a winner, between 20 and 29 minutes: the last enemy building can take a while to find on a big map. The AI searches unexplored ground outward from the other players' starts.
 - On Crater Ridge, Normal and Easy are even (9 of 18 matches each; across all 86 skirmish maps Normal wins 1,360 to 183). There Normal's first wave is small, Easy wins that fight near its base and counterattacks Normal's empty base at the same time. Neither the attack threshold, the wave size nor the retreat ratio changes this (each tried, 5 to 10 wins).
@@ -105,7 +106,7 @@ Not yet:
 ## Layout
 
 ```
-crates/g2-sim      deterministic simulation (no deps): fixed point, RNG, entities, economy, AI, replays
+crates/g2-sim      deterministic simulation (no deps): fixed point, RNG, entities, economy, AI, replays, lockstep
 crates/g2-rules    faction/unit/building tables, the built-in map; economy + determinism tests
 crates/g2-client   Bevy 0.20 app: look (camera/light/grade), terrain, models, view, input, HUD, headless screenshot
 crates/g2-maps     reader for Generals / Zero Hour .map files: chunks, heights, textures, objects, water
@@ -129,6 +130,8 @@ cargo run -p g2-client --release -- --spectate --reveal   # AI vs AI without fog
 cargo run -p g2-tools --release -- maps             # list the original maps that can host a skirmish
 cargo run -p g2-client --release -- --map "zh:Tournament Desert" --faction apa
 cargo run -p g2-client --release -- --record my.g2rp # then: cargo run -p g2-tools --release -- verify my.g2rp
+cargo run -p g2-client --release -- --host 47000 --faction apa --enemy gla   # network match: wait for a player...
+cargo run -p g2-client --release -- --join 192.168.1.20:47000                # ...who joins from another machine
 cargo run -p g2-client --release -- --screenshot shot.png --ticks 1800   # on this host, wrap with scripts/igpu-only/run.sh
 cargo run -p g2-tools --release -- bench
 cargo run -p g2-tools --release -- record match.g2rp --factions apa,gla --ticks 18000 --map "gen:Alpine Assault"
@@ -163,7 +166,7 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 | Constructor selected: `1`–`9` | Choose a building; left click places (Shift repeats); Esc / right click cancels |
 | Building selected: `1`–`9` | Queue production; Backspace cancels the last item |
 | WASD / arrows / screen edge | Pan; mouse wheel zooms; Q/E rotate |
-| Space | Pause; `+`/`-` change speed (×1–×8) |
+| Space | Pause; `+`/`-` change speed (×1–×8). Not in a network match: the clock is shared |
 | Tab | Select the next own collector and centre the camera on it |
 | T | Deploy the selected Thunderfists (howitzer), or pack them up if all are deployed |
 | G | Arm your general's power when it is ready; left click aims it, right click / Esc disarms. The HUD shows the countdown |

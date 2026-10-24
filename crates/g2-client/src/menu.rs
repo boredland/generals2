@@ -112,7 +112,7 @@ impl Default for SkirmishConfig {
 }
 
 impl SkirmishConfig {
-    /// Builds the match this config describes. Slot 0 is the human player (`sim::LOCAL`).
+    /// Builds the match this config describes. Slot 0 is the human player (`Sim::local`).
     pub fn build(&self) -> Result<Sim, String> {
         let source = if self.map.contains(':') {
             Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &self.map)?)
@@ -338,11 +338,19 @@ fn apply_one(world: &mut World, act: Act) {
                 let mut ui = world.resource_mut::<Ui>();
                 ui.screen = Screen::Main;
                 ui.paused = false;
-                world.resource_mut::<Sim>().speed = 0;
+                let mut sim = world.resource_mut::<Sim>();
+                sim.speed = 0;
+                // Leaving a network match ends it: the other player sees the link close.
+                sim.online = None;
             }
+            // Online the menu opens over a running match: the clock is shared, so stopping it
+            // here would only stall the other player.
             Act::Pause => {
                 world.resource_mut::<Ui>().paused = true;
-                world.resource_mut::<Sim>().speed = 0;
+                let mut sim = world.resource_mut::<Sim>();
+                if sim.online.is_none() {
+                    sim.speed = 0;
+                }
             }
             Act::Resume => {
                 world.resource_mut::<Ui>().paused = false;
@@ -690,8 +698,8 @@ fn end_screen(root: &mut ChildSpawnerCommands, sim: &Sim, ui: &Ui) {
     panel(root, 660.0, |p| {
         // Watching two AIs play (the local player is one of them) has no victory to claim.
         let headline = match winner {
-            _ if world.is_ai(crate::sim::LOCAL) => "MATCH OVER",
-            Some(w) if w == crate::sim::LOCAL => "VICTORY",
+            _ if world.is_ai(sim.local) => "MATCH OVER",
+            Some(w) if w == sim.local => "VICTORY",
             Some(_) => "DEFEAT",
             None => "MATCH OVER",
         };

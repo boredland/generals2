@@ -17,7 +17,7 @@ use g2_sim::{Class, Faction, TICKS_PER_SECOND};
 
 use crate::camera::RtsCamera;
 use crate::input::{Placement, PowerAim, Selection};
-use crate::sim::{LOCAL, Sim};
+use crate::sim::Sim;
 
 pub(crate) const PANEL: Color = Color::srgba(0.07, 0.08, 0.09, 0.92);
 pub(crate) const PANEL_EDGE: Color = Color::srgb(0.24, 0.27, 0.29);
@@ -183,7 +183,7 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
             for (i, p) in world.players().iter().enumerate() {
                 let id = g2_sim::PlayerId(i as u8);
                 t.spawn((text(&label(p), 12.0, sim.team_color(id)), Field::Tag(id)));
-                if id == LOCAL {
+                if id == sim.local {
                     t.spawn((text("0:00:00", 15.0, TEXT), Field::Clock));
                 }
             }
@@ -319,7 +319,7 @@ fn update_fields(
     let aim = aim.is_some_and(|a| a.0);
     let world = &sim.world;
     let rules = world.rules;
-    let me = world.player(LOCAL);
+    let me = world.player(sim.local);
     let focus = sel.0.first().and_then(|&id| world.entity(id));
     if let Ok(mut row) = queue_row.single_mut() {
         let training = focus.is_some_and(|e| !e.queue.is_empty());
@@ -357,15 +357,18 @@ fn update_fields(
             }
             Field::Status => {
                 // The end screen and the Esc pause menu announce themselves; Space pauses
-                // with no menu, so that one needs its label here.
+                // with no menu, so that one needs its label here. A network problem comes
+                // first: the match is stuck until it clears, or for good.
                 let menu_open = ui.as_ref().is_some_and(|u| u.paused || u.screen != crate::menu::Screen::Match);
-                t.0 = match (world.winner(), sim.speed, placing.0) {
-                    (Some(_), _, _) => String::new(),
-                    (_, _, Some(def)) => format!("Place {}  -  Esc cancels", rules.def(def).name),
+                let link = sim.online.as_ref().and_then(|n| n.status());
+                t.0 = match (link, world.winner(), sim.speed, placing.0) {
+                    (Some(s), _, _, _) => s,
+                    (_, Some(_), _, _) => String::new(),
+                    (_, _, _, Some(def)) => format!("Place {}  -  Esc cancels", rules.def(def).name),
                     // Screenshot mode freezes the frame; a "PAUSED" label there would be a lie.
-                    (_, 0, _) if !menu_open && frozen.is_none() => "PAUSED".into(),
-                    (_, 0 | 1, _) => String::new(),
-                    (_, s, _) => format!("x{s}"),
+                    (_, _, 0, _) if !menu_open && frozen.is_none() => "PAUSED".into(),
+                    (_, _, 0 | 1, _) => String::new(),
+                    (_, _, s, _) => format!("x{s}"),
                 }
             }
             Field::SelName => {
@@ -421,7 +424,7 @@ fn update_fields(
                     Some(&def) => {
                         let d = rules.def(def);
                         let short = d.name.split_once(' ').map_or(d.name, |(_, rest)| rest);
-                        format!("{} {}  ${}", i + 1, short, world.cost_for(LOCAL, def).credits)
+                        format!("{} {}  ${}", i + 1, short, world.cost_for(sim.local, def).credits)
                     }
                     None => format!("{}", i + 1),
                 }
@@ -448,7 +451,7 @@ fn minimap(
     }
     let world = &sim.world;
     let (w, h) = (world.map.width.to_f32(), world.map.height.to_f32());
-    let v = world.vision(LOCAL);
+    let v = world.vision(sim.local);
     sim.fog_states(&mut states);
     let shade = [[0u8, 0, 0, 255], [0, 0, 0, 140], [0, 0, 0, 0]];
     let pixels: Vec<u8> = states.iter().flat_map(|&s| shade[s as usize]).collect();
@@ -489,7 +492,7 @@ fn minimap(
         // Shown entities, plus ghosts: remembered buildings destroyed out of sight, drawn where
         // they were seen.
         let ghosts = world
-            .vision(LOCAL)
+            .vision(sim.local)
             .memory
             .iter()
             .filter(|(id, _)| sim.fog && world.entity(**id).is_none())
@@ -584,7 +587,7 @@ fn overlays(
         }
         let def = world.rules.def(e.def);
         // Cargo pips over own collectors: five segments, filled by load.
-        if e.owner == Some(LOCAL)
+        if e.owner == Some(sim.local)
             && let Some(spec) = def.collector()
         {
             let filled = cargo_pips(e.cargo, spec.capacity);

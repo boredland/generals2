@@ -2,6 +2,8 @@
 //!
 //!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--general NAME]
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
+//!   g2-client --host PORT [match flags as above]      two players over the network: you host
+//!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
 //!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [...]
 //!             headless: simulate N ticks, render one frame
 //!
@@ -12,6 +14,10 @@
 //! of war (the sim's fog still applies to both sides). `--record` saves the match as a replay
 //! on exit; check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no
 //! window or display server.
+//!
+//! A network match is two humans, the host as player 0 with `--faction`/`--general`, the
+//! joiner as player 1 with `--enemy`/`--enemy-general`, on the host's map and seed. Both run
+//! the same build. The game runs at one shared speed: no pause and no fast-forward.
 
 mod audio;
 mod camera;
@@ -20,14 +26,15 @@ mod input;
 mod look;
 mod menu;
 mod models;
+mod net;
 mod sim;
 mod terrain;
 mod view;
 
 use bevy::prelude::*;
-use g2_sim::{Faction, GeneralId, PlayerSetup};
+use g2_sim::{Faction, GeneralId, PlayerId, PlayerSetup};
 
-use crate::sim::{LOCAL, Sim, SimPlugin};
+use crate::sim::{Sim, SimPlugin};
 
 struct Args {
     map: String,
@@ -49,6 +56,10 @@ struct Args {
     ticks: u32,
     view: headless::View,
     size: (u32, u32),
+    /// Host a two-player network match on this port: the local player against whoever joins.
+    host: Option<u16>,
+    /// Join the network match hosted at this `host:port`.
+    join: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -68,6 +79,8 @@ fn parse_args() -> Result<Args, String> {
         ticks: 900,
         view: headless::View::Base,
         size: (1280, 720),
+        host: None,
+        join: None,
     };
     let mut it = std::env::args().skip(1);
     let faction = |v: Option<String>| match v.as_deref() {
@@ -79,7 +92,15 @@ fn parse_args() -> Result<Args, String> {
     while let Some(flag) = it.next() {
         a.direct |= matches!(
             flag.as_str(),
-            "--map" | "--faction" | "--enemy" | "--general" | "--enemy-general" | "--seed" | "--spectate"
+            "--map"
+                | "--faction"
+                | "--enemy"
+                | "--general"
+                | "--enemy-general"
+                | "--seed"
+                | "--spectate"
+                | "--host"
+                | "--join"
         );
         match flag.as_str() {
             "--map" => a.map = it.next().ok_or("--map needs a name")?,
@@ -131,8 +152,16 @@ fn parse_args() -> Result<Args, String> {
                 let (w, h) = v.split_once('x').ok_or("--size needs WxH")?;
                 a.size = (w.parse().map_err(|_| "bad width")?, h.parse().map_err(|_| "bad height")?);
             }
+            "--host" => a.host = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--host needs a port")?),
+            "--join" => a.join = Some(it.next().ok_or("--join needs host:port")?),
             other => return Err(format!("unknown argument {other:?}")),
         }
+    }
+    if (a.host.is_some() || a.join.is_some()) && (a.spectate || a.screenshot.is_some()) {
+        return Err("--host and --join play a match: no --spectate or --screenshot".into());
+    }
+    if a.host.is_some() && a.join.is_some() {
+        return Err("--host or --join, not both".into());
     }
     Ok(a)
 }
@@ -145,7 +174,12 @@ fn main() -> AppExit {
             return AppExit::error();
         }
     };
-    let sim = match load_sim(&args) {
+    let loaded = match (&args.join, args.host) {
+        (Some(addr), _) => join_sim(addr, args.reveal),
+        (None, Some(port)) => load_sim(&args).and_then(|sim| host_sim(sim, port)),
+        (None, None) => load_sim(&args),
+    };
+    let sim = match loaded {
         Ok(sim) => sim,
         Err(e) => {
             eprintln!("{e}");
@@ -197,8 +231,42 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
             general: general(i)?,
         })
     };
-    let mut sim = Sim::new(map, source, args.seed, [player(0, spectate)?, player(1, true)?]);
+    // A hosted match is two humans: the joiner plays the enemy slot.
+    let enemy_ai = args.host.is_none();
+    let mut sim = Sim::new(map, source, args.seed, [player(0, spectate)?, player(1, enemy_ai)?]);
     sim.fog = !args.reveal;
+    Ok(sim)
+}
+
+/// Waits for a player to join, then plays the loaded match as player 0 against them.
+fn host_sim(mut sim: Sim, port: u16) -> Result<Sim, String> {
+    let link = net::host(port, sim.world.replay(&sim.setup))?;
+    sim.online = Some(net::Online::new(link, PlayerId(0), PlayerId(1)));
+    Ok(sim)
+}
+
+/// Joins the match hosted at `addr` as player 1. The match comes from the host; it must be on
+/// a map this build has, unchanged, with generals this build knows.
+fn join_sim(addr: &str, reveal: bool) -> Result<Sim, String> {
+    let (link, setup) = net::join(addr)?;
+    let source = if setup.map.contains(':') {
+        Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &setup.map)?)
+    } else {
+        None
+    };
+    let map = match &source {
+        Some(file) => file.to_map_def(&setup.map),
+        None => g2_maps::resolve(&setup.map)?,
+    };
+    setup.check(&map, g2_rules::rules())?;
+    if setup.players.len() != 2 || setup.players.iter().any(|p| p.ai.is_some()) {
+        return Err("the host offered a match that isn't two players against each other".into());
+    }
+    net::accept(&link);
+    let mut sim = Sim::new(map, source, setup.seed, setup.players);
+    sim.local = PlayerId(1);
+    sim.fog = !reveal;
+    sim.online = Some(net::Online::new(link, PlayerId(1), PlayerId(0)));
     Ok(sim)
 }
 
@@ -247,7 +315,7 @@ fn save_replay_on_exit(mut exits: MessageReader<AppExit>, sim: Res<Sim>, to: Res
 }
 
 fn spawn_camera(mut commands: Commands, sim: Res<Sim>) {
-    let home = sim.world.entities().find(|e| e.owner == Some(LOCAL)).map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
+    let home = sim.world.entities().find(|e| e.owner == Some(sim.local)).map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
     camera::spawn(&mut commands, home);
 }
 
@@ -267,7 +335,7 @@ mod headless {
     use bevy::winit::WinitPlugin;
 
     use crate::camera::RtsCamera;
-    use crate::sim::{LOCAL, Sim};
+    use crate::sim::Sim;
 
     #[derive(Clone, Copy)]
     pub enum View {
@@ -365,7 +433,7 @@ mod headless {
                     // The command center, not the first own entity: depleted piles free low
                     // entity slots, which later units reuse.
                     let rules = sim.world.rules;
-                    let mine = || sim.world.entities().filter(|e| e.owner == Some(LOCAL));
+                    let mine = || sim.world.entities().filter(|e| e.owner == Some(sim.local));
                     let home = mine()
                         .find(|e| rules.def(e.def).role() == Some(g2_sim::BuildingRole::CommandCenter))
                         .or_else(|| mine().next())
