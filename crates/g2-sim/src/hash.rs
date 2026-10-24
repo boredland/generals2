@@ -34,10 +34,12 @@ impl crate::map::MapDef {
             }
         }
         // Hashed only when present, so open-ground maps (Crater Ridge) keep their fingerprint.
-        if self.terrain.iter().any(|&b| b) {
-            h.u64(self.terrain.len() as u64);
-            for (i, _) in self.terrain.iter().enumerate().filter(|&(_, &b)| b) {
-                h.u64(i as u64);
+        for cells in [&self.terrain, &self.decks] {
+            if cells.iter().any(|&b| b) {
+                h.u64(cells.len() as u64);
+                for (i, _) in cells.iter().enumerate().filter(|&(_, &b)| b) {
+                    h.u64(i as u64);
+                }
             }
         }
         h.0

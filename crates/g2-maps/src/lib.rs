@@ -309,6 +309,7 @@ impl MapFile {
             supply_piles,
             oil_wells,
             terrain: self.impassable_nav_cells(width, height),
+            decks: self.deck_nav_cells(width, height),
         }
     }
 
@@ -360,6 +361,23 @@ impl MapFile {
                 }
                 let cliff = self.cliffs[hcell(cy, self.grid_h) * w + hcell(cx, self.grid_w)];
                 cliff || [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].iter().any(|&(x, y)| underwater(x, y))
+            })
+            .collect()
+    }
+
+    /// Nav cells whose centre is on a bridge deck (`MapDef::decks`): walkable, never built on.
+    /// Empty when the map has no bridges.
+    fn deck_nav_cells(&self, width: Fx, height: Fx) -> Vec<bool> {
+        if self.bridges.is_empty() {
+            return Vec::new();
+        }
+        let (nw, nh) = g2_sim::nav::Grid::dims(width, height);
+        let per = SAGE_PER_WORLD as f32;
+        let world_h = height.to_f32();
+        (0..nw * nh)
+            .map(|i| {
+                let c = g2_sim::nav::Grid::centre((i % nw) as i32, (i / nw) as i32);
+                self.bridge_deck_at(c.x.to_f32() * per, (world_h - c.y.to_f32()) * per).is_some()
             })
             .collect()
     }
@@ -1031,6 +1049,40 @@ mod tests {
             let (x, z) = map.to_world(mid.0, mid.1);
             let (cx, cy) = ((x / g2_sim::nav::CELL as f32) as usize, (z / g2_sim::nav::CELL as f32) as usize);
             assert!(!def.terrain[cy * nw + cx], "nav cell on the deck at {:?} is blocked", (x, z));
+        }
+    }
+
+    /// Nothing may be built on a bridge deck: a building at a deck's end, on the bank, would
+    /// close the crossing. Mid-river the water already refuses it, so the check is at the ends:
+    /// on Winding River a power plant at each deck end is refused, and on the same map without
+    /// its deck mask the same spot is accepted, so the refusal comes from the deck.
+    #[test]
+    fn nothing_is_built_on_a_bridge() {
+        use g2_sim::{Faction, MatchSetup, PlayerSetup, Reject, World};
+        let map = load_official("Zero Hour", "Winding River", "Winding River.map");
+        let world_of = |def: MapDef| {
+            let setup = MatchSetup {
+                map: def,
+                seed: 1,
+                players: [Faction::Eu, Faction::Gla]
+                    .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None })
+                    .to_vec(),
+            };
+            World::new(&setup, g2_rules::rules())
+        };
+        let def = map.to_map_def("zh:Winding River");
+        let mut bare = def.clone();
+        bare.decks.clear();
+        let (decked, bare) = (world_of(def), world_of(bare));
+        let plant = g2_rules::ids::EU_POWER;
+        let fx = |v: f32| Fx::from_ratio((v * 1024.0).round() as i64, 1024);
+        for b in &map.bridges {
+            for end in [b.a, b.b] {
+                let (x, z) = map.to_world(end.0, end.1);
+                let at = Vec2::new(fx(x), fx(z));
+                assert!(bare.check_placement(plant, at).is_ok(), "{at:?}: blocked without the deck mask");
+                assert_eq!(decked.check_placement(plant, at).err(), Some(Reject::InvalidPlacement), "{at:?}");
+            }
         }
     }
 

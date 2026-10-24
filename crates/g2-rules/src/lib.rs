@@ -485,6 +485,7 @@ pub fn crater_ridge() -> MapDef {
         supply_piles: vec![(v(130, 60), 6000), (v(270, 340), 6000), (v(200, 140), 10000), (v(200, 260), 10000)],
         oil_wells: vec![(v(60, 150), 3000), (v(340, 250), 3000), (v(120, 280), 5000), (v(280, 120), 5000)],
         terrain: Vec::new(),
+        decks: Vec::new(),
     }
 }
 

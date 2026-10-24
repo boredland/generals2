@@ -410,8 +410,10 @@ impl Ai {
     /// on the side facing home (not its centre, a blocked cell no route can end on). With none
     /// remembered, it scouts the nearest place it can't see: start positions, oil wells and
     /// supply piles first (the map is public; enemies build there), then any cell it has
-    /// never explored, so a hidden last building is always found. Units engage whatever they
-    /// meet once they are close anyway.
+    /// never explored whose centre can be walked to, so a hidden last building is always found.
+    /// (A cell in a lake may stay unexplored for good: no unit gets close enough to see it, and
+    /// scouting it would send every wave there forever.) Units engage whatever they meet once
+    /// they are close anyway.
     fn enemy_base(&self, world: &World, home: Vec2) -> Option<Vec2> {
         let vision = world.vision(self.player);
         let seen = vision
@@ -427,7 +429,7 @@ impl Ai {
             let nearest = |points: &mut dyn Iterator<Item = Vec2>| points.min_by_key(|&p| (p.distance(home), p.x, p.y));
             let likely: Vec<Vec2> = world.map.spawns.iter().copied().chain(resources).collect();
             nearest(&mut likely.iter().copied().filter(|&p| !vision.is_explored(p)))
-                .or_else(|| nearest(&mut vision.unexplored_centres()))
+                .or_else(|| nearest(&mut vision.unexplored_centres().filter(|&p| world.map.walkable(p))))
                 .or_else(|| nearest(&mut likely.iter().copied().filter(|&p| !vision.is_visible(p))))
                 .map(|p| (p, Fx::from_int(5)))
         };

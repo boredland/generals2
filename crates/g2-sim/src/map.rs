@@ -13,6 +13,9 @@ pub struct MapDef {
     /// Cells ground units can't enter (cliffs, water), laid out like `nav::Grid`. Empty means
     /// open ground everywhere.
     pub terrain: Vec<bool>,
+    /// Cells on a bridge deck, same layout: walkable, but nothing may be built there, or a
+    /// building could close the only crossing. Empty means no bridges.
+    pub decks: Vec<bool>,
 }
 
 impl MapDef {
@@ -24,19 +27,32 @@ impl MapDef {
         Vec2::new(p.x.max(Fx::ZERO).min(self.width), p.y.max(Fx::ZERO).min(self.height))
     }
 
-    /// Whether any impassable terrain cell has its centre within `r` of `c`: buildings may
-    /// not stand on cliffs or water.
-    pub fn terrain_within(&self, c: Vec2, r: Fx) -> bool {
+    /// Whether ground units can stand at `p`: inside the map and not on impassable terrain.
+    pub fn walkable(&self, p: Vec2) -> bool {
+        if !self.contains(p) {
+            return false;
+        }
         if self.terrain.is_empty() {
+            return true;
+        }
+        let (w, h) = crate::nav::Grid::dims(self.width, self.height);
+        let cell = |v: Fx, n: usize| (v.floor_int().max(0) / crate::nav::CELL).min(n as i64 - 1) as usize;
+        !self.terrain[cell(p.y, h) * w + cell(p.x, w)]
+    }
+
+    /// Whether any cell where buildings may not stand (impassable terrain, bridge decks) has its
+    /// centre within `r` of `c`.
+    pub fn terrain_within(&self, c: Vec2, r: Fx) -> bool {
+        if self.terrain.is_empty() && self.decks.is_empty() {
             return false;
         }
         let (w, h) = crate::nav::Grid::dims(self.width, self.height);
         let cell = |v: Fx, n: usize| (v.floor_int().max(0) / crate::nav::CELL).min(n as i64 - 1) as i32;
         let (x0, x1) = (cell(c.x - r, w), cell(c.x + r, w));
         let (y0, y1) = (cell(c.y - r, h), cell(c.y + r, h));
+        let no_build = |i: usize| self.terrain.get(i) == Some(&true) || self.decks.get(i) == Some(&true);
         (y0..=y1).any(|y| {
-            (x0..=x1)
-                .any(|x| self.terrain[y as usize * w + x as usize] && crate::nav::Grid::centre(x, y).distance(c) < r)
+            (x0..=x1).any(|x| no_build(y as usize * w + x as usize) && crate::nav::Grid::centre(x, y).distance(c) < r)
         })
     }
 }
