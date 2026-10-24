@@ -277,6 +277,14 @@ fn mouse(
             }
         }
         sel.0.dedup();
+        let first_unit = sel
+            .0
+            .iter()
+            .copied()
+            .find(|&id| sim.world.entity(id).is_some_and(|e| sim.world.rules.def(e.def).is_unit()));
+        if let Some(unit) = first_unit {
+            sim.bypass_change_detection().selected = Some(unit);
+        }
     }
 
     if buttons.just_pressed(MouseButton::Right) && !sel.0.is_empty() {

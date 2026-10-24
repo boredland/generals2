@@ -8,7 +8,14 @@
 //! own `.sb` at an offset instead of in the CAS. Format notes: frankelstner's BF3 dumper and
 //! mitsuhiko/frostbite2-stuff; constants below were checked against the alpha's files.
 
+pub mod audio;
 pub mod dbo;
+pub mod ebx;
+pub mod import;
+pub mod material;
+pub mod media;
+pub mod mesh;
+pub mod movie;
 pub mod texture;
 
 use std::collections::{BTreeMap, HashMap};
@@ -116,6 +123,8 @@ pub struct Entry {
     pub original_size: u64,
     /// Res only: Frostbite's hash of the resource type name.
     pub res_type: Option<u32>,
+    /// Res only: 16 type-specific bytes (a MeshSet's starts with its header size).
+    pub res_meta: Option<[u8; 16]>,
 }
 
 /// Resource type hashes this build uses, identified from the names and contents.
@@ -226,6 +235,12 @@ impl Alpha {
         Ok(out)
     }
 
+    /// An ebx asset, parsed.
+    pub fn asset(&self, name: &str) -> Result<ebx::Partition, Error> {
+        let e = self.ebx.get(name).ok_or_else(|| Error::Missing(format!("ebx {name}")))?;
+        ebx::parse(&self.entry_bytes(e)?)
+    }
+
     /// A chunk as stored.
     pub fn chunk_raw(&self, id: &[u8; 16]) -> Result<Vec<u8>, Error> {
         match self.chunks.get(id).ok_or_else(|| Error::Missing(format!("chunk {}", hex(id))))? {
@@ -258,7 +273,14 @@ impl Alpha {
 fn entry(e: &Value, res_type: Option<u32>) -> Result<(String, Entry), Error> {
     let name = e.get("name").and_then(Value::str).ok_or(Error::Bad("entry without name"))?;
     let sha1 = e.get("sha1").and_then(Value::sha1).ok_or(Error::Bad("entry without sha1"))?;
-    Ok((name.to_owned(), Entry { sha1, size: uint(e, "size")?, original_size: uint(e, "originalSize")?, res_type }))
+    let res_meta = match e.get("resMeta") {
+        Some(Value::Blob(b)) => Some(b.as_slice().try_into().map_err(|_| Error::Bad("resMeta is not 16 bytes"))?),
+        _ => None,
+    };
+    Ok((
+        name.to_owned(),
+        Entry { sha1, size: uint(e, "size")?, original_size: uint(e, "originalSize")?, res_type, res_meta },
+    ))
 }
 
 fn uint(v: &Value, key: &'static str) -> Result<u64, Error> {

@@ -5,7 +5,8 @@
 
 use std::path::PathBuf;
 
-use g2_frostbite::{Alpha, res_type, texture};
+use g2_frostbite::ebx::Value;
+use g2_frostbite::{Alpha, material, media, mesh, movie, res_type, texture};
 
 /// A relative `G2_ALPHA_DIR` is taken from the repository root: cargo runs tests in the
 /// crate's folder, where the same value would point nowhere.
@@ -75,4 +76,82 @@ fn every_flat_texture_decodes() {
         flat += 1;
     }
     assert_eq!((flat, other), (1_329, 10));
+}
+
+/// Every ebx partition parses (its descriptor tables end exactly at the string section),
+/// and the asset kinds the importer reads are all there.
+#[test]
+fn every_ebx_parses() {
+    let Some(a) = install() else { return };
+    let mut kinds = std::collections::BTreeMap::<String, usize>::new();
+    for name in a.ebx.keys() {
+        let p = a.asset(name).unwrap_or_else(|e| panic!("{name}: {e}"));
+        let ty = p.primary().and_then(Value::ty).unwrap_or("?").to_owned();
+        *kinds.entry(ty).or_default() += 1;
+    }
+    assert_eq!(kinds["SoundWaveAsset"], 2_101);
+    assert_eq!(kinds["MovieTextureAsset"], 2);
+    assert_eq!(kinds["TextureAsset"], 1_339);
+    assert_eq!(kinds["MeshVariationDatabase"], 176);
+}
+
+/// Every sound wave has English variations and each decodes; every segment is one SPS
+/// stream. 9,110 variations is the count the import writes.
+#[test]
+fn every_sound_variation_decodes() {
+    let Some(a) = install() else { return };
+    let languages = media::languages(&a).unwrap();
+    let mut variations = 0;
+    for name in a.ebx.keys().filter(|n| n.starts_with("sound/") && n.contains("/waves/")) {
+        let p = a.asset(name).unwrap();
+        if p.primary().and_then(Value::ty) != Some("SoundWaveAsset") {
+            continue;
+        }
+        let wave = media::SoundWave::read(&p, &languages).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for v in &wave.variations {
+            let pcm = media::decode_variation(&a, v).unwrap_or_else(|e| panic!("{name}: {e}"));
+            assert!(pcm.frames() > 0 && [44_100, 48_000].contains(&pcm.sample_rate), "{name}");
+            variations += 1;
+        }
+    }
+    assert_eq!(variations, 9_110);
+}
+
+/// Both movies split into a VP6 stream; the logo movie's EA-XA audio decodes to its
+/// 10.67 s, and the portrait's alpha matte and EALayer3 audio are reported, not decoded.
+#[test]
+fn movies_split_into_video_matte_and_audio() {
+    let Some(a) = install() else { return };
+    let split = |name: &str| movie::split(&media::movie(&a, &a.asset(name).unwrap()).unwrap()).unwrap();
+    let logos = split("_rts/art/cinematics/mov/cnc_frontend/cnclive_frontend_logos_avi");
+    let audio = logos.audio.unwrap().unwrap();
+    assert_eq!((audio.channels, audio.sample_rate, audio.frames()), (2, 48_000, 512_000));
+    assert!(logos.alpha.is_none());
+    let portrait = split("_rts/art/ui/test/gg_basic_01_intro_01_alpha");
+    assert!(portrait.alpha.is_some_and(|m| m.starts_with(b"MVhd")));
+    assert!(matches!(portrait.audio, Some(Err(g2_frostbite::Error::Unsupported(_)))));
+}
+
+/// Every mesh decodes: positions inside its bounding box, indices inside its vertices. Most
+/// materials have a diffuse map bound through the mesh variation databases.
+#[test]
+fn every_mesh_decodes_inside_its_bounds() {
+    let Some(a) = install() else { return };
+    let (mut meshes, mut triangles) = (0, 0);
+    for (name, e) in a.res_of(res_type::MESH_SET) {
+        let m = mesh::read(&a, e).unwrap_or_else(|err| panic!("{name}: {err}"));
+        let (lo, hi) = m.bounds;
+        for s in &m.subsets {
+            for p in &s.positions {
+                assert!((0..3).all(|i| p[i] >= lo[i] - 0.05 && p[i] <= hi[i] + 0.05), "{name}: vertex outside bounds");
+            }
+            triangles += s.indices.len() / 3;
+        }
+        meshes += 1;
+    }
+    assert_eq!(meshes, 2_154);
+    assert!(triangles > 4_000_000, "{triangles} triangles");
+    let maps = material::diffuse_maps(&a).unwrap();
+    let bound = maps.values().flatten().flatten().filter(|t| a.res.contains_key(*t)).count();
+    assert!(bound > 2_500, "{bound} materials with a diffuse map");
 }

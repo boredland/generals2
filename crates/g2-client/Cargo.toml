@@ -9,6 +9,7 @@ publish.workspace = true
 g2-sim.workspace = true
 g2-rules.workspace = true
 g2-maps.workspace = true
+g2-frostbite.workspace = true
 bevy.workspace = true
 
 [lints]

@@ -1,4 +1,5 @@
-//! Mirrors sim entities as procedural models (`models.rs`). All art is original: no game assets.
+//! Mirrors sim entities as procedural models (`models.rs`), or, when the player imported their
+//! copy of the 2013 alpha (`alpha.rs`), as the alpha's own models.
 //!
 //! Each sim entity gets one root (`SimRef` + `Transform` at its ground position) with the model's
 //! parts as children. Foundations show the scaffold with the building rising inside it.
@@ -85,6 +86,10 @@ struct Assets3d {
     /// Charred ground and rubble left where something died.
     scorch: Handle<StandardMaterial>,
     rubble: Handle<StandardMaterial>,
+    /// Imported alpha models by def name, with the scale that fits each to its footprint.
+    alpha: BTreeMap<&'static str, (Handle<WorldAsset>, f32)>,
+    /// A flat unit-radius ring, the team marker under alpha models.
+    ring: Handle<Mesh>,
 }
 
 /// `Slot` with crate colours folded to an index, so it can key a map.
@@ -133,6 +138,8 @@ fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    cache: Option<Res<crate::alpha::Cache>>,
+    server: Res<AssetServer>,
 ) {
     let mut table = BTreeMap::new();
     let all_slots = [
@@ -189,6 +196,8 @@ fn setup_scene(
             perceptual_roughness: 0.95,
             ..default()
         }),
+        alpha: cache.map_or_else(BTreeMap::new, |c| alpha_models(&c, &server)),
+        ring: meshes.add(Torus::new(0.94, 1.0)),
     });
     crate::look::spawn_lights(&mut commands);
 }
@@ -226,7 +235,8 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     let def = sim.world.rules.def(e.def);
     let faction = e.owner.map(|o| sim.world.player(o).faction);
     let team = e.owner.map_or(0, |o| sim.teams[o.0 as usize]);
-    let parts = models::parts_for(def, faction);
+    let alpha = assets.alpha.get(def.name);
+    let parts = if alpha.is_some() { Vec::new() } else { models::parts_for(def, faction) };
     let mut root = commands.spawn((
         crate::menu::MatchEntity,
         SimRef(e.id),
@@ -234,21 +244,71 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
         Visibility::default(),
     ));
     root.with_children(|c| {
-        c.spawn((Body, Transform::default(), Visibility::default()))
-            .with_children(|b| spawn_parts(b, assets, faction, team, &parts));
+        c.spawn((Body, Transform::default(), Visibility::default())).with_children(|b| match alpha {
+            Some((scene, scale)) => {
+                // The alpha's models carry no team colour: a thin ring on the ground in the
+                // team's colour keeps the sides apart, as the alpha's selection rings did.
+                let r = def.radius.to_f32();
+                b.spawn((
+                    Mesh3d(assets.ring.clone()),
+                    MeshMaterial3d(assets.team[team].clone()),
+                    Transform::from_xyz(0.0, 0.08, 0.0).with_scale(Vec3::new(r, 1.0, r)),
+                ));
+                // A squad is three soldiers in the procedural model's wedge.
+                let spots: &[Vec3] = if def.armour == g2_sim::Armour::Infantry {
+                    &[Vec3::new(0.0, 0.0, 0.7), Vec3::new(-0.8, 0.0, -0.4), Vec3::new(0.8, 0.0, -0.4)]
+                } else {
+                    &[Vec3::ZERO]
+                };
+                for &at in spots {
+                    b.spawn((
+                        WorldAssetRoot(scene.clone()),
+                        Transform::from_translation(at).with_scale(Vec3::splat(*scale)),
+                    ));
+                }
+            }
+            None => spawn_parts(b, assets, faction, team, &parts),
+        });
         if def.is_building() {
             let w = def.radius.to_f32() * 1.75;
             let scaffold: Vec<Part> = models::scaffold(w, 7.0);
             c.spawn((Scaffold, Transform::default(), Visibility::Hidden))
                 .with_children(|s| spawn_parts(s, assets, faction, team, &scaffold));
         }
-        if def.deploy.is_some() {
+        if def.deploy.is_some() && alpha.is_none() {
             let legs = models::outriggers(def.radius.to_f32());
             c.spawn((Outriggers, Transform::default(), Visibility::Hidden))
                 .with_children(|s| spawn_parts(s, assets, faction, team, &legs));
         }
     });
     root.id()
+}
+
+/// The alpha's models for our defs, each scaled so its footprint matches the def's: a
+/// building's widest side spans the procedural model's width (radius × 1.75), a vehicle's
+/// length its 2 × radius, and a soldier stands 1.6 units tall, as ours do.
+fn alpha_models(
+    cache: &crate::alpha::Cache,
+    server: &AssetServer,
+) -> BTreeMap<&'static str, (Handle<WorldAsset>, f32)> {
+    let bounds = cache.bounds();
+    let mut out = BTreeMap::new();
+    for def in g2_rules::rules().defs {
+        let Some((path, (lo, hi))) = cache.model(def, &bounds) else { continue };
+        let size = hi - lo;
+        let r = def.radius.to_f32();
+        let scale = if def.is_building() {
+            r * 1.75 / size.x.max(size.z)
+        } else if def.armour == g2_sim::Armour::Infantry {
+            1.6 / size.y
+        } else {
+            r * 2.0 / size.x.max(size.z)
+        };
+        let handle =
+            server.load(GltfAssetLabel::Scene(0).from_asset(bevy::asset::AssetPath::from(path).with_source("alpha")));
+        out.insert(def.name, (handle, scale));
+    }
+    out
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]

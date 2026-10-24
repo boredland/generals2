@@ -20,7 +20,12 @@
 //! A network match is two humans, the host as player 0 with `--faction`/`--general`, the
 //! joiner as player 1 with `--enemy`/`--enemy-general`, on the host's map and seed. Both run
 //! the same build. The game runs at one shared speed: no pause and no fast-forward.
+//!
+//! With an imported 2013 alpha (`g2-tools alpha DIR import`, found in `$G2_ALPHA_CACHE` or
+//! `~/.local/share/generals2/alpha`), the client draws its models and plays its sounds,
+//! voices and menu music (`alpha.rs`); the match itself is the same either way.
 
+mod alpha;
 mod audio;
 mod camera;
 mod hud;
@@ -282,6 +287,7 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
         sim.speed = 0;
     }
     let mut app = App::new();
+    alpha::register(&mut app);
     app.add_plugins(
         DefaultPlugins
             .set(WindowPlugin { primary_window: Some(Window { title: "Open RTS".into(), ..default() }), ..default() }),
@@ -383,6 +389,7 @@ mod headless {
             ends.iter().fold(Vec2::ZERO, |s, &(from, at)| s + (p(from) + p(at)) / 2.0) / n
         });
         let mut app = App::new();
+        crate::alpha::register(&mut app);
         app.add_plugins(
             DefaultPlugins
                 .set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, ..default() })

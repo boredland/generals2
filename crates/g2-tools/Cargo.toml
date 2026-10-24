@@ -10,7 +10,6 @@ g2-sim.workspace = true
 g2-rules.workspace = true
 g2-maps.workspace = true
 g2-frostbite.workspace = true
-png = "0.18"
 
 [lints]
 workspace = true

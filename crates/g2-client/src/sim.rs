@@ -21,6 +21,14 @@ pub struct Sim {
     pub teams: Vec<usize>,
     /// Orders given since the sound last acknowledged them (drained every frame by `audio`).
     pub unheard_orders: u32,
+    /// The unit that answers the latest order and whether it was an attack, for the
+    /// alpha's voice responses (drained by `audio`).
+    pub answering: Option<(g2_sim::EntityId, bool)>,
+    /// The kind of the local player's newest unit, which announces itself (drained by
+    /// `audio`).
+    pub rolled_out: Option<g2_sim::DefId>,
+    /// A unit the player just selected, which answers (drained by `audio`).
+    pub selected: Option<g2_sim::EntityId>,
     /// The player this client controls and sees through (0 unless joined over the network).
     pub local: PlayerId,
     /// A network match: orders go through the lockstep and the sim steps in time with the
@@ -41,6 +49,9 @@ impl Sim {
             fog: true,
             teams,
             unheard_orders: 0,
+            answering: None,
+            rolled_out: None,
+            selected: None,
             local: PlayerId(0),
             online: None,
         }
@@ -131,6 +142,13 @@ impl Sim {
         if self.world.is_ai(self.local) {
             return;
         }
+        self.answering = match &kind {
+            CommandKind::Move { units, .. } => units.first().map(|&u| (u, false)),
+            CommandKind::Attack { units, .. } | CommandKind::AttackMove { units, .. } => {
+                units.first().map(|&u| (u, true))
+            }
+            _ => self.answering,
+        };
         match &mut self.online {
             Some(net) => net.order(kind),
             None => {
@@ -263,12 +281,18 @@ fn step_sim(
             break;
         }
         sim.world.step();
+        let mut rolled_out = None;
         for e in sim.world.events() {
-            if let g2_sim::world::Event::Delivered { player, depot, credits } = *e
-                && player == me
-            {
-                deliveries.0.push((depot, credits));
+            match *e {
+                g2_sim::world::Event::Delivered { player, depot, credits } if player == me => {
+                    deliveries.0.push((depot, credits));
+                }
+                g2_sim::world::Event::Produced { player, def, .. } if player == me => rolled_out = Some(def),
+                _ => {}
             }
+        }
+        if rolled_out.is_some() {
+            sim.rolled_out = rolled_out;
         }
         collect_shots(&sim.world, &mut hits);
         heard.0.extend(crate::audio::sim_cues(&sim));

@@ -1,6 +1,8 @@
-//! Sound, all of it synthesized here at startup: no recordings or sound assets. Each cue is a
-//! fraction of a second of filtered noise, sine sweeps and envelopes, rendered once into a
-//! sample buffer and replayed through `bevy_audio`.
+//! Sound, synthesized here at startup unless the player imported the 2013 alpha
+//! (`alpha.rs`): then its effects replace the synthesized cues one for one, units answer in
+//! the alpha's voices, and the menu plays its music. Each synthesized cue is a fraction of a
+//! second of filtered noise, sine sweeps and envelopes, rendered once into a sample buffer
+//! and replayed through `bevy_audio`.
 //!
 //! The sim's events drive the cues. Like the effects in `view.rs`, combat is heard only where
 //! the local player can see one end of it, and the further from the camera's focus the
@@ -18,8 +20,8 @@ use g2_sim::world::Event;
 use crate::camera::RtsCamera;
 use crate::sim::Sim;
 
-/// Output sample rate of every synthesized sound.
-const RATE: u32 = 44_100;
+/// Output sample rate of every sound, synthesized or imported.
+pub const RATE: u32 = 44_100;
 /// Most voices per cue kind started in one frame; the rest of a volley is dropped.
 const VOICES_PER_FRAME: usize = 3;
 /// Placed cues are at full volume within this distance (world units) of the camera's focus,
@@ -35,7 +37,7 @@ impl Plugin for SoundPlugin {
             .init_resource::<Muted>()
             .add_systems(Startup, load_sounds)
             // Before the menu applies its queued actions, so each one is heard as a click.
-            .add_systems(Update, (toggle_mute, play_cues).chain().before(crate::menu::MenuSet));
+            .add_systems(Update, (toggle_mute, play_cues, speak, play_music).chain().before(crate::menu::MenuSet));
     }
 }
 
@@ -63,7 +65,7 @@ pub enum Cue {
 }
 
 impl Cue {
-    const ALL: [Cue; 11] = [
+    pub const ALL: [Cue; 11] = [
         Cue::Shot { heavy: false },
         Cue::Shot { heavy: true },
         Cue::Launch,
@@ -98,7 +100,7 @@ impl Cue {
 #[derive(Resource, Default)]
 pub struct Muted(pub bool);
 
-/// A synthesized mono sound, played in stereo at `pan` (-1 left .. 1 right).
+/// A mono sound, played in stereo at `pan` (-1 left .. 1 right).
 #[derive(Asset, TypePath, Clone)]
 pub struct Sound {
     samples: Arc<[f32]>,
@@ -158,20 +160,41 @@ const PANS: usize = 9;
 /// Placed cues never pan further than this, so nothing plays in one ear only.
 const MAX_PAN: f32 = 0.8;
 
+/// Each cue's sounds, one handle per (variation, pan slot); a cue with several variations
+/// (the alpha's) picks one in turn.
 #[derive(Resource)]
-struct Bank(BTreeMap<(Cue, usize), Handle<Sound>>);
+struct Bank(BTreeMap<Cue, Vec<[Handle<Sound>; PANS]>>);
 
-fn load_sounds(mut commands: Commands, mut sounds: ResMut<Assets<Sound>>) {
+/// Every unit's voice lines, by (def name, response); centred, never panned.
+#[derive(Resource, Default)]
+pub struct Voices(pub BTreeMap<(&'static str, crate::alpha::Response), Vec<Handle<Sound>>>);
+
+fn load_sounds(mut commands: Commands, mut sounds: ResMut<Assets<Sound>>, cache: Option<Res<crate::alpha::Cache>>) {
+    let alpha = cache.map(|c| crate::alpha::Sounds::load(&c, RATE)).unwrap_or_default();
     let mut bank = BTreeMap::new();
     for cue in Cue::ALL {
-        let samples: Arc<[f32]> = synth(cue).into();
-        for k in 0..PANS {
-            let pan = pan_of_slot(k);
-            bank.insert((cue, k), sounds.add(Sound { samples: samples.clone(), pan }));
-        }
+        let variations = alpha.effects.get(&cue).cloned().unwrap_or_else(|| vec![synth(cue).into()]);
+        let handles = variations
+            .into_iter()
+            .map(|samples| std::array::from_fn(|k| sounds.add(Sound { samples: samples.clone(), pan: pan_of_slot(k) })))
+            .collect();
+        bank.insert(cue, handles);
     }
     commands.insert_resource(Bank(bank));
+    let voices = alpha
+        .voices
+        .into_iter()
+        .map(|(key, v)| (key, v.into_iter().map(|samples| sounds.add(Sound { samples, pan: 0.0 })).collect()))
+        .collect();
+    commands.insert_resource(Voices(voices));
+    if let Some(music) = alpha.music {
+        commands.insert_resource(Music(sounds.add(Sound { samples: music, pan: 0.0 })));
+    }
 }
+
+/// The menu's music, when the alpha supplies one.
+#[derive(Resource)]
+pub struct Music(pub Handle<Sound>);
 
 fn pan_of_slot(k: usize) -> f32 {
     (k as f32 / (PANS - 1) as f32 * 2.0 - 1.0) * MAX_PAN
@@ -193,6 +216,7 @@ fn toggle_mute(keys: Res<ButtonInput<KeyCode>>, mut muted: ResMut<Muted>) {
 /// Plays what the sim gathered since the last frame (`sim::Heard`), a click for each order the
 /// local player gave since (`Sim::unheard_orders`, drained here, so a new match starts at
 /// zero) and each menu choice about to apply.
+#[allow(clippy::too_many_arguments)]
 fn play_cues(
     mut commands: Commands,
     mut sim: ResMut<Sim>,
@@ -201,6 +225,7 @@ fn play_cues(
     bank: Option<Res<Bank>>,
     muted: Res<Muted>,
     cam: Query<&RtsCamera>,
+    mut turn: Local<usize>,
 ) {
     let mut cues = core::mem::take(&mut heard.0);
     let orders = core::mem::take(&mut sim.bypass_change_detection().unheard_orders) as usize;
@@ -229,10 +254,81 @@ fn play_cues(
             continue;
         }
         *n += 1;
+        // Variations in turn: a local counter, never the sim's RNG, so sound can't touch
+        // the match.
+        let variations = &bank.0[&cue];
+        *turn = turn.wrapping_add(1);
         commands.spawn((
-            AudioPlayer(bank.0[&(cue, slot)].clone()),
+            AudioPlayer(variations[*turn % variations.len()][slot].clone()),
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * cue.level())),
         ));
+    }
+}
+
+/// Seconds a unit stays quiet after speaking, so a burst of orders isn't a burst of lines.
+const SPEECH_GAP: f32 = 1.5;
+
+/// The alpha's voice lines, when imported: a unit acknowledges an order to move or attack,
+/// and a new unit announces itself. One line at a time: within `SPEECH_GAP` of the last
+/// line the next request passes silently.
+fn speak(
+    mut commands: Commands,
+    mut sim: ResMut<Sim>,
+    voices: Option<Res<Voices>>,
+    muted: Res<Muted>,
+    time: Res<Time>,
+    mut quiet_until: Local<f32>,
+    mut turn: Local<usize>,
+) {
+    use crate::alpha::Response;
+    let sim = sim.bypass_change_detection();
+    let (answering, rolled_out, selected) = (sim.answering.take(), sim.rolled_out.take(), sim.selected.take());
+    let Some(voices) = voices.filter(|v| !v.0.is_empty()) else { return };
+    let now = time.elapsed_secs();
+    if muted.0 || now < *quiet_until {
+        return;
+    }
+    let rules = sim.world.rules;
+    let unit_says = |unit, r| sim.world.entity(unit).map(|e| (rules.def(e.def).name, r));
+    // An order's answer beats a selection's, and both beat a new unit's announcement: the
+    // player is waiting on the answer.
+    let line = match (answering, selected, rolled_out) {
+        (Some((unit, attack)), ..) => unit_says(unit, if attack { Response::Attack } else { Response::Move }),
+        (None, Some(unit), _) => unit_says(unit, Response::Select),
+        (None, None, Some(def)) => Some((rules.def(def).name, Response::Create)),
+        _ => None,
+    };
+    let Some(lines) = line.and_then(|key| voices.0.get(&key)) else { return };
+    *turn = turn.wrapping_add(1);
+    let handle = lines[*turn % lines.len()].clone();
+    commands.spawn((AudioPlayer(handle), PlaybackSettings::DESPAWN.with_volume(Volume::Linear(0.8))));
+    *quiet_until = now + SPEECH_GAP;
+}
+
+#[derive(Component)]
+struct MenuMusic;
+
+/// The alpha's menu music, looping while a menu covers the battlefield (main menu, setup,
+/// end screen) and stopped in a match. Silent without an import.
+fn play_music(
+    mut commands: Commands,
+    music: Option<Res<Music>>,
+    ui: Option<Res<crate::menu::Ui>>,
+    muted: Res<Muted>,
+    playing: Query<Entity, With<MenuMusic>>,
+) {
+    let Some(music) = music else { return };
+    let want = !muted.0 && ui.is_some_and(|u| u.screen != crate::menu::Screen::Match);
+    match (want, playing.iter().next()) {
+        (true, None) => {
+            commands.spawn((
+                AudioPlayer(music.0.clone()),
+                PlaybackSettings::LOOP.with_volume(Volume::Linear(0.5)),
+                MenuMusic,
+            ));
+        }
+        (false, Some(e)) => commands.entity(e).despawn(),
+        _ => {}
     }
 }
 
@@ -636,6 +732,79 @@ mod tests {
         }
         assert!(app.world().resource::<Muted>().0);
         assert_eq!(while_muted, 0);
+    }
+
+    /// With voice lines loaded: an order is answered by the unit given it, as a move or an
+    /// attack line of its own kind; a second order within `SPEECH_GAP` passes silently; and
+    /// selecting answers with a select line. Lines are tagged by their sample value.
+    #[test]
+    fn ordered_units_answer_once_per_gap_in_their_own_voice() {
+        use crate::alpha::Response;
+        use bevy::time::TimeUpdateStrategy;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)))
+            .insert_resource(Sim::new(crater_ridge(), None, 3, Sim::players([Faction::Eu, Faction::Gla], false)))
+            .init_resource::<ButtonInput<KeyCode>>()
+            .add_plugins((crate::sim::SimPlugin, SoundPlugin));
+        app.world_mut().resource_mut::<Sim>().speed = 0;
+        app.update();
+        // Replace the (empty) bank: each (def, response) line is one sample of a distinct value.
+        let rules = g2_rules::rules();
+        let mut voices = Voices::default();
+        for (i, def) in rules.defs.iter().enumerate() {
+            for (k, r) in Response::ALL.into_iter().enumerate() {
+                let tag = (i * 4 + k) as f32;
+                let h =
+                    app.world_mut().resource_mut::<Assets<Sound>>().add(Sound { samples: vec![tag].into(), pan: 0.0 });
+                voices.0.insert((def.name, r), vec![h]);
+            }
+        }
+        let tag_of = |name: &str, r: Response| {
+            let i = rules.defs.iter().position(|d| d.name == name).unwrap();
+            (i * 4 + Response::ALL.iter().position(|&x| x == r).unwrap()) as f32
+        };
+        app.insert_resource(voices);
+        let spoken = |app: &mut App| -> Vec<f32> {
+            let mut q = app.world_mut().query::<(Entity, &AudioPlayer<Sound>)>();
+            let found: Vec<(Entity, Handle<Sound>)> = q.iter(app.world()).map(|(e, p)| (e, p.0.clone())).collect();
+            let sounds = app.world().resource::<Assets<Sound>>();
+            // Voices are single-sample; clicks and cues are longer and are left out.
+            let tags = found
+                .iter()
+                .filter_map(|(_, h)| sounds.get(h))
+                .filter(|s| s.samples.len() == 1)
+                .map(|s| s.samples[0])
+                .collect();
+            for (e, _) in found {
+                app.world_mut().despawn(e);
+            }
+            tags
+        };
+        let (dozer, dozer_name) = {
+            let sim = app.world().resource::<Sim>();
+            let e =
+                sim.world.entities().find(|e| e.owner == Some(sim.local) && rules.def(e.def).is_constructor()).unwrap();
+            (e.id, rules.def(e.def).name)
+        };
+        let order = |app: &mut App, x| {
+            let target = g2_sim::Vec2::from_int(x, 150);
+            app.world_mut().resource_mut::<Sim>().order(g2_sim::CommandKind::Move { units: vec![dozer], target });
+        };
+        order(&mut app, 150);
+        app.update();
+        assert_eq!(spoken(&mut app), [tag_of(dozer_name, Response::Move)]);
+        // Within the gap: the next order is acknowledged by a click only.
+        order(&mut app, 151);
+        app.update();
+        assert!(spoken(&mut app).is_empty());
+        // After the gap (frames of 100 ms), selecting the unit answers with a select line.
+        for _ in 0..20 {
+            app.update();
+        }
+        app.world_mut().resource_mut::<Sim>().selected = Some(dozer);
+        app.update();
+        assert_eq!(spoken(&mut app), [tag_of(dozer_name, Response::Select)]);
     }
 
     /// After a match with many orders, a fresh match (the menu swaps in a new `Sim`) clicks for
