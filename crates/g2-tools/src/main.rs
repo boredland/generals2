@@ -3,7 +3,7 @@
 //!   g2-tools verify <file.g2rp>                       re-simulate a replay, report the first divergence
 //!   g2-tools record <out.g2rp> [--ticks N] [--seed S] [--factions eu,gla] [--ai L] [--map NAME]   AI match → replay
 //!   g2-tools bench [--ticks N] [--ai L] [--map NAME]  ticks per second for an AI-vs-AI match
-//!   g2-tools survey A B [--seeds N] [--map NAME]      AI level A against B: every faction pairing, both starts
+//!   g2-tools survey A B [--seeds N] [--map NAME]      AI level A against B: every faction pairing, both starts (B may be onslaught)
 //!   g2-tools summary <file.g2rp>                      print the final economy of a replay
 //!   g2-tools maps                                     list importable Generals / Zero Hour maps
 //!
@@ -46,7 +46,8 @@ fn level(s: &str) -> Result<AiLevel, String> {
     match s.to_ascii_lowercase().as_str() {
         "easy" => Ok(AiLevel::Easy),
         "normal" => Ok(AiLevel::Normal),
-        _ => Err(format!("unknown AI level {s:?} (easy, normal)")),
+        "onslaught" => Ok(AiLevel::Onslaught),
+        _ => Err(format!("unknown AI level {s:?} (easy, normal, onslaught)")),
     }
 }
 
@@ -101,13 +102,25 @@ fn survey(args: &[String]) -> Result<(), String> {
         [a, b, ..] => (level(a)?, level(b)?),
         _ => return Err(USAGE.to_owned()),
     };
+    if a == AiLevel::Onslaught {
+        return Err("the onslaught goes second: survey LEVEL onslaught".into());
+    }
+    // The onslaught's waves don't depend on its seat, so its matches aren't swapped; they run
+    // until well after its last wave instead of the usual 20 minutes.
+    let onslaught = b == AiLevel::Onslaught;
+    let cap = if onslaught {
+        g2_sim::onslaught::wave_tick(g2_sim::onslaught::WAVES) + 10 * 60 * TICKS_PER_SECOND
+    } else {
+        20 * 60 * TICKS_PER_SECOND
+    };
+    let swaps: &[bool] = if onslaught { &[false] } else { &[false, true] };
     let map = resolve(&flag(args, "--map", "Crater Ridge".to_owned())?)?;
     let seeds: u64 = flag(args, "--seeds", 1u64)?;
     let (mut wins, mut undecided, mut lengths) = ([0u32; 2], Vec::new(), Vec::new());
     for seed in 1..=seeds {
         for fa in Faction::ALL {
             for fb in Faction::ALL {
-                for swap in [false, true] {
+                for &swap in swaps {
                     let slots = if swap { [(fb, b), (fa, a)] } else { [(fa, a), (fb, b)] };
                     let players = slots
                         .map(|(faction, l)| PlayerSetup {
@@ -119,7 +132,7 @@ fn survey(args: &[String]) -> Result<(), String> {
                         .to_vec();
                     let setup = MatchSetup { map: map.clone(), seed, players };
                     let mut w = World::new(&setup, rules());
-                    while w.winner().is_none() && w.tick() < 20 * 60 * TICKS_PER_SECOND {
+                    while w.winner().is_none() && w.tick() < cap {
                         w.step();
                     }
                     match w.winner() {

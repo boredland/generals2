@@ -19,7 +19,19 @@ use crate::replay::{DecodeError, HASH_INTERVAL, Reader, Replay, Writer};
 use crate::world::World;
 
 /// Bumped on any change to `Message` or to how turns are scheduled.
-pub const PROTOCOL: u16 = 1;
+pub const PROTOCOL: u16 = 2;
+/// Bumped on any change to simulation logic that the rules tables don't show (AI, combat,
+/// movement): two machines must run the same sim, or they drift apart within a second.
+pub const SIM_VERSION: u32 = 1;
+
+/// What both machines must agree on before a match: `SIM_VERSION` and the rules tables
+/// (every unit, building, weapon and general). Two different releases almost always differ
+/// here, so they are refused at the handshake instead of failing with "out of sync".
+pub fn build_id(rules: &crate::defs::Rules) -> u64 {
+    let text = format!("{SIM_VERSION} {:?} {:?}", rules.defs, rules.generals);
+    // FNV-1a, as `state_hash`.
+    text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
+}
 /// Ticks per turn: a tenth of a second.
 pub const TURN_TICKS: u32 = 3;
 /// Turns between giving an order and its running: 0.2-0.3 s at `TURN_TICKS`, room for one
@@ -31,14 +43,17 @@ const _: () = assert!(HASH_INTERVAL.is_multiple_of(TURN_TICKS));
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
-    /// Host to joiner: the match to play, as a replay with no commands yet.
+    /// Host to joiner: the match to play, as a replay with no commands yet, and the host's
+    /// `build_id`.
     Hello {
         protocol: u16,
+        build: u64,
         setup: Replay,
     },
-    /// Joiner to host: the match was accepted.
+    /// Joiner to host: the match was accepted, by a machine with this `build_id`.
     Join {
         protocol: u16,
+        build: u64,
     },
     Turn(Turn),
 }
@@ -56,14 +71,16 @@ impl Message {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer(Vec::new());
         match self {
-            Message::Hello { protocol, setup } => {
+            Message::Hello { protocol, build, setup } => {
                 w.u8(0);
                 w.u16(*protocol);
+                w.u64(*build);
                 w.bytes(&setup.encode());
             }
-            Message::Join { protocol } => {
+            Message::Join { protocol, build } => {
                 w.u8(1);
                 w.u16(*protocol);
+                w.u64(*build);
             }
             Message::Turn(t) => {
                 w.u8(2);
@@ -88,8 +105,9 @@ impl Message {
     pub fn decode(bytes: &[u8]) -> Result<Message, DecodeError> {
         let mut r = Reader { b: bytes, at: 0 };
         let m = match r.u8()? {
-            0 => Message::Hello { protocol: r.u16()?, setup: Replay::decode(r.bytes()?)? },
-            1 => Message::Join { protocol: r.u16()? },
+            // The protocol comes first, so any version of this decoder can report a mismatch.
+            0 => Message::Hello { protocol: r.u16()?, build: r.u64()?, setup: Replay::decode(r.bytes()?)? },
+            1 => Message::Join { protocol: r.u16()?, build: r.u64()? },
             2 => {
                 let turn = r.u32()?;
                 let n = r.u32()? as usize;
@@ -189,6 +207,13 @@ impl Lockstep {
     pub fn receive(&mut self, world: &mut World, t: Turn) -> Result<(), NetError> {
         if t.turn != self.next_recv {
             return Err(NetError::Protocol(format!("turn {} arrived, expected {}", t.turn, self.next_recv)));
+        }
+        // The check a turn must carry: the sender's hash at the tick it sent the turn on, when
+        // that tick is a hash tick, and none otherwise. Anything else would leave a check that
+        // never pairs up and silently stops every later comparison.
+        let sent_at = (t.turn - DELAY_TURNS) * TURN_TICKS;
+        if t.check.map(|c| c.0) != sent_at.is_multiple_of(HASH_INTERVAL).then_some(sent_at) {
+            return Err(NetError::Protocol(format!("turn {} carries check {:?}", t.turn, t.check)));
         }
         let at = t.turn * TURN_TICKS;
         for kind in t.commands {

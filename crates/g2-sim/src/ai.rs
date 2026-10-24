@@ -31,7 +31,7 @@ pub struct Ai {
     player: PlayerId,
     level: AiLevel,
     /// Combat strength of the largest enemy army seen lately (see `strength`), fading by a
-    /// sixteenth every second, so an army out of sight still counts for a while.
+    /// 64th every second, so an army out of sight still counts for a while.
     enemy_seen: i64,
     /// No new wave before this tick: set by a retreat, so the army regroups first.
     regroup_until: u32,

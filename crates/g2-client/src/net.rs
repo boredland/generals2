@@ -12,7 +12,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel}
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use g2_sim::net::{Lockstep, Message, NetError, PROTOCOL};
+use g2_sim::net::{Lockstep, Message, NetError, PROTOCOL, build_id};
 use g2_sim::{CommandKind, PlayerId, Replay, World};
 
 /// Larger than any message this protocol sends (a `Hello` is well under a kilobyte).
@@ -21,16 +21,24 @@ const MAX_FRAME: usize = 1 << 20;
 const HANDSHAKE: Duration = Duration::from_secs(30);
 /// Fixed steps without the peer's orders before the HUD says so: half a second.
 const WAIT_SHOWN: u32 = 15;
+/// How long one write may block on a peer that stopped reading before the link gives up.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct Link {
     out: Option<Sender<Vec<u8>>>,
     inbox: Mutex<Receiver<Vec<u8>>>,
     writer: Option<JoinHandle<()>>,
+    /// Kept to shut the socket down on drop, so the reader thread's blocking read returns.
+    socket: TcpStream,
 }
 
 impl Link {
     fn new(stream: TcpStream) -> std::io::Result<Link> {
         stream.set_nodelay(true)?;
+        // A peer that stops reading fills the socket buffer; a write then gives up instead of
+        // blocking forever, so closing the link (and quitting the match) can't hang.
+        stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
+        let socket = stream.try_clone()?;
         let (mut reader, mut writer) = (stream.try_clone()?, stream);
         let (in_tx, in_rx) = channel::<Vec<u8>>();
         let (out_tx, out_rx) = channel::<Vec<u8>>();
@@ -53,7 +61,7 @@ impl Link {
             }
             let _ = writer.shutdown(Shutdown::Both);
         });
-        Ok(Link { out: Some(out_tx), inbox: Mutex::new(in_rx), writer: Some(writer) })
+        Ok(Link { out: Some(out_tx), inbox: Mutex::new(in_rx), writer: Some(writer), socket })
     }
 
     pub fn send(&self, m: &Message) {
@@ -82,47 +90,60 @@ impl Link {
 }
 
 impl Drop for Link {
-    /// Sends what is queued before closing, so the peer gets every turn this side played.
+    /// Sends what is queued before closing (bounded by the write timeout), so the peer gets
+    /// every turn this side played, then closes the socket.
     fn drop(&mut self) {
         self.out = None;
         if let Some(w) = self.writer.take() {
             let _ = w.join();
         }
+        let _ = self.socket.shutdown(Shutdown::Both);
     }
 }
 
 /// Host: waits for one player on `port`, then offers it `setup` (a replay with no commands)
-/// for player 1.
+/// for player 1. Anyone who can reach the port can join: for a LAN or trusted players.
 pub fn host(port: u16, setup: Replay) -> Result<Link, String> {
     let listener = TcpListener::bind(("0.0.0.0", port)).map_err(|e| format!("can't listen on port {port}: {e}"))?;
     eprintln!("waiting for a player to join on port {port}");
     let (stream, peer) = listener.accept().map_err(|e| format!("accept failed: {e}"))?;
     let link = Link::new(stream).map_err(|e| e.to_string())?;
-    link.send(&Message::Hello { protocol: PROTOCOL, setup });
-    match link.recv_timeout(HANDSHAKE)? {
-        Message::Join { protocol } if protocol == PROTOCOL => {
+    let build = build_id(g2_rules::rules());
+    link.send(&Message::Hello { protocol: PROTOCOL, build, setup });
+    match link.recv_timeout(HANDSHAKE) {
+        Ok(Message::Join { protocol, build: theirs }) if protocol == PROTOCOL && theirs == build => {
             eprintln!("{peer} joined");
             Ok(link)
         }
-        Message::Join { protocol } => Err(format!("{peer} speaks protocol {protocol}, this build {PROTOCOL}")),
-        m => Err(format!("{peer} sent {m:?} instead of joining")),
+        Ok(Message::Join { protocol, .. }) if protocol != PROTOCOL => {
+            Err(format!("{peer} speaks protocol {protocol}, this build {PROTOCOL}: a different game version"))
+        }
+        Ok(Message::Join { .. }) => Err(format!("{peer} runs a different game version")),
+        Ok(m) => Err(format!("{peer} sent {m:?} instead of joining")),
+        // The joiner closes the link when it can't play the match (version, map or rules).
+        Err(e) => Err(format!("{peer} did not join: {e}")),
     }
 }
 
-/// Joiner: connects to `addr` and receives the match. The caller checks it against its own
-/// maps and rules, then calls `accept`.
+/// Joiner: connects to `addr` and receives the match, refusing a host that runs a different
+/// game version. The caller checks the match against its own maps, then calls `accept`.
 pub fn join(addr: &str) -> Result<(Link, Replay), String> {
     let stream = TcpStream::connect(addr).map_err(|e| format!("can't reach {addr}: {e}"))?;
     let link = Link::new(stream).map_err(|e| e.to_string())?;
     match link.recv_timeout(HANDSHAKE)? {
-        Message::Hello { protocol, setup } if protocol == PROTOCOL => Ok((link, setup)),
-        Message::Hello { protocol, .. } => Err(format!("the host speaks protocol {protocol}, this build {PROTOCOL}")),
+        Message::Hello { protocol, build, setup } if protocol == PROTOCOL && build == build_id(g2_rules::rules()) => {
+            Ok((link, setup))
+        }
+        Message::Hello { protocol, .. } if protocol != PROTOCOL => {
+            Err(format!("the host speaks protocol {protocol}, this build {PROTOCOL}: a different game version"))
+        }
+        Message::Hello { .. } => Err("the host runs a different game version".into()),
         m => Err(format!("the host sent {m:?} instead of a match")),
     }
 }
 
 pub fn accept(link: &Link) {
-    link.send(&Message::Join { protocol: PROTOCOL });
+    link.send(&Message::Join { protocol: PROTOCOL, build: build_id(g2_rules::rules()) });
 }
 
 /// This client's side of a network match.

@@ -163,7 +163,7 @@ fn a_desync_is_detected() {
 }
 
 /// A machine never steps into a turn without the peer's orders for it, and a turn out of
-/// order is a protocol error.
+/// order, or with a hash check that isn't the one it must carry, is a protocol error.
 #[test]
 fn a_machine_waits_for_the_peer_and_refuses_gaps() {
     let mut a = Machine::new(HOST, JOINER);
@@ -178,6 +178,18 @@ fn a_machine_waits_for_the_peer_and_refuses_gaps() {
     assert_eq!(turns, (DELAY_TURNS..=2 * DELAY_TURNS).collect::<Vec<_>>());
     let skip = Turn { turn: DELAY_TURNS + 1, commands: vec![], check: None };
     assert!(matches!(a.net.receive(&mut a.world, skip), Err(NetError::Protocol(_))));
+    // The first turn is sent on tick 0, a hash tick: it must carry the check for tick 0.
+    for check in [None, Some((3, 1)), Some((30, 1))] {
+        let mut b = Machine::new(HOST, JOINER);
+        let t = Turn { turn: DELAY_TURNS, commands: vec![], check };
+        assert!(matches!(b.net.receive(&mut b.world, t), Err(NetError::Protocol(_))), "{check:?}");
+    }
+    // A non-hash tick must carry none.
+    let mut c = Machine::new(HOST, JOINER);
+    let ok = Turn { turn: DELAY_TURNS, commands: vec![], check: Some((0, c.world.state_hash())) };
+    c.net.receive(&mut c.world, ok).unwrap();
+    let extra = Turn { turn: DELAY_TURNS + 1, commands: vec![], check: Some((TURN_TICKS, 1)) };
+    assert!(matches!(c.net.receive(&mut c.world, extra), Err(NetError::Protocol(_))));
 }
 
 /// Every message survives its byte encoding, and garbage is refused, never a panic.
@@ -185,8 +197,8 @@ fn a_machine_waits_for_the_peer_and_refuses_gaps() {
 fn messages_round_trip_and_garbage_is_refused() {
     let setup = World::new(&setup(), rules()).replay(&setup());
     let msgs = [
-        Message::Hello { protocol: 1, setup },
-        Message::Join { protocol: 1 },
+        Message::Hello { protocol: 1, build: 7, setup },
+        Message::Join { protocol: 1, build: u64::MAX },
         Message::Turn(Turn { turn: 9, commands: vec![], check: None }),
         Message::Turn(Turn {
             turn: 12,
@@ -204,4 +216,18 @@ fn messages_round_trip_and_garbage_is_refused() {
     let mut huge = vec![2u8, 0, 0, 0, 0];
     huge.extend_from_slice(&u32::MAX.to_le_bytes());
     assert!(Message::decode(&huge).is_err());
+}
+
+/// The build id is stable for one build and changes with any rules table, so two releases
+/// with different numbers refuse each other at the handshake.
+#[test]
+fn the_build_id_follows_the_rules() {
+    use g2_sim::net::build_id;
+    let base = rules();
+    assert_eq!(build_id(base), build_id(base));
+    let mut defs = base.defs.to_vec();
+    defs[0].hp += 1;
+    let changed =
+        Box::leak(Box::new(g2_sim::Rules { defs: Box::leak(defs.into_boxed_slice()), generals: base.generals }));
+    assert_ne!(build_id(base), build_id(changed));
 }
