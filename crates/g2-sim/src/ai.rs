@@ -10,7 +10,7 @@
 //! piles run low.
 
 use crate::command::CommandKind;
-use crate::defs::{BuildingRole, Class};
+use crate::defs::{Armour, BuildingRole, Class, DefId, Weapon};
 use crate::entity::{DeployState, Entity, EntityId, Order, PlayerId};
 use crate::fixed::{Fx, Vec2};
 use crate::map::AiLevel;
@@ -47,6 +47,12 @@ pub fn strength(world: &World, e: &Entity) -> i64 {
     e.hp.max(0) as i64 * w.damage as i64 * TICKS_PER_SECOND as i64 / w.cooldown_ticks.max(1) as i64
 }
 
+/// The armour class (index into `Weapon::bonus`) a weapon is strongest against; a weapon with
+/// no bonus against any unit armour is a general-purpose one (`usize::MAX`).
+fn best_against(w: Weapon) -> usize {
+    (0..3).filter(|&a| w.bonus[a] > 0).max_by_key(|&a| (w.bonus[a], std::cmp::Reverse(a))).unwrap_or(usize::MAX)
+}
+
 impl Ai {
     pub fn new(player: PlayerId, level: AiLevel) -> Ai {
         Ai { player, level, enemy_seen: 0, regroup_until: 0 }
@@ -58,6 +64,20 @@ impl Ai {
             put(self.enemy_seen as u64);
             put(self.regroup_until as u64);
         }
+    }
+
+    /// The armour most of the visible enemy army (by combat strength) wears, if any is seen.
+    fn enemy_armour(&self, world: &World) -> Option<Armour> {
+        let vision = world.vision(self.player);
+        let mut by = [0i64; 3];
+        for e in world.entities().filter(|e| e.owner.is_some_and(|o| o != self.player) && vision.is_visible(e.pos)) {
+            let a = world.rules.def(e.def).armour;
+            if a != Armour::Structure {
+                by[a as usize] += strength(world, e);
+            }
+        }
+        let (i, &s) = by.iter().enumerate().max_by_key(|&(i, &s)| (s, std::cmp::Reverse(i)))?;
+        (s > 0).then_some([Armour::Infantry, Armour::Light, Armour::Heavy][i])
     }
 
     pub(crate) fn think(&mut self, world: &World, out: &mut Vec<CommandKind>) {
@@ -199,12 +219,18 @@ impl Ai {
         }
 
         // 3b. Keep every factory training (one at a time, so collectors come first). A factory
-        // with several units trains the one this AI owns fewest of, weighting the first (the
-        // line unit) double, so artillery makes up about a third of a war factory's output.
+        // trains the unit this AI owns fewest of, its first (the line unit) weighted double, so
+        // a barracks trains two rifle squads per rocket squad and a war factory two tanks per
+        // artillery piece and per light vehicle. `Normal` then counters what it has seen: a unit
+        // whose weapon is strongest against the armour most of the visible enemy army wears
+        // counts as owned only half as much.
         let owned = |def| {
             mine.iter().filter(|e| e.def == def).count()
                 + mine.iter().flat_map(|e| &e.queue).filter(|p| p.def == def).count()
         };
+        let counter = (self.level != AiLevel::Easy).then(|| self.enemy_armour(world)).flatten();
+        let counters =
+            |u: DefId| counter.is_some_and(|a| rules.def(u).weapon().is_some_and(|w| best_against(w) == a as usize));
         for f in mine.iter().filter(|e| !saving && e.is_complete() && e.queue.is_empty()) {
             if rules.def(f.def).role() != Some(BuildingRole::Factory) {
                 continue;
@@ -213,7 +239,11 @@ impl Ai {
             let pick = produces
                 .iter()
                 .enumerate()
-                .min_by_key(|&(i, &u)| (owned(u) * if i == 0 { 1 } else { 2 }, i))
+                .min_by_key(|&(i, &u)| {
+                    let weight = if i == 0 { 2 } else { 4 };
+                    let weight = if counters(u) { weight / 2 } else { weight };
+                    (owned(u) * weight, i)
+                })
                 .map(|(_, &u)| u);
             if let Some(unit) = pick
                 && world.player(me).credits >= rules.def(unit).cost.credits
@@ -413,9 +443,10 @@ impl Ai {
     /// remembered, it scouts the nearest place it can't see: start positions, oil wells and
     /// supply piles first (the map is public; enemies build there), then any cell it has
     /// never explored whose centre can be walked to, so a hidden last building is always found.
-    /// (A cell in a lake may stay unexplored for good: no unit gets close enough to see it, and
-    /// scouting it would send every wave there forever.) Units engage whatever they meet once
-    /// they are close anyway.
+    /// Unexplored cells are searched outward from the other players' starts, where their last
+    /// buildings most likely stand, rather than outward from home. (A cell in a lake may stay
+    /// unexplored for good: no unit gets close enough to see it, and scouting it would send
+    /// every wave there forever.) Units engage whatever they meet once they are close anyway.
     fn enemy_base(&self, world: &World, home: Vec2) -> Option<Vec2> {
         let vision = world.vision(self.player);
         let seen = vision
@@ -430,8 +461,17 @@ impl Ai {
                 .map(|e| e.pos);
             let nearest = |points: &mut dyn Iterator<Item = Vec2>| points.min_by_key(|&p| (p.distance(home), p.x, p.y));
             let likely: Vec<Vec2> = world.map.spawns.iter().copied().chain(resources).collect();
+            // Every start but our own (the one nearest home).
+            let own = world.map.spawns.iter().copied().min_by_key(|&s| (s.distance(home), s.x, s.y));
+            let theirs: Vec<Vec2> = world.map.spawns.iter().copied().filter(|&s| Some(s) != own).collect();
+            let near_theirs = |p: Vec2| theirs.iter().map(|&s| s.distance(p)).min().unwrap_or(Fx::ZERO);
             nearest(&mut likely.iter().copied().filter(|&p| !vision.is_explored(p)))
-                .or_else(|| nearest(&mut vision.unexplored_centres().filter(|&p| world.map.walkable(p))))
+                .or_else(|| {
+                    vision
+                        .unexplored_centres()
+                        .filter(|&p| world.map.walkable(p))
+                        .min_by_key(|&p| (near_theirs(p), p.distance(home), p.x, p.y))
+                })
                 .or_else(|| nearest(&mut likely.iter().copied().filter(|&p| !vision.is_visible(p))))
                 .map(|p| (p, Fx::from_int(5)))
         };

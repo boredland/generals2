@@ -46,6 +46,12 @@ pub mod ids {
     pub const APA_THUNDERFIST: DefId = DefId(30);
     pub const GLA_TOXIN_ARTILLERY: DefId = DefId(31);
     pub const EU_ARTILLERY: DefId = DefId(32);
+    pub const EU_ROCKETS: DefId = DefId(33);
+    pub const APA_TANK_HUNTER: DefId = DefId(34);
+    pub const GLA_RPG: DefId = DefId(35);
+    pub const EU_APC: DefId = DefId(36);
+    pub const APA_GATLING: DefId = DefId(37);
+    pub const GLA_TECHNICAL: DefId = DefId(38);
 }
 
 /// Stable ids into `RULES.generals`.
@@ -213,11 +219,15 @@ const TOXIN_SHELL: Weapon = shelling(weapon(45, [15, 0, 0, 0], 55, 25), 8, 40, 1
 // Placeholder: the EU has no artillery card in the archive (only the general Salvo's artillery
 // strike). A mid-weight shell between the other two.
 const EU_SHELL: Weapon = shelling(weapon(70, [0, 20, 0, 40], 60, 30), 6, 45, 18);
+// Placeholder: the rocket squads' cards say "anti-armor" but give no weapon numbers. A heavy
+// rocket every 2 s with a little more than a rifle's reach: per credit it does about twice a
+// rifle squad's damage to tanks and two thirds of it to infantry.
+const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 33] = [
+static DEFS: [Def; 39] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -368,21 +378,41 @@ static DEFS: [Def; 33] = [
     building("GLA Oil Derrick", Faction::Gla, DERRICK, 0, 500, credits(400), 12, 5, NONE),
     // ---- Combat ----------------------------------------------------------------------------
     // Barracks numbers are placeholders. War factories copy the GLA war factory card.
-    building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 7, &[EU_RECON]),
-    building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS, EU_ARTILLERY]),
+    building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 7, &[EU_RECON, EU_ROCKETS]),
+    building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS, EU_ARTILLERY, EU_APC]),
     // src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
     soldier("EU Recon Squad", Faction::Eu, 200, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
     // src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
     soldier("EU Aegis Tank", Faction::Eu, 660, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
-    building("APA Barracks", Faction::Apa, FACTORY, -10, 800, credits(500), 15, 7, &[APA_RED_GUARD]),
-    building("APA War Factory", Faction::Apa, FACTORY, -20, 1000, credits(900), 25, 9, &[APA_WARLORD, APA_THUNDERFIST]),
+    building("APA Barracks", Faction::Apa, FACTORY, -10, 800, credits(500), 15, 7, &[APA_RED_GUARD, APA_TANK_HUNTER]),
+    building(
+        "APA War Factory",
+        Faction::Apa,
+        FACTORY,
+        -20,
+        1000,
+        credits(900),
+        25,
+        9,
+        &[APA_WARLORD, APA_THUNDERFIST, APA_GATLING],
+    ),
     // src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
     soldier("APA Red Guard", Faction::Apa, 180, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
     // src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
     soldier("APA Warlord Tank", Faction::Apa, 610, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
-    building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE]),
+    building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE, GLA_RPG]),
     // src: GLA war factory hp 1000, $900, 25 s.
-    building("GLA War Factory", Faction::Gla, FACTORY, 0, 1000, credits(900), 25, 9, &[GLA_TANK, GLA_TOXIN_ARTILLERY]),
+    building(
+        "GLA War Factory",
+        Faction::Gla,
+        FACTORY,
+        0,
+        1000,
+        credits(900),
+        25,
+        9,
+        &[GLA_TANK, GLA_TOXIN_ARTILLERY, GLA_TECHNICAL],
+    ),
     // src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
     soldier(
         "GLA Rabble Squad",
@@ -430,6 +460,66 @@ static DEFS: [Def; 33] = [
     soldier("GLA Toxin Artillery", Faction::Gla, 950, Armour::Light, credits(1000), centis(3011), 7, 3, TOXIN_SHELL),
     // Placeholder throughout: no EU artillery card is archived. Fires on the move.
     soldier("EU Howitzer", Faction::Eu, 550, Armour::Heavy, credits(950), secs(24), 7, 3, EU_SHELL),
+    // ---- Anti-armour infantry and fast vehicles ----------------------------------------------
+    // src: Rocket Squad hp 180, $300, 16.29 s, EU barracks, anti-armour. Weapon and speed:
+    // `ROCKETS`, a placeholder.
+    soldier("EU Rocket Squad", Faction::Eu, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+    // src: Tank Hunter, APA barracks, anti-armour rocket infantry; the card has no numbers.
+    // Placeholder: the EU Rocket Squad's.
+    soldier("APA Tank Hunter", Faction::Apa, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+    // Placeholder throughout: no GLA anti-armour infantry is archived. A Rabble-priced squad
+    // with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks.
+    soldier(
+        "GLA RPG Squad",
+        Faction::Gla,
+        150,
+        Armour::Infantry,
+        credits(250),
+        secs(14),
+        9,
+        2,
+        weapon(40, [0, 0, 60, 0], 26, 20),
+    ),
+    // src: Armored Personnel Carrier hp 390, Light, $435, 14.66 s, EU war factory; machine gun
+    // 46, cooldown 2.25, range 45; land speed 19. Transport and repair turret are not modelled.
+    soldier(
+        "EU APC",
+        Faction::Eu,
+        390,
+        Armour::Light,
+        credits(435),
+        centis(1466),
+        19,
+        3,
+        weapon(46, [0, 0, 0, 0], 45, 23),
+    ),
+    // src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
+    // (anti-air too; there is no air). Gun and speed are placeholders: rapid, strong against
+    // infantry.
+    soldier(
+        "APA Gatling Tank",
+        Faction::Apa,
+        490,
+        Armour::Light,
+        credits(660),
+        centis(2330),
+        12,
+        3,
+        weapon(10, [12, 0, 0, 0], 32, 4),
+    ),
+    // src: Technical, GLA light utility vehicle with a 12.7 mm machine gun; the card has no
+    // numbers. Placeholder: the cheapest, fastest vehicle in the game, fragile.
+    soldier(
+        "GLA Technical",
+        Faction::Gla,
+        280,
+        Armour::Light,
+        credits(400),
+        secs(10),
+        17,
+        3,
+        weapon(14, [6, 0, 0, 0], 30, 6),
+    ),
 ];
 
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
@@ -534,6 +624,12 @@ mod tests {
             (APA_THUNDERFIST, "APA Thunderfist"),
             (GLA_TOXIN_ARTILLERY, "GLA Toxin Artillery"),
             (EU_ARTILLERY, "EU Howitzer"),
+            (EU_ROCKETS, "EU Rocket Squad"),
+            (APA_TANK_HUNTER, "APA Tank Hunter"),
+            (GLA_RPG, "GLA RPG Squad"),
+            (EU_APC, "EU APC"),
+            (APA_GATLING, "APA Gatling Tank"),
+            (GLA_TECHNICAL, "GLA Technical"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);
@@ -575,6 +671,41 @@ mod tests {
             for m in g.modifiers {
                 let (Modifier::Cost { def, .. } | Modifier::BuildTime { def, .. }) = *m;
                 assert_eq!(r.def(def).faction, Some(g.faction), "{} modifies {}", g.name, r.def(def).name);
+            }
+        }
+    }
+
+    /// Every faction's barracks has a rifle squad and an anti-armour squad, and the rockets
+    /// beat the rifles against tanks per credit spent (damage per second against `Heavy`); the
+    /// war factory has a fast vehicle that outruns every tank and artillery piece of its side.
+    #[test]
+    fn each_faction_has_anti_armour_infantry_and_a_fast_vehicle() {
+        let r = rules();
+        let dps_per_credit = |d: DefId, armour| {
+            let w = r.def(d).weapon().unwrap();
+            w.damage_vs(armour) as f64 * g2_sim::TICKS_PER_SECOND as f64
+                / w.cooldown_ticks as f64
+                / r.def(d).cost.credits as f64
+        };
+        for (barracks, rifles, rockets, factory, fast) in [
+            (EU_BARRACKS, EU_RECON, EU_ROCKETS, EU_FACTORY, EU_APC),
+            (APA_BARRACKS, APA_RED_GUARD, APA_TANK_HUNTER, APA_FACTORY, APA_GATLING),
+            (GLA_BARRACKS, GLA_RABBLE, GLA_RPG, GLA_FACTORY, GLA_TECHNICAL),
+        ] {
+            assert_eq!(r.def(barracks).produces, &[rifles, rockets][..]);
+            assert!(r.def(factory).produces.contains(&fast));
+            assert!(
+                dps_per_credit(rockets, Armour::Heavy) > dps_per_credit(rifles, Armour::Heavy),
+                "{} vs tanks",
+                r.def(rockets).name
+            );
+            assert!(
+                dps_per_credit(rifles, Armour::Infantry) > dps_per_credit(rockets, Armour::Infantry),
+                "{} vs infantry",
+                r.def(rifles).name
+            );
+            for &other in r.def(factory).produces.iter().filter(|&&d| d != fast) {
+                assert!(r.def(fast).speed() > r.def(other).speed(), "{} vs {}", r.def(fast).name, r.def(other).name);
             }
         }
     }

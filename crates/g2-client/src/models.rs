@@ -336,19 +336,32 @@ pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
 /// silhouettes: helmets and a roof band carry the team colour so sides read at game zoom; EU
 /// tanks are long and flat, APA tanks twin-barrelled, GLA tanks small and boxy.
 fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
+    let weapon = def.weapon();
     if def.armour == g2_sim::Armour::Infantry {
+        // Rocket infantry (strongest against Heavy) shoulders a fat launcher tube instead of
+        // a rifle, so an anti-armour squad reads apart from a rifle squad.
+        let rockets = weapon.is_some_and(|w| w.bonus[2] > w.bonus[0].max(w.bonus[1]));
         // Squad of three figures in a loose wedge.
         for (k, (x, z)) in [(0.0, 0.7), (-0.8, -0.4), (0.8, -0.4)].into_iter().enumerate() {
             let body = if faction == Faction::Gla { Slot::Crate(k as u8 + 1) } else { Slot::Hull };
             p.push(cyl(body, Vec3::new(x, 0.55, z), Vec3::new(0.55, 1.1, 0.45)));
             p.push(part(Prim::Sphere, Slot::Team, Vec3::new(x, 1.3, z), Vec3::splat(0.5)));
             p.push(block(Slot::Panel, x, z, 0.85, 0.6, 0.2, 0.5));
-            p.push(block(Slot::Dark, x + 0.25, z + 0.3, 0.75, 0.12, 0.12, 0.8));
+            if rockets {
+                p.push(block(Slot::Dark, x + 0.3, z + 0.1, 1.35, 0.28, 0.28, 1.3));
+            } else {
+                p.push(block(Slot::Dark, x + 0.25, z + 0.3, 0.75, 0.12, 0.12, 0.8));
+            }
         }
         return;
     }
-    if def.weapon().is_some_and(|w| w.shell.is_some()) || def.deploy.is_some() {
+    if weapon.is_some_and(|w| w.shell.is_some()) || def.deploy.is_some() {
         artillery(p, faction, r);
+        return;
+    }
+    // Fast wheeled vehicles: anything quicker than a tank's 12 per second.
+    if def.speed() > g2_sim::Fx::from_ratio(12, g2_sim::TICKS_PER_SECOND as i64) {
+        light_vehicle(p, faction, r);
         return;
     }
     let (l, wd) = (r * 2.0, r * 1.3);
@@ -374,6 +387,39 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
             p.push(block(Slot::Panel, 0.0, -l * 0.1, turret_y, wd * 0.5, 0.9, l * 0.35));
             p.push(block(Slot::Dark, 0.0, l * 0.3, barrel_y, 0.2, 0.2, l * 0.45));
             p.push(block(Slot::Crate(2), wd * 0.2, -l * 0.38, 1.4, 0.8, 0.6, 0.7));
+        }
+    }
+}
+
+/// Fast light vehicles on four wheels, gun on a pintle or a small turret: the EU APC is a
+/// boxy carrier with a roof gun, the APA Gatling tank a low hull with a rotary barrel cluster,
+/// the GLA technical a pickup with a machine gun in the bed.
+fn light_vehicle(p: &mut Vec<Part>, faction: Faction, r: f32) {
+    let (l, wd) = (r * 2.1, r * 1.2);
+    for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        p.push(cyl(Slot::Dark, Vec3::new(x * wd * 0.48, 0.45, z * l * 0.32), Vec3::new(0.9, 0.5, 0.9)));
+    }
+    match faction {
+        Faction::Eu => {
+            p.push(block(Slot::Hull, 0.0, 0.0, 0.6, wd * 0.9, 1.4, l * 0.95));
+            p.push(block(Slot::Team, 0.0, -l * 0.2, 2.0, wd * 0.8, 0.15, l * 0.35));
+            p.push(block(Slot::Dark, 0.0, l * 0.15, 2.3, 0.18, 0.18, l * 0.4));
+            hazard_trim(p, wd * 0.9, l * 0.95, 1.9);
+        }
+        Faction::Apa => {
+            p.push(block(Slot::Hull, 0.0, 0.0, 0.55, wd * 0.9, 0.9, l * 0.9));
+            p.push(block(Slot::Team, 0.0, -l * 0.3, 1.45, wd * 0.7, 0.15, l * 0.3));
+            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.75, 0.0), Vec3::new(wd * 0.5, 0.6, wd * 0.5)));
+            for (x, y) in [(-0.15, 1.7), (0.15, 1.7), (0.0, 1.9)] {
+                p.push(block(Slot::Dark, x, l * 0.32, y, 0.12, 0.12, l * 0.45));
+            }
+        }
+        Faction::Gla => {
+            p.push(block(Slot::Hull, 0.0, l * 0.22, 0.55, wd * 0.9, 1.2, l * 0.35));
+            p.push(block(Slot::Team, 0.0, l * 0.22, 1.75, wd * 0.8, 0.15, l * 0.3));
+            p.push(block(Slot::Crate(1), 0.0, -l * 0.18, 0.55, wd * 0.9, 0.6, l * 0.5));
+            p.push(block(Slot::Dark, 0.0, -l * 0.2, 1.15, 0.2, 0.9, 0.2));
+            p.push(block(Slot::Dark, 0.0, -l * 0.05, 1.95, 0.14, 0.14, l * 0.4));
         }
     }
 }
