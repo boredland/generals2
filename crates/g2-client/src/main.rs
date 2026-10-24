@@ -13,6 +13,7 @@
 //! on exit; check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no
 //! window or display server.
 
+mod audio;
 mod camera;
 mod hud;
 mod input;
@@ -227,6 +228,7 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
         camera::CameraPlugin,
         input::InputPlugin,
         hud::HudPlugin,
+        audio::SoundPlugin,
     ))
     .add_systems(Startup, spawn_camera);
     if let Some(path) = record {
@@ -318,7 +320,9 @@ mod headless {
             DefaultPlugins
                 .set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, ..default() })
                 .set(RenderPlugin { synchronous_pipeline_compilation: true, ..default() })
-                .disable::<WinitPlugin>(),
+                .disable::<WinitPlugin>()
+                // A screenshot needs no sound device.
+                .disable::<bevy::audio::AudioPlugin>(),
         )
         .insert_resource(sim)
         .insert_resource(ui)

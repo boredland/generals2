@@ -22,6 +22,8 @@ pub struct Sim {
     pub fog: bool,
     /// Each player's index into `models::TEAM_PALETTE` (index = player).
     pub teams: Vec<usize>,
+    /// Orders the local player has given, ever; the sound counts them to acknowledge each.
+    pub orders_given: u64,
 }
 
 impl Sim {
@@ -29,7 +31,7 @@ impl Sim {
         let players = players.into();
         let teams = crate::models::team_slots(&players.iter().map(|p| p.faction).collect::<Vec<_>>());
         let setup = MatchSetup { map, seed, players };
-        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true, teams }
+        Sim { world: World::new(&setup, rules()), setup, speed: 1, source, fog: true, teams, orders_given: 0 }
     }
 
     /// Team colour of `player`.
@@ -105,6 +107,7 @@ impl Sim {
     pub fn order(&mut self, kind: CommandKind) {
         if !self.world.is_ai(LOCAL) {
             self.world.submit(LOCAL, kind);
+            self.orders_given += 1;
         }
     }
 
@@ -152,6 +155,11 @@ pub struct Deliveries(pub Vec<(g2_sim::EntityId, i64)>);
 #[derive(Resource, Default)]
 pub struct Hits(pub Vec<Shot>);
 
+/// Sounds the local player should hear, gathered per step like `Deliveries` (see
+/// `audio::sim_cues`), plus order acknowledgements; the sound drains it every frame.
+#[derive(Resource, Default)]
+pub struct Heard(pub Vec<(crate::audio::Cue, Option<g2_sim::Vec2>)>);
+
 /// What the view draws for combat.
 #[derive(Clone, Copy, Debug)]
 pub enum Shot {
@@ -172,6 +180,7 @@ impl Plugin for SimPlugin {
             .init_resource::<Previous>()
             .init_resource::<Deliveries>()
             .init_resource::<Hits>()
+            .init_resource::<Heard>()
             .add_systems(FixedUpdate, step_sim);
     }
 }
@@ -181,6 +190,7 @@ fn step_sim(
     mut prev: ResMut<Previous>,
     mut deliveries: ResMut<Deliveries>,
     mut hits: ResMut<Hits>,
+    mut heard: ResMut<Heard>,
 ) {
     if sim.speed == 0 {
         return;
@@ -196,6 +206,7 @@ fn step_sim(
             }
         }
         collect_shots(&sim.world, &mut hits);
+        heard.0.extend(crate::audio::sim_cues(&sim));
         if sim.world.winner().is_some() {
             sim.speed = 0;
             break;

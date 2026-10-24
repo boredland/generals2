@@ -589,6 +589,7 @@ fn controls(root: &mut ChildSpawnerCommands) {
             "T - deploy / pack up artillery",
             "Tab - select the next collector",
             "Space - pause; + / - - game speed; Esc - menu",
+            "M - mute / unmute sound",
         ] {
             p.spawn(text(line, 14.0, TEXT));
         }

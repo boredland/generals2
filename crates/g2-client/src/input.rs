@@ -6,7 +6,7 @@
 //! With a constructor selected: B opens build mode, 1-9 pick a building, left click places, Esc cancels.
 //! With a building selected: 1-9 queue production, Backspace cancels the last item.
 //! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
-//! collector and centres the camera on it.
+//! collector and centres the camera on it. M (mute) is handled by `audio`.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;

@@ -87,6 +87,18 @@ pub enum Event {
         at: Vec2,
         radius: Fx,
     },
+    /// `player`'s production finished a `def` unit at `at`. Output only.
+    Produced {
+        player: PlayerId,
+        def: DefId,
+        at: Vec2,
+    },
+    /// `player` finished constructing a `def` building at `at`. Output only.
+    Completed {
+        player: PlayerId,
+        def: DefId,
+        at: Vec2,
+    },
 }
 
 /// An artillery shell in flight. Part of the state hash.
@@ -798,6 +810,7 @@ impl World {
             let spawn_at = self.map.clamp(pos + Vec2::new(Fx::ZERO, (radius + ud.radius + SLACK) * side));
             let unit = self.spawn_owned(def, owner, spawn_at);
             self.stats[owner.0 as usize].units_built += 1;
+            self.events.push(Event::Produced { player: owner, def, at: spawn_at });
             if is_depot
                 && ud.collector().is_some()
                 && let Some(pile) = self.nearest_pile(pos)
@@ -822,10 +835,12 @@ impl World {
             }
             let progress = progress + 1;
             let owner = s.owner.unwrap();
+            let (def, at) = (s.def, s.pos);
             let done = progress >= self.build_ticks_for(owner, s.def);
             self.entities.get_mut(site).unwrap().construction = (!done).then_some(progress);
             if done {
                 self.stats[owner.0 as usize].buildings_built += 1;
+                self.events.push(Event::Completed { player: owner, def, at });
                 for b in self.entities.ids() {
                     let b = self.entities.get_mut(b).unwrap();
                     if b.order == (Order::Construct { site }) {

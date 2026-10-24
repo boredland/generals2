@@ -24,6 +24,8 @@ bevy = { version = "0.20", default-features = false, features = [
     "3d_bevy_render",
     "ui_bevy_render",
     "bevy_state",
+    # Playback only: every sound is synthesized in g2-client/src/audio.rs, so no decoders.
+    "bevy_audio",
 ] }
 
 [workspace.lints.rust]
