@@ -6,12 +6,13 @@ use g2_sim::entity::DeployState;
 use g2_sim::world::Event;
 use g2_sim::{AiLevel, DefId, Faction, MatchSetup, PlayerId, PlayerSetup, TICKS_PER_SECOND, Vec2, World};
 
-/// `Normal`'s guns hold behind its line: while its field army is in a fight, a gun out of the
-/// base stands farther from the nearest visible enemy than the line's closest unit, by a good
-/// margin, nearly always; they do leave the base, and most survive. They get there by range
-/// alone (a gun stops at its reach, 55-65, while the line closes to 25-35). Measured on
-/// Crater Ridge, every pairing, both starts, against Easy: median 35 units behind, 86% of
-/// samples more than 5 behind, 32 of 35 guns out of the base, 19 lost.
+/// Regression guard on gun stand-off: while `Normal`'s field army is in a fight, a gun out of
+/// the base stands farther from the nearest visible enemy than the line's closest unit, by a
+/// good margin, nearly always; guns do leave the base, and most survive. Nothing positions them
+/// on purpose: range alone does it (a gun stops at its reach, 55-65, while the line closes to
+/// 25-35), and `Easy` stands as far back (median 35-38). Where the levels differ is losses.
+/// Measured on Crater Ridge, every pairing, both starts, against Easy: median 35 units behind,
+/// 86% of samples more than 5 behind, 32 of 35 guns out of the base, 19 lost.
 #[test]
 fn normal_artillery_stands_behind_its_line() {
     let r = rules();
