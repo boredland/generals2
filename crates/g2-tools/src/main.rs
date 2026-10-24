@@ -4,6 +4,7 @@
 //!   g2-tools record <out.g2rp> [--ticks N] [--seed S] [--factions eu,gla] [--ai L] [--map NAME]   AI match → replay
 //!   g2-tools bench [--ticks N] [--ai L] [--map NAME]  ticks per second for an AI-vs-AI match
 //!   g2-tools survey A B [--seeds N] [--map NAME]      AI level A against B: every faction pairing, both starts (B may be onslaught)
+//!   g2-tools artillery LEVEL [--map NAME]             where LEVEL's artillery stands in its fights, against Easy
 //!   g2-tools summary <file.g2rp>                      print the final economy of a replay
 //!   g2-tools maps                                     list importable Generals / Zero Hour maps
 //!
@@ -28,6 +29,7 @@ fn main() -> ExitCode {
         Some("bench") => bench(&args[1..]),
         Some("survey") => survey(&args[1..]),
         Some("summary") => summary(&args[1..]),
+        Some("artillery") => artillery(&args[1..]),
         Some("maps") => maps(),
         _ => Err(USAGE.to_owned()),
     };
@@ -245,6 +247,110 @@ fn bench(args: &[String]) -> Result<(), String> {
         ticks as f64 / secs,
         ticks as f64 / secs / TICKS_PER_SECOND as f64,
         world.entities().count()
+    );
+    Ok(())
+}
+
+/// Where a level's artillery stands in its fights. For every faction pairing, both starts,
+/// against Easy: every 2 seconds, for each of the probed player's guns out of its base (more
+/// than 50 from every own building) while its line (armed non-artillery in the field) has a
+/// visible enemy within 60, how far the gun stands behind the line's front: positive when the
+/// gun is farther from the nearest visible enemy than the line's closest unit. Also how many
+/// guns were built, how many ever left the base, and how many died.
+fn artillery(args: &[String]) -> Result<(), String> {
+    let probed = level(args.first().ok_or(USAGE)?)?;
+    let map = resolve(&flag(args, "--map", "Crater Ridge".to_owned())?)?;
+    let r = rules();
+    let is_gun = |d: g2_sim::DefId| {
+        let d = r.def(d);
+        d.weapon_for(d.deploy.is_some()).is_some_and(|w| w.shell.is_some())
+    };
+    let (mut behind, mut samples, mut built, mut left, mut lost, mut wins) = (Vec::new(), 0u32, 0, 0, 0, 0);
+    for fa in Faction::ALL {
+        for fb in Faction::ALL {
+            for seat in 0..2u8 {
+                let me = PlayerId(seat);
+                let mut players = vec![
+                    PlayerSetup { faction: fa, starting_credits: 5_000, ai: Some(probed), general: None },
+                    PlayerSetup { faction: fb, starting_credits: 5_000, ai: Some(AiLevel::Easy), general: None },
+                ];
+                if seat == 1 {
+                    players.swap(0, 1);
+                }
+                let setup = MatchSetup { map: map.clone(), seed: 1, players };
+                let mut w = World::new(&setup, r);
+                let (mut guns, mut out) = (std::collections::BTreeSet::new(), std::collections::BTreeSet::new());
+                while w.winner().is_none() && w.tick() < 20 * 60 * TICKS_PER_SECOND {
+                    w.step();
+                    for e in w.events() {
+                        if let g2_sim::world::Event::Hit { killed: true, target, .. } = e
+                            && guns.contains(target)
+                        {
+                            lost += 1;
+                        }
+                    }
+                    if !w.tick().is_multiple_of(2 * TICKS_PER_SECOND) {
+                        continue;
+                    }
+                    let vision = w.vision(me);
+                    let enemies: Vec<_> = w
+                        .entities()
+                        .filter(|e| e.owner.is_some_and(|o| o != me) && vision.is_visible(e.pos))
+                        .map(|e| e.pos)
+                        .collect();
+                    let buildings: Vec<_> = w
+                        .entities()
+                        .filter(|e| e.owner == Some(me) && r.def(e.def).is_building())
+                        .map(|e| e.pos)
+                        .collect();
+                    let in_field = |p: g2_sim::Vec2| buildings.iter().all(|b| b.distance(p).to_f32() > 50.0);
+                    let nearest =
+                        |p: g2_sim::Vec2| enemies.iter().map(|q| q.distance(p).to_f32()).fold(f32::MAX, f32::min);
+                    let mine: Vec<_> = w
+                        .entities()
+                        .filter(|e| {
+                            e.owner == Some(me)
+                                && r.def(e.def).weapon_for(e.deploy != g2_sim::entity::DeployState::Packed).is_some()
+                                || e.owner == Some(me) && is_gun(e.def)
+                        })
+                        .collect();
+                    for e in &mine {
+                        if is_gun(e.def) {
+                            guns.insert(e.id);
+                            if in_field(e.pos) {
+                                out.insert(e.id);
+                            }
+                        }
+                    }
+                    let front = mine
+                        .iter()
+                        .filter(|e| !is_gun(e.def) && in_field(e.pos))
+                        .map(|e| nearest(e.pos))
+                        .fold(f32::MAX, f32::min);
+                    if front > 60.0 {
+                        continue;
+                    }
+                    for g in mine.iter().filter(|e| is_gun(e.def) && in_field(e.pos)) {
+                        samples += 1;
+                        behind.push(nearest(g.pos) - front);
+                    }
+                }
+                built += guns.len();
+                left += out.len();
+                wins += (w.winner() == Some(me)) as u32;
+            }
+        }
+    }
+    behind.sort_by(f32::total_cmp);
+    let q = |f: f32| behind.get(((behind.len() as f32 - 1.0) * f) as usize).copied().unwrap_or(f32::NAN);
+    let held = behind.iter().filter(|&&d| d > 5.0).count();
+    println!(
+        "{}: guns built {built}, left base {left}, lost {lost}; in fights {samples} samples, behind the front by p25/p50/p75 {:.0}/{:.0}/{:.0}, more than 5 behind {}%; wins {wins}/18",
+        probed.name(),
+        q(0.25),
+        q(0.5),
+        q(0.75),
+        if samples == 0 { 0 } else { held * 100 / samples as usize }
     );
     Ok(())
 }
