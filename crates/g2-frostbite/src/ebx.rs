@@ -1,7 +1,8 @@
 //! Ebx, Frostbite 2's binary asset format: a partition of typed instances whose layout is
 //! described in the file itself (field and class descriptors, names stored as DJB2 hashes
-//! with a keyword table). Layout per NicknineTheEagle's Frostbite-Scripts (`frostbite2/
-//! ebx.py`); the section alignment was checked against every ebx in the alpha.
+//! with a keyword table). Written from the alpha's bytes, with NicknineTheEagle's
+//! Frostbite-Scripts (`frostbite2/ebx.py`) consulted for the header fields; the section
+//! alignment was checked against every ebx in the alpha.
 
 use crate::Error;
 

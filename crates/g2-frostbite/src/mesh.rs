@@ -1,7 +1,8 @@
 //! MeshSet resources: a header (layout, one LOD in this build, subsets) followed inline by
-//! vertex and index data, or with that data in a chunk the LOD names. Layout per
-//! marv7000/IceBloc (`IceBlocLib.Frostbite2/Meshes`), with the LOD record's offsets checked
-//! against the alpha: every one of its 2,154 meshes decodes inside its bounding box.
+//! vertex and index data, or with that data in a chunk the LOD names. Written from the
+//! alpha's bytes, with marv7000/IceBloc's FB2 mesh reader (GPL-2.0) consulted for the field
+//! names only; no code was taken. Every one of the alpha's 2,154 meshes decodes inside its
+//! bounding box.
 //!
 //! Vertex elements are (usage, format, offset) triples per subset; positions and normals
 //! are half-float, texture coordinates half2. Subsets are grouped into four categories by

@@ -5,8 +5,9 @@
 //! Layout (`Data/`): `cas.cat` indexes content-addressed blobs (by SHA-1) inside
 //! `cas_NN.cas`; every `Win32/**/*.toc` is a superbundle whose `.sb` holds bundle manifests
 //! naming `ebx` (asset), `res` (resource) and chunk entries. Localized chunks live in their
-//! own `.sb` at an offset instead of in the CAS. Format notes: frankelstner's BF3 dumper and
-//! mitsuhiko/frostbite2-stuff; constants below were checked against the alpha's files.
+//! own `.sb` at an offset instead of in the CAS. Written from the alpha's bytes, with
+//! frankelstner's BF3 dumper notes and mitsuhiko/frostbite2-stuff consulted for the
+//! container layout; constants below were checked against the alpha's files.
 
 pub mod audio;
 pub mod dbo;
