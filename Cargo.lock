@@ -2529,6 +2529,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "g2-frostbite"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide 0.8.9",
+]
+
+[[package]]
 name = "g2-maps"
 version = "0.1.0"
 dependencies = [
@@ -2552,9 +2559,11 @@ version = "0.1.0"
 name = "g2-tools"
 version = "0.1.0"
 dependencies = [
+ "g2-frostbite",
  "g2-maps",
  "g2-rules",
  "g2-sim",
+ "png",
 ]
 
 [[package]]

@@ -7,6 +7,7 @@
 //!   g2-tools artillery LEVEL [--map NAME]             where LEVEL's artillery stands in its fights, against Easy
 //!   g2-tools summary <file.g2rp>                      print the final economy of a replay
 //!   g2-tools maps                                     list importable Generals / Zero Hour maps
+//!   g2-tools alpha DIR [--textures OUT]                index a 2013 alpha install you own; optionally export its textures as PNG
 //!
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` from `maps`.
 //! `--factions` entries may name a general: `eu:bulldog,gla:junkyard`. AI levels: easy,
@@ -31,6 +32,7 @@ fn main() -> ExitCode {
         Some("summary") => summary(&args[1..]),
         Some("artillery") => artillery(&args[1..]),
         Some("maps") => maps(),
+        Some("alpha") => alpha(&args[1..]),
         _ => Err(USAGE.to_owned()),
     };
     match result {
@@ -42,7 +44,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] [--ai L] [--map NAME] | bench [--ticks N] [--ai L] [--map NAME] | survey A B [--seeds N] [--map NAME] | summary FILE | maps>";
+const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] [--ai L] [--map NAME] | bench [--ticks N] [--ai L] [--map NAME] | survey A B [--seeds N] [--map NAME] | summary FILE | maps | alpha DIR [--textures OUT]>";
 
 fn level(s: &str) -> Result<AiLevel, String> {
     match s.to_ascii_lowercase().as_str() {
@@ -191,6 +193,64 @@ fn maps() -> Result<(), String> {
             Ok(_) => {} // campaign and test maps: no skirmish starts
             Err(err) => println!("{}  (unreadable: {err})", e.name),
         }
+    }
+    Ok(())
+}
+
+/// Indexes an alpha install and reports what it holds; `--textures OUT` writes every flat
+/// texture's largest level as `OUT/<asset path>.png`. The output stays on this machine: it
+/// is EA's art, read from the user's own copy.
+fn alpha(args: &[String]) -> Result<(), String> {
+    use g2_frostbite::{Alpha, res_type, texture};
+    let dir = args.first().filter(|a| !a.starts_with("--")).ok_or(USAGE)?;
+    let t0 = Instant::now();
+    let a = Alpha::open(std::path::Path::new(dir)).map_err(|e| e.to_string())?;
+    println!(
+        "{} superbundles, {} bundles: {} ebx assets, {} resources, {} chunks ({:.1} s)",
+        a.superbundles,
+        a.bundles,
+        a.ebx.len(),
+        a.res.len(),
+        a.chunk_count(),
+        t0.elapsed().as_secs_f32()
+    );
+    let mut kinds = std::collections::BTreeMap::<u32, usize>::new();
+    for e in a.res.values() {
+        *kinds.entry(e.res_type.unwrap_or_default()).or_default() += 1;
+    }
+    let label = |t: u32| match t {
+        res_type::TEXTURE => "texture",
+        res_type::MESH_SET => "mesh set",
+        _ => "",
+    };
+    for (t, n) in &kinds {
+        println!("  res {t:08x} {n:6} {}", label(*t));
+    }
+    let Some(out) = args.iter().position(|a| a == "--textures").map(|i| args.get(i + 1).ok_or(USAGE)) else {
+        return Ok(());
+    };
+    let out = std::path::Path::new(out?);
+    let (mut written, mut skipped) = (0, std::collections::BTreeMap::<String, usize>::new());
+    for (name, e) in a.res_of(res_type::TEXTURE) {
+        let img = match texture::decode(&a, e) {
+            Ok(img) => img,
+            Err(err) => {
+                *skipped.entry(err.to_string()).or_default() += 1;
+                continue;
+            }
+        };
+        let path = out.join(format!("{name}.png"));
+        std::fs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
+        let file = std::fs::File::create(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+        let mut enc = png::Encoder::new(std::io::BufWriter::new(file), img.width, img.height);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().and_then(|mut w| w.write_image_data(&img.rgba)).map_err(|e| e.to_string())?;
+        written += 1;
+    }
+    println!("{written} textures written to {}", out.display());
+    for (why, n) in skipped {
+        println!("  skipped {n}: {why}");
     }
     Ok(())
 }

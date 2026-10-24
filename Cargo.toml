@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/g2-sim", "crates/g2-rules", "crates/g2-maps", "crates/g2-client", "crates/g2-tools"]
+members = ["crates/g2-sim", "crates/g2-rules", "crates/g2-maps", "crates/g2-client", "crates/g2-tools", "crates/g2-frostbite"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,6 +12,7 @@ publish = false
 g2-sim = { path = "crates/g2-sim" }
 g2-rules = { path = "crates/g2-rules" }
 g2-maps = { path = "crates/g2-maps" }
+g2-frostbite = { path = "crates/g2-frostbite" }
 # Explicit feature list: the "ui"/"2d"/"3d"/"default_platform" groups pull in Wayland, whose
 # dev headers are not available on the build host. X11 only.
 bevy = { version = "0.20", default-features = false, features = [

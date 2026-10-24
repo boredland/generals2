@@ -111,7 +111,8 @@ crates/g2-sim      deterministic simulation (no deps): fixed point, RNG, entitie
 crates/g2-rules    faction/unit/building tables, the built-in map; economy + determinism tests
 crates/g2-client   Bevy 0.20 app: look (camera/light/grade), terrain, models, view, input, HUD, headless screenshot
 crates/g2-maps     reader for Generals / Zero Hour .map files: chunks, heights, textures, objects, water
-crates/g2-tools    CLI: verify / record / bench / summary / maps
+crates/g2-frostbite reader for the 2013 alpha's Frostbite data (your own copy): containers, textures
+crates/g2-tools    CLI: verify / record / bench / summary / maps / alpha
 scripts/igpu-only/ LD_PRELOAD shim + wrapper that restricts Vulkan to the integrated GPU on the build host
 archive/           research material, local-only and untracked (fetch scripts in scripts/)
 vendor/            upstream source as git submodules (reference only), see vendor/README.md
@@ -198,3 +199,5 @@ The difference: Strong Hold reimplements an existing game and checks it against 
 ## Legal
 
 `vendor/` contains GPL-3.0 code; the EA release carries GPL §7 additional terms (no trademark use, no claims of EA affiliation, modifications must be marked). No code from it is in `crates/`; `crates/g2-maps` is our own reader written from the file format. Imported map data is read from `vendor/ea/CnC_Modding_Support` (or `$G2_MAPS_DIR`, for a binary run outside this tree) at runtime and never copied into the repository. Everything under `archive/` (videos, Wayback captures, wiki text, press pages, concept art, and their manifests) is third-party material kept local-only: it is gitignored, has never been in this repository's history, and is never redistributed. Our own notes on that material stay outside the repository too.
+
+`crates/g2-frostbite` reads the data of the 2013 closed alpha from a copy the player has. It contains no EA data. `g2-tools alpha DIR` indexes an install, and with `--textures OUT` writes its textures as PNGs to a folder you choose. That output is EA's art: keep it on your machine and never put it in this repository or anything built from it. The reader's tests use synthetic data; the checks against a real install run only when `G2_ALPHA_DIR` points at one.

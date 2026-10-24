@@ -1,0 +1,13 @@
+[package]
+name = "g2-frostbite"
+description = "Reader for the Frostbite 2 data of the 2013 Command & Conquer closed alpha (the user's own copy)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+miniz_oxide = "0.8"
+
+[lints]
+workspace = true
