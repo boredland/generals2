@@ -96,7 +96,10 @@ impl Ai {
 
         // 2. Base layout: supply center, power (if the faction uses it), one oil derrick, a
         //    barracks and a war factory; then derricks on any other free well.
-        if let (Some(builder), Some(cc)) = (idle_constructor, cc) {
+        // A player whose command center is gone rebuilds around its constructor, so a lost
+        // base is replaced rather than left standing forever as idle constructors.
+        let anchor = cc.map(|c| c.pos).or_else(|| idle_constructor.and_then(|b| world.entity(b)).map(|e| e.pos));
+        if let (Some(builder), Some(base)) = (idle_constructor, anchor) {
             let builder_def = rules.def(world.entity(builder).unwrap().def);
             let find =
                 |pred: fn(&crate::defs::Def) -> bool| builder_def.builds.iter().copied().find(|&b| pred(rules.def(b)));
@@ -125,16 +128,16 @@ impl Ai {
             let expansion = || {
                 let near_ours = |p: Vec2| depots.iter().any(|d| d.pos.distance(p) <= Fx::from_int(60));
                 let spent = world
-                    .nearest_pile(cc.pos)
+                    .nearest_pile(base)
                     .and_then(|p| world.entity(p))
-                    .is_none_or(|p| p.resource < 2_000 || p.pos.distance(cc.pos) > Fx::from_int(90));
+                    .is_none_or(|p| p.resource < 2_000 || p.pos.distance(base) > Fx::from_int(90));
                 spent
                     .then(|| {
                         world
                             .entities()
                             .filter(|e| matches!(rules.def(e.def).class, Class::SupplyPile) && e.resource >= 2_000)
                             .filter(|e| !near_ours(e.pos))
-                            .min_by_key(|e| (e.pos.distance(cc.pos), e.id))
+                            .min_by_key(|e| (e.pos.distance(base), e.id))
                             .map(|e| e.pos)
                     })
                     .flatten()
@@ -146,7 +149,7 @@ impl Ai {
                 supply
             } else if world.player(me).faction.uses_power() && count(|r| r == BuildingRole::PowerPlant) == 0 {
                 find(|d| d.role() == Some(BuildingRole::PowerPlant))
-            } else if derricks == 0 && derrick.is_some_and(|d| self.free_well(world, d, cc.pos).is_some()) {
+            } else if derricks == 0 && derrick.is_some_and(|d| self.free_well(world, d, base).is_some()) {
                 derrick
             } else if let Some(f) = missing_factory {
                 Some(f)
@@ -161,21 +164,20 @@ impl Ai {
                 && world.player(me).credits >= rules.def(def).cost.credits
             {
                 let pos = if Some(def) == derrick {
-                    self.free_well(world, def, cc.pos)
+                    self.free_well(world, def, base)
                 } else if matches!(rules.def(def).role(), Some(BuildingRole::SupplyCenter { .. })) {
                     match expand_to.filter(|_| !depots.is_empty()) {
                         // Beside the new pile, toward home.
-                        Some(pile) => self.find_spot_toward(world, def, pile, cc.pos),
+                        Some(pile) => self.find_spot_toward(world, def, pile, base),
                         // Toward the nearest pile: shorter trips, and the same layout from every
                         // start (the spiral's fixed ring order favours one corner of the map).
                         None => {
-                            let toward =
-                                world.nearest_pile(cc.pos).and_then(|p| world.entity(p)).map_or(cc.pos, |p| p.pos);
-                            self.find_spot_toward(world, def, cc.pos, toward)
+                            let toward = world.nearest_pile(base).and_then(|p| world.entity(p)).map_or(base, |p| p.pos);
+                            self.find_spot_toward(world, def, base, toward)
                         }
                     }
                 } else {
-                    self.find_spot(world, def, cc.pos)
+                    self.find_spot(world, def, base)
                 };
                 if let Some(pos) = pos {
                     out.push(CommandKind::Build { builder, def, pos });
