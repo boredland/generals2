@@ -289,6 +289,8 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
 /// building's widest side spans the procedural model's width, radius × 1.75; a vehicle's
 /// length its 2 × radius; a soldier stands 1.6 units tall, as ours do) and moved so the
 /// centre of its footprint sits on the entity: the alpha's origins are often off-centre.
+/// Height is left alone: the alpha's origin is at ground level, and parts below it (a
+/// derrick's well, 3.2 m down) belong under the ground.
 fn alpha_models(
     cache: &crate::alpha::Cache,
     server: &AssetServer,
@@ -307,7 +309,7 @@ fn alpha_models(
             r * 2.0 / size.x.max(size.z)
         };
         let centre = (lo + hi) / 2.0;
-        let offset = Vec3::new(-centre.x, -lo.y, -centre.z) * scale;
+        let offset = Vec3::new(-centre.x, 0.0, -centre.z) * scale;
         let handle =
             server.load(GltfAssetLabel::Scene(0).from_asset(bevy::asset::AssetPath::from(path).with_source("alpha")));
         out.insert(def.name, (handle, scale, offset));
