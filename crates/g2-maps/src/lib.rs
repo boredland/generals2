@@ -260,8 +260,8 @@ impl MapFile {
             }
             // The template name may carry a "Faction/Sub/" path prefix. Amounts are
             // `StartingBoxes` × `ValuePerSupplyBox` (75) from GamePatch2's INI, not retail 1.04.
-            // `SupplyWarehouseAirport` only exists in the pre-release "Alpha 98" build: 500 boxes
-            // at that build's 250 per box (its CivilianBuilding.ini and GameData.ini).
+            // `SupplyWarehouseAirport` only appears on pre-release maps and has no retail amount;
+            // 125,000 is its pre-release value.
             let template = o.name.rsplit('/').next().unwrap_or(&o.name);
             let supply = match template {
                 "SupplyDock" | "SupplyWarehouse" | "ToxinRepository" => Some(30_000),
@@ -372,7 +372,7 @@ impl MapFile {
 
     /// Base tiles and texture class table. Blend layers, cliff UVs and flags are skipped.
     fn read_blend_tiles(&mut self, c: &mut Cursor, version: u16) -> Result<(), Error> {
-        // v4/v5 appear in pre-release Generals maps (the 2002 "Alpha 98" build); retail is v6-v8.
+        // v4/v5 appear in pre-release Generals maps; retail is v6-v8.
         if !(4..=8).contains(&version) {
             return Err(Error::UnknownVersion("BlendTileData", version));
         }
