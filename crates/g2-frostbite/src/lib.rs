@@ -226,17 +226,27 @@ impl Alpha {
         Ok(out)
     }
 
-    /// A chunk's payload: decompressed when it is block-compressed, else as stored.
+    /// A chunk as stored.
+    pub fn chunk_raw(&self, id: &[u8; 16]) -> Result<Vec<u8>, Error> {
+        match self.chunks.get(id).ok_or_else(|| Error::Missing(format!("chunk {}", hex(id))))? {
+            ChunkRef::Cas(sha1) => self.cas_blob(sha1),
+            ChunkRef::InSb { sb, offset, size } => read_at(&self.sbs[*sb], *offset, *size),
+        }
+    }
+
+    /// A chunk's payload: decompressed when it is block-compressed, else as stored (the
+    /// audio and video chunks; see the install test for what that covers).
     pub fn chunk(&self, id: &[u8; 16]) -> Result<Vec<u8>, Error> {
-        let raw = match self.chunks.get(id).ok_or_else(|| Error::Missing(format!("chunk {}", hex(id))))? {
-            ChunkRef::Cas(sha1) => self.cas_blob(sha1)?,
-            ChunkRef::InSb { sb, offset, size } => read_at(&self.sbs[*sb], *offset, *size)?,
-        };
+        let raw = self.chunk_raw(id)?;
         Ok(unblock(&raw).unwrap_or(raw))
     }
 
     pub fn has_chunk(&self, id: &[u8; 16]) -> bool {
         self.chunks.contains_key(id)
+    }
+
+    pub fn chunk_ids(&self) -> impl Iterator<Item = &[u8; 16]> {
+        self.chunks.keys()
     }
 
     /// Res entries of one type, by name.
