@@ -391,10 +391,10 @@ impl<'a> Layout<'a> {
     fn color(&self, p: Vec2) -> [f32; 4] {
         // Measured against the 2013 alpha frames: its ground is warm brown-ochre dry grass
         // (about sRGB 135/103/62), with darker olive only in scattered tufts and patches.
-        let dirt = Vec3::new(0.62, 0.47, 0.29);
-        let road = Vec3::new(0.74, 0.60, 0.40);
-        let ochre = Vec3::new(0.58, 0.45, 0.25);
-        let olive = Vec3::new(0.42, 0.37, 0.18);
+        let dirt = Vec3::new(0.56, 0.41, 0.24);
+        let road = Vec3::new(0.68, 0.53, 0.34);
+        let ochre = Vec3::new(0.53, 0.40, 0.21);
+        let olive = Vec3::new(0.38, 0.33, 0.16);
         let rock = Vec3::new(0.24, 0.20, 0.16);
         let sand = Vec3::new(0.72, 0.58, 0.38);
         let snow = Vec3::new(0.86, 0.88, 0.90);
@@ -551,11 +551,13 @@ fn detail_image() -> Image {
             let tufts = tiled(u, v, period * 4, 3);
             let blades = tiled(u, v, period * 8, 5);
             let pebbles = tiled(u, v, period * 2, 7);
-            let grit = tiled(u, v, period * 16, 9);
+            // Two texels per cell at most: finer grit would alias, and average to grey in the
+            // mips anyway.
+            let grit = tiled(u, v, period * 8, 9);
             // Dark tuft clumps with lit blade tips and a fine grit: the footage's ground is
-            // busy at every scale, not smooth.
+            // busy at every scale, not smooth. Centred so the texture averages 1.0.
             let tuft = ((tufts - 0.5) * 4.0).clamp(0.0, 1.0);
-            let shade = 0.78 + blades * 0.38 - tuft * 0.3 + (pebbles - 0.5) * 0.16 + (grit - 0.5) * 0.2;
+            let shade = 0.91 + blades * 0.38 - tuft * 0.3 + (pebbles - 0.5) * 0.16 + (grit - 0.5) * 0.2;
             let l = (shade.clamp(0.4, 1.3) / 1.3 * 255.0) as u8;
             data.extend_from_slice(&[l, l, l, 255]);
         }

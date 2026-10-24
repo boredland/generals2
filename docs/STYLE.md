@@ -53,4 +53,17 @@ Requirements: every element shows live sim data, nothing is decorative, there ar
 
 ## Budget
 
-The headless screenshot mode prints the mesh count and the average frame time over 30 frames. On the build host's integrated GPU at 1080p the densest original map (`zh:Red Rock`, about 35,000 meshes, mostly scenery) runs at 9-13 ms per frame; a typical base view at 720p at about 8 ms.
+The headless screenshot mode prints the mesh count and the average time of 30 rendered frames, each waited out on the GPU. That is serialized render time, not a windowed frame rate (no vsync or pipelining), and it is noisy: two identical 1080p runs of the densest original map (`zh:Red Rock`, about 35,000 meshes, mostly scenery) gave 9.2 and 13.3 ms on the build host's integrated GPU. The look pass roughly doubled the mesh count (2,800-3,000 to 5,500-7,700 on typical maps). Frame rate in a real window has not been measured.
+
+## Gaps vs the alpha (October 2013 pass)
+
+Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6XKby6Qz5oI]`. Matched now: ground colour (within about 10%), centre brightness (117-125 against 125-142 sRGB luminance), contact shadows, tree silhouettes. Still open, largest first:
+
+- No effects: smoke from stacks, dust under vehicles, muzzle flash, explosion debris (`view.rs`).
+- No animation: rotors, treads, walking infantry, pumpjacks (`view.rs`, `models.rs`).
+- Building walls read flat: the footage's painted panel texture and wear can't come from primitives alone; a procedural panel/grime texture per slot would (`view.rs` materials).
+- EU roofs are nearly one tone; the footage has more orange trim and darker roof plates (`models.rs`).
+- Artillery barrels can't pitch: parts have no pitch rotation (`models.rs` `Part`).
+- Masts and dishes are too small to read at the default zoom (`models.rs`).
+- The HUD is our plain panels, not the footage's framed style (`hud.rs`).
+- Each acacia is 16 meshes; merging a crown's lumps into one prebuilt mesh would cut that to 4 if tree-dense maps prove slow (`terrain.rs`).
