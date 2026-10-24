@@ -158,8 +158,8 @@
     </div>
     <div class="card">
       <h3>Skirmish, your way</h3>
-      <p>Up to <b>8 players</b> (human or AI) on any map whose starts reach each other —
-        <b>174 official maps</b> plus a built-in one. Pick factions, generals, starting credits,
+      <p>Up to <b>8 players</b> (human or AI) on <b>85 original Generals and Zero Hour
+        maps</b> plus a built-in one, bridges included. Pick factions, generals, starting credits,
         fog and seed in the setup screen.</p>
     </div>
     <div class="card">
@@ -179,6 +179,12 @@
         The AI sees exactly what you see — it scouts instead of cheating.</p>
     </div>
     <div class="card">
+      <h3>Sound from scratch</h3>
+      <p>Every sound is synthesized in code: rifle cracks, cannon thumps, artillery, blasts,
+        kills, chimes for your finished units and buildings. No sound files. A fight you can't
+        see stays silent, so the fog gives nothing away.</p>
+    </div>
+    <div class="card">
       <h3>The field remembers</h3>
       <p>Tracers, shell arcs, blasts and wreckage where things died. All decoration only: the
         sim never depends on a single pixel of it.</p>
@@ -191,11 +197,11 @@
   <div class="shots">
     <figure>
       <img src="img/menu.png" alt="The Open RTS main menu over a battlefield">
-      <figcaption>The main menu, drawn over a live battlefield.</figcaption>
+      <figcaption>The main menu, drawn over the frozen battlefield.</figcaption>
     </figure>
     <figure>
       <img src="img/setup.png" alt="The skirmish setup screen with map list and player slots">
-      <figcaption>Skirmish setup: maps that connect, slots, factions, generals, credits, fog.</figcaption>
+      <figcaption>Skirmish setup: 86 maps, slots, factions, generals, credits, fog.</figcaption>
     </figure>
     <figure>
       <img src="img/base.png" alt="An APA base under construction">
@@ -209,6 +215,10 @@
       <img src="img/maps.png" alt="An original Zero Hour map imported into Open RTS">
       <figcaption>The original maps load from EA's GPL map sources at runtime.</figcaption>
     </figure>
+    <figure>
+      <img src="img/bridge.png" alt="A concrete bridge crossing the river on Winding River">
+      <figcaption>Bridges carry armies across rivers: five maps play only because of them.</figcaption>
+    </figure>
   </div>
 
   <h2 id="controls">Controls</h2>
@@ -219,7 +229,7 @@
     <tr><th>Build</th><td>Constructor selected: <b>1–9</b> picks a building, click places, Esc cancels</td></tr>
     <tr><th>Produce</th><td>Building selected: <b>1–9</b> queues units, Backspace cancels the last</td></tr>
     <tr><th>Camera</th><td>WASD / arrows / screen edge to pan, wheel zooms, Q/E rotates</td></tr>
-    <tr><th>Game</th><td>Space pauses, <b>+ / −</b> game speed, Esc opens the menu, F10 surrenders</td></tr>
+    <tr><th>Game</th><td>Space pauses, <b>+ / −</b> game speed, Esc opens the menu, F10 surrenders, <b>M</b> mutes</td></tr>
     <tr><th>Extras</th><td><b>T</b> deploys artillery, <b>Tab</b> selects the next collector</td></tr>
   </table>
 
@@ -242,12 +252,13 @@ cargo test --workspace</pre>
   <div class="grid">
     <div class="card">
       <h3>What is in</h3>
-      <p>Skirmish vs AI on 175 maps, three factions, fog, artillery, generals' cost and build-time
-        modifiers, replays, a deterministic core.</p>
+      <p>Skirmish vs AI on 86 maps (85 original, one built in), walkable bridges, three
+        factions, fog, artillery, synthesized sound, generals' cost and build-time modifiers,
+        replays, a deterministic core.</p>
     </div>
     <div class="card">
       <h3>What is not</h3>
-      <p>Networking, audio, campaign, generals' powers and perks, real art. The balance is
+      <p>Networking, music and voices, campaign, generals' powers and perks, real art. The balance is
         unexamined by design — the numbers are sourced, not tuned.</p>
     </div>
     <div class="card">
