@@ -44,7 +44,7 @@
   .mark {
     width: 16px; height: 16px; border: 2px solid var(--teal); border-radius: 3px;
   }
-  .brand { font-weight: 700; letter-spacing: 0.14em; font-size: 14px; }
+  .brand { font-weight: 700; letter-spacing: 0.14em; font-size: 14px; white-space: nowrap; }
   .bar nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
   .bar nav a { color: var(--dim); }
   .bar nav a:hover { color: var(--text); text-decoration: none; }
@@ -108,6 +108,10 @@
     color: var(--dim); font-size: 13.5px;
   }
   footer .inner { max-width: 1080px; margin: 0 auto; display: grid; gap: 10px; }
+  /* Narrow screens: the in-page links would push "Source" off the edge; keep Source only. */
+  @media (max-width: 560px) {
+    .bar nav a:not(:last-child) { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -144,7 +148,8 @@
 
   <h2 id="features">What it is</h2>
   <p class="lede">An original engine — no code from EA's release is ported into it — with its own
-    procedural art, a strict determinism story, and a skirmish mode that plays itself honestly.</p>
+    procedural art, a strict determinism story, and a skirmish mode where the AI sees only what its
+    own units see.</p>
   <div class="grid">
     <div class="card">
       <h3>Deterministic to the tick</h3>
