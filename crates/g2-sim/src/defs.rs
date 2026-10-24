@@ -200,8 +200,8 @@ impl Def {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct GeneralId(pub u16);
 
-/// A general a player picks within a faction. Generals 2 had several per faction (docs/
-/// field notes), each with "unique advantages … balanced with disadvantages" (2012 developer
+/// A general a player picks within a faction. Generals 2 had several per faction, each with
+/// "unique advantages … balanced with disadvantages" (2012 developer
 /// blog in archive/wayback). Their exact rules are unknown; this models them as data, the way
 /// such designs do (per-unit cost and build-time changes).
 #[derive(Clone, Debug)]

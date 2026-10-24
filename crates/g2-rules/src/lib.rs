@@ -1,6 +1,7 @@
 //! Definitions for the three factions and the built-in maps.
 //!
-//! Values marked `// src:` come from archived material (see the local field notes for the file).
+//! Values marked `// src:` come from archived reference material, documented in notes kept
+//! outside this repository.
 //! Everything else is a placeholder chosen for playability and will be tuned.
 
 use g2_sim::defs::{
@@ -437,7 +438,7 @@ const HARVEST_WORKER: CollectorSpec = CollectorSpec { capacity: 40, load_ticks: 
 pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS };
 
 /// One general per faction for now, to exercise generals-as-data. The names are documented G2
-/// generals (the local field notes); what each changed is not, so these economy modifiers are
+/// generals; what each changed is not, so these economy modifiers are
 /// placeholders in the spirit of pre-release sub-general designs (e.g. a supply doctrine:
 /// cheaper supply trucks, faster builds).
 static GENERALS: [General; 3] = [

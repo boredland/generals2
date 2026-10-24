@@ -103,9 +103,8 @@ crates/g2-client   Bevy 0.20 app: look (camera/light/grade), terrain, models, vi
 crates/g2-maps     reader for Generals / Zero Hour .map files: chunks, heights, textures, objects, water
 crates/g2-tools    CLI: verify / record / bench / summary / maps
 scripts/igpu-only/ LD_PRELOAD shim + wrapper that restricts Vulkan to the integrated GPU on the build host
-archive/           research material, local-only and untracked (fetch scripts in scripts/), see the local field notes
+archive/           research material, local-only and untracked (fetch scripts in scripts/)
 vendor/            upstream source as git submodules (reference only), see vendor/README.md
-the local field notes   annotated index of everything archived
 docs/STYLE.md      visual target: mood and readability requirements
 ```
 
@@ -184,4 +183,4 @@ The difference: Strong Hold reimplements an existing game and checks it against 
 
 ## Legal
 
-`vendor/` contains GPL-3.0 code; the EA release carries GPL §7 additional terms (no trademark use, no claims of EA affiliation, modifications must be marked). No code from it is in `crates/`; `crates/g2-maps` is our own reader written from the file format. Imported map data is read from `vendor/ea/CnC_Modding_Support` (or `$G2_MAPS_DIR`, for a binary run outside this tree) at runtime and never copied into the repository. Everything under `archive/` (videos, leaks, Wayback captures, wiki text, press pages, concept art, and their manifests) is third-party material kept local-only: it is gitignored, has never been in this repository's history, and is never redistributed. `the local field notes` links into it; those links resolve only in a local checkout that has run the fetch scripts.
+`vendor/` contains GPL-3.0 code; the EA release carries GPL §7 additional terms (no trademark use, no claims of EA affiliation, modifications must be marked). No code from it is in `crates/`; `crates/g2-maps` is our own reader written from the file format. Imported map data is read from `vendor/ea/CnC_Modding_Support` (or `$G2_MAPS_DIR`, for a binary run outside this tree) at runtime and never copied into the repository. Everything under `archive/` (videos, pre-release development builds, Wayback captures, wiki text, press pages, concept art, and their manifests) is third-party material kept local-only: it is gitignored, has never been in this repository's history, and is never redistributed. Our own notes on that material stay outside the repository too.

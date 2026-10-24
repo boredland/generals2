@@ -985,12 +985,13 @@ mod tests {
         assert!(load_file_named(&root, "zh:Tournament Desert").is_ok());
     }
 
-    /// Pre-release maps (BlendTileData v4/v5) from a local pre-release archive.
-    /// The archive is not in the repository, so the test is skipped when it is absent.
+    /// Pre-release maps (BlendTileData v4/v5). Their source is not in the repository: point
+    /// `G2_ALPHA_MAPS_DIR` at a folder of such `.map` files to run this, and it is skipped
+    /// without it.
     #[test]
     fn pre_release_maps_parse_when_present() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../local/pre-release-maps");
+        let Some(root) = std::env::var_os("G2_ALPHA_MAPS_DIR") else { return };
+        let root = std::path::PathBuf::from(root);
         let Ok(dirs) = std::fs::read_dir(&root) else { return };
         let (mut parsed, mut known) = (0, 0);
         for d in dirs.flatten() {
@@ -1022,7 +1023,7 @@ mod tests {
                 }
             }
         }
-        assert!(parsed > 0);
+        assert!(parsed > 0, "no .map files in G2_ALPHA_MAPS_DIR");
         assert!(known > 100, "{known} recognisable texture class names");
     }
 }
