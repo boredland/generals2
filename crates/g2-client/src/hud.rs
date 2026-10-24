@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use g2_sim::{Class, Faction, TICKS_PER_SECOND};
 
 use crate::camera::RtsCamera;
-use crate::input::{Placement, Selection};
+use crate::input::{Placement, PowerAim, Selection};
 use crate::sim::{LOCAL, Sim};
 
 pub(crate) const PANEL: Color = Color::srgba(0.07, 0.08, 0.09, 0.92);
@@ -36,6 +36,8 @@ enum Field {
     Tag(g2_sim::PlayerId),
     Power,
     Money,
+    /// The general's power: "G <name>" when ready, else its countdown; hidden without one.
+    GeneralPower,
     Status,
     SelName,
     SelInfo,
@@ -201,6 +203,7 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
             s.spawn((text("PWR 0/0", 12.0, XP), Field::Power));
             s.spawn((text("$0", 13.0, MONEY), Field::Money));
         });
+        p.spawn((text("", 12.0, TEXT), Field::GeneralPower));
         p.spawn((
             Node {
                 width: px(MINIMAP),
@@ -302,15 +305,18 @@ pub(crate) fn clock(ticks: u32) -> String {
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_fields(
     sim: Res<Sim>,
     ui: Option<Res<crate::menu::Ui>>,
     frozen: Option<Res<crate::view::FreezeEffects>>,
     sel: Res<Selection>,
     placing: Res<Placement>,
+    aim: Option<Res<PowerAim>>,
     mut fields: Query<(&Field, &mut Text, Option<&mut Node>), Without<QueueRow>>,
     mut queue_row: Query<&mut Node, With<QueueRow>>,
 ) {
+    let aim = aim.is_some_and(|a| a.0);
     let world = &sim.world;
     let rules = world.rules;
     let me = world.player(LOCAL);
@@ -341,6 +347,14 @@ fn update_fields(
                 }
             }
             Field::Money => t.0 = format!("${}", me.credits),
+            Field::GeneralPower => {
+                t.0 = match (sim.power(), sim.power_ready_in()) {
+                    (Some(p), _) if aim => format!("{}: click to aim", p.name.to_uppercase()),
+                    (Some(p), Some(0)) => format!("G  {}  READY", p.name.to_uppercase()),
+                    (Some(p), Some(t)) => format!("{}  {}", p.name.to_uppercase(), clock(t)),
+                    _ => String::new(),
+                }
+            }
             Field::Status => {
                 // The end screen and the Esc pause menu announce themselves; Space pauses
                 // with no menu, so that one needs its label here.

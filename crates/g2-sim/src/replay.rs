@@ -10,9 +10,9 @@ use crate::map::{AiLevel, PlayerSetup};
 
 const MAGIC: &[u8; 4] = b"G2RP";
 /// v2 added `map_fingerprint`, v3 each player's general, v4 the AI level (0 human, 1 + level;
-/// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI). Older
-/// replays still decode.
-pub const VERSION: u16 = 4;
+/// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI), v5 the
+/// `Power` command (tag 11). Older replays still decode.
+pub const VERSION: u16 = 5;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -245,6 +245,10 @@ impl Writer {
                 self.ids(units);
                 self.u8(*deployed as u8);
             }
+            CommandKind::Power { at } => {
+                self.u8(11);
+                self.pos(*at);
+            }
         }
     }
 }
@@ -307,6 +311,7 @@ impl Reader<'_> {
             8 => CommandKind::Attack { units: self.ids()?, target: self.id()? },
             9 => CommandKind::AttackMove { units: self.ids()?, target: self.pos()? },
             10 => CommandKind::Deploy { units: self.ids()?, deployed: self.u8()? != 0 },
+            11 => CommandKind::Power { at: self.pos()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

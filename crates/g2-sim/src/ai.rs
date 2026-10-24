@@ -10,7 +10,7 @@
 //! piles run low.
 
 use crate::command::CommandKind;
-use crate::defs::{Armour, BuildingRole, Class, DefId, Weapon};
+use crate::defs::{Armour, BuildingRole, Class, DefId, PowerKind, Weapon};
 use crate::entity::{DeployState, Entity, EntityId, Order, PlayerId};
 use crate::fixed::{Fx, Vec2};
 use crate::map::AiLevel;
@@ -80,6 +80,90 @@ impl Ai {
         (s > 0).then_some([Armour::Infantry, Armour::Light, Armour::Heavy][i])
     }
 
+    /// Where to use the general's power now, if it is ready and worth it: a barrage on the
+    /// visible enemy army's strongest spot; a repair on the spot where our own units and
+    /// buildings have lost the most hit points (at least 600); an ambush beside the nearest
+    /// visible enemy building, else in front of our own base. `Easy`, the original AI, never
+    /// uses one.
+    fn power_target(&self, world: &World, mine: &[&Entity]) -> Option<Vec2> {
+        if self.level == AiLevel::Easy {
+            return None;
+        }
+        let player = world.player(self.player);
+        let power = player.general.and_then(|g| world.rules.general(g).power)?;
+        if player.power_ready.is_none_or(|t| world.tick() < t) {
+            return None;
+        }
+        let vision = world.vision(self.player);
+        // The best of `points` by the sum of `weight` within `r` of each.
+        let best = |points: &[Vec2], weight: &dyn Fn(Vec2) -> i64| {
+            points.iter().map(|&p| (weight(p), p)).filter(|&(w, _)| w > 0).max_by_key(|&(w, p)| (w, p.x, p.y))
+        };
+        match power.kind {
+            PowerKind::Barrage { radius, .. } => {
+                let enemies: Vec<&Entity> = world
+                    .entities()
+                    .filter(|e| e.owner.is_some_and(|o| o != self.player) && vision.is_visible(e.pos))
+                    .collect();
+                let points: Vec<Vec2> = enemies.iter().map(|e| e.pos).collect();
+                let reach = radius * Fx::from_int(3);
+                let weight =
+                    |p: Vec2| enemies.iter().filter(|e| e.pos.distance(p) <= reach).map(|e| strength(world, e)).sum();
+                // Worth a barrage: at least two of our faction's strongest units (at full health,
+                // undeployed) worth of enemy fighting strength in the blast area. Fixed by the
+                // rules, so it doesn't drift with how our own army is doing.
+                let faction = player.faction;
+                let tank = world
+                    .rules
+                    .defs
+                    .iter()
+                    .filter(|d| d.faction == Some(faction) && d.is_unit())
+                    .filter_map(|d| {
+                        d.weapon_for(false).map(|w| {
+                            d.hp as i64 * w.damage as i64 * TICKS_PER_SECOND as i64 / w.cooldown_ticks.max(1) as i64
+                        })
+                    })
+                    .max()
+                    .unwrap_or(1);
+                best(&points, &weight).filter(|&(w, _)| w >= 2 * tank).map(|(_, p)| p)
+            }
+            PowerKind::Repair { radius, .. } => {
+                let points: Vec<Vec2> = mine.iter().map(|e| e.pos).collect();
+                let weight = |p: Vec2| {
+                    mine.iter()
+                        .filter(|e| e.pos.distance(p) <= radius)
+                        .map(|e| (world.rules.def(e.def).hp - e.hp).max(0) as i64)
+                        .sum()
+                };
+                best(&points, &weight).filter(|&(w, _)| w >= 600).map(|(_, p)| p)
+            }
+            PowerKind::Ambush { .. } => {
+                let home =
+                    mine.iter().find(|e| world.rules.def(e.def).role() == Some(BuildingRole::CommandCenter))?.pos;
+                let target = world
+                    .entities()
+                    .filter(|e| {
+                        e.owner.is_some_and(|o| o != self.player)
+                            && world.rules.def(e.def).is_building()
+                            && vision.is_visible(e.pos)
+                    })
+                    .min_by_key(|e| (e.pos.distance(home), e.id))
+                    .map(|e| {
+                        let delta = home - e.pos;
+                        let gap = world.rules.def(e.def).radius + Fx::from_int(10);
+                        e.pos + delta.scale(gap / delta.length().max(Fx::from_int(1)))
+                    });
+                target
+                    .or_else(|| {
+                        let toward = world.map.spawns.iter().copied().max_by_key(|&s| (s.distance(home), s.x, s.y))?;
+                        let delta = toward - home;
+                        Some(home + delta.scale(Fx::from_int(25) / delta.length().max(Fx::from_int(1))))
+                    })
+                    .filter(|&p| world.map.walkable(p) && vision.is_explored(p))
+            }
+        }
+    }
+
     pub(crate) fn think(&mut self, world: &World, out: &mut Vec<CommandKind>) {
         if world.tick() % THINK_INTERVAL != self.player.0 as u32 % THINK_INTERVAL {
             return;
@@ -93,6 +177,10 @@ impl Ai {
         let count =
             |role: fn(BuildingRole) -> bool| mine.iter().filter(|e| rules.def(e.def).role().is_some_and(role)).count();
 
+        // Before anything that may return early: a ready power is used at once.
+        if let Some(at) = self.power_target(world, &mine) {
+            out.push(CommandKind::Power { at });
+        }
         // 0. Never be left without a constructor: one lost (or never built) is retrained, and
         //    until it is queued the army waits, so its credits can't keep the rebuild away.
         let constructors = mine.iter().filter(|e| rules.def(e.def).is_constructor()).count()

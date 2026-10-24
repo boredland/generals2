@@ -5,8 +5,8 @@
 //! Everything else is a placeholder chosen for playability and will be tuned.
 
 use g2_sim::defs::{
-    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Faction, General, Modifier, Rules, Shell,
-    Weapon,
+    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Faction, General, Modifier, Power, PowerKind,
+    Rules, Shell, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -530,7 +530,8 @@ pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS };
 /// One general per faction for now, to exercise generals-as-data. The names are documented G2
 /// generals; what each changed is not, so these economy modifiers are
 /// placeholders in the spirit of pre-release sub-general designs (e.g. a supply doctrine:
-/// cheaper supply trucks, faster builds).
+/// cheaper supply trucks, faster builds). Each has one active power, modelled on support
+/// powers the archive documents for other generals of the same side (numbers placeholders).
 static GENERALS: [General; 3] = [
     General {
         name: "Bulldog",
@@ -540,6 +541,23 @@ static GENERALS: [General; 3] = [
             Modifier::BuildTime { def: EU_HARVESTER, percent: 85 },
             Modifier::Cost { def: EU_POWER, percent: 120 },
         ],
+        // After the EU general Salvo's "Suppressing fire" (an artillery strike called onto the
+        // field): seven shells on and around the point, half a second apart after a 3 s delay.
+        // Placeholder numbers. No bonus against buildings: with one it took half a command
+        // center per use, a base-killer rather than a strike on an army.
+        power: Some(Power {
+            name: "Artillery barrage",
+            kind: PowerKind::Barrage {
+                shells: 7,
+                delay_ticks: secs(3),
+                every_ticks: g2_sim::TICKS_PER_SECOND / 2,
+                damage: 90,
+                bonus: [0, 20, 0, 0],
+                radius: Fx::from_int(7),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+        }),
     },
     General {
         name: "Taskmaster",
@@ -549,6 +567,14 @@ static GENERALS: [General; 3] = [
             Modifier::BuildTime { def: APA_DERRICK, percent: 75 },
             Modifier::Cost { def: APA_HARVESTER, percent: 115 },
         ],
+        // A field repair: the support powers' "Supply drop" heals nearby units. Every own unit
+        // and building within 30 regains up to 400 hp.
+        power: Some(Power {
+            name: "Field repair",
+            kind: PowerKind::Repair { radius: Fx::from_int(30), hp: 400 },
+            first_ticks: secs(180),
+            cooldown_ticks: secs(180),
+        }),
     },
     General {
         name: "Junkyard",
@@ -557,6 +583,14 @@ static GENERALS: [General; 3] = [
             Modifier::Cost { def: GLA_WORKER, percent: 75 },
             Modifier::BuildTime { def: GLA_STASH, percent: 125 },
         ],
+        // After the GLA general Muerta's "Ambush" (rebel soldiers from hidden tunnels): four
+        // RPG squads appear at the point.
+        power: Some(Power {
+            name: "Ambush",
+            kind: PowerKind::Ambush { def: GLA_RPG, count: 4 },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+        }),
     },
 ];
 

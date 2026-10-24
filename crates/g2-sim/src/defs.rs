@@ -203,12 +203,35 @@ pub struct GeneralId(pub u16);
 /// A general a player picks within a faction. Generals 2 had several per faction, each with
 /// "unique advantages … balanced with disadvantages" (2012 developer
 /// blog in archive/wayback). Their exact rules are unknown; this models them as data, the way
-/// such designs do (per-unit cost and build-time changes).
+/// such designs do (per-unit cost and build-time changes), plus one active power.
 #[derive(Clone, Debug)]
 pub struct General {
     pub name: &'static str,
     pub faction: Faction,
     pub modifiers: &'static [Modifier],
+    pub power: Option<Power>,
+}
+
+/// A general's active power: aimed at a point the player has explored, then unavailable for
+/// `cooldown_ticks`. The first use is possible `first_ticks` into the match.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Power {
+    pub name: &'static str,
+    pub kind: PowerKind,
+    pub first_ticks: u32,
+    pub cooldown_ticks: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerKind {
+    /// `shells` artillery shells land around the point, one every `every_ticks` after
+    /// `delay_ticks`, each like an artillery weapon's (damage, bonus, blast radius).
+    Barrage { shells: u32, delay_ticks: u32, every_ticks: u32, damage: i32, bonus: [i32; 4], radius: Fx },
+    /// Own units within `radius` of the point regain up to `hp` hit points.
+    Repair { radius: Fx, hp: i32 },
+    /// `count` units of `def` appear at and around the point, each on open ground (else the
+    /// power is refused).
+    Ambush { def: DefId, count: u32 },
 }
 
 /// A per-def change, in whole percent; several for one def multiply.

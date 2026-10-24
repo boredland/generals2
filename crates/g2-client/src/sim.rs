@@ -39,6 +39,17 @@ impl Sim {
         crate::models::TEAM_PALETTE[self.teams[player.0 as usize]]
     }
 
+    /// Ticks until the local player's general's power can be used (0: now); `None` without
+    /// a power.
+    pub fn power_ready_in(&self) -> Option<u32> {
+        self.world.player(LOCAL).power_ready.map(|t| t.saturating_sub(self.world.tick()))
+    }
+
+    /// The local player's general's power, if any.
+    pub fn power(&self) -> Option<g2_sim::defs::Power> {
+        self.world.player(LOCAL).general.and_then(|g| self.world.rules.general(g).power)
+    }
+
     /// Whether the local player sees `e` right now: own entities always, neutral resources once
     /// their spot is explored (they never change hands or move), enemies only where visible.
     pub fn sees(&self, e: &g2_sim::Entity) -> bool {

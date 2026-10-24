@@ -269,6 +269,8 @@ pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
             Event::Landed { at, .. } if seen(at) => out.push((Cue::Blast, Some(at))),
             Event::Produced { player: LOCAL, .. } => out.push((Cue::Ready, None)),
             Event::Completed { player: LOCAL, .. } => out.push((Cue::Built, None)),
+            // Ours always, the enemy's where it lands in sight: a power is a big moment.
+            Event::PowerUsed { player, at } if player == LOCAL || seen(at) => out.push((Cue::Launch, Some(at))),
             Event::Delivered { player: LOCAL, depot, .. } => out.push((Cue::Cash, world.entity(depot).map(|d| d.pos))),
             Event::Rejected { player: LOCAL, .. } => out.push((Cue::Refused, None)),
             _ => {}

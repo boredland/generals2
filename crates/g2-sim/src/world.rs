@@ -1,6 +1,6 @@
 use crate::ai::Ai;
 use crate::command::{Command, CommandKind, Reject};
-use crate::defs::{BuildingRole, Class, DefId, Faction, Rules};
+use crate::defs::{BuildingRole, Class, DefId, Faction, PowerKind, Rules};
 use crate::entity::{DeployState, Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Production, Route};
 use crate::fixed::{Fx, Vec2};
 use crate::map::{MapDef, MatchSetup};
@@ -18,6 +18,9 @@ const ACQUIRE: Fx = Fx::from_int(15);
 /// A unit keeps its planned route while its target moves less than this from where the route
 /// was planned: replanning a chase every tick would run an A* per attacker per tick.
 const REPLAN: Fx = Fx::from_int(8);
+/// The `shooter` of shells from a general's power: no entity fired them. Never a live id
+/// (generation `u32::MAX` is never reached), so `World::entity` finds nothing for it.
+pub const POWER_SOURCE: EntityId = EntityId { index: u32::MAX, generation: u32::MAX };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Player {
@@ -28,6 +31,8 @@ pub struct Player {
     pub power_supply: i32,
     pub power_drain: i32,
     pub defeated: bool,
+    /// First tick the general's power can be used again; `None` without a power.
+    pub power_ready: Option<u32>,
 }
 
 /// Running totals for the end-of-match screen. Output only: nothing in the simulation reads
@@ -97,6 +102,11 @@ pub enum Event {
     Completed {
         player: PlayerId,
         def: DefId,
+        at: Vec2,
+    },
+    /// `player` used their general's power at `at`. Output only.
+    PowerUsed {
+        player: PlayerId,
         at: Vec2,
     },
 }
@@ -197,6 +207,7 @@ impl World {
                 power_supply: 0,
                 power_drain: 0,
                 defeated: false,
+                power_ready: p.general.and_then(|g| rules.general(g).power).map(|pw| pw.first_ticks),
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
             let spawn = setup.map.spawns[i];
@@ -658,6 +669,7 @@ impl World {
                 }
                 Ok(())
             }
+            CommandKind::Power { at } => self.use_power(player, *at),
         }
     }
 
@@ -1242,6 +1254,67 @@ impl World {
         }
     }
 
+    /// The player's general's power at `at`. A power aims only at ground the player has
+    /// explored, so it can't be used to scout. Barrage shells fly like artillery shells, with no
+    /// shooter entity (`POWER_SOURCE`), and are hashed with every other shell.
+    fn use_power(&mut self, player: PlayerId, at: Vec2) -> Result<(), Reject> {
+        let p = &self.players[player.0 as usize];
+        let power = p.general.and_then(|g| self.rules.general(g).power).ok_or(Reject::PowerNotReady)?;
+        if p.power_ready.is_none_or(|t| self.tick < t) {
+            return Err(Reject::PowerNotReady);
+        }
+        if !self.map.contains(at) || !self.visions[player.0 as usize].is_explored(at) {
+            return Err(Reject::InvalidTarget);
+        }
+        match power.kind {
+            PowerKind::Barrage { shells, delay_ticks, every_ticks, damage, bonus, radius } => {
+                // A fixed pattern, not the RNG: the point first, then around it.
+                for k in 0..shells {
+                    let spot = if k == 0 { at } else { self.map.clamp(at + around(k - 1, radius * Fx::from_int(2))) };
+                    self.shells.push(ShellInFlight {
+                        shooter: POWER_SOURCE,
+                        owner: player,
+                        from: at,
+                        at: spot,
+                        fired: self.tick,
+                        lands: self.tick + delay_ticks + k * every_ticks,
+                        damage,
+                        bonus,
+                        radius,
+                    });
+                }
+            }
+            PowerKind::Repair { radius, hp } => {
+                for id in self.entities.ids() {
+                    let e = self.entities.get_mut(id).unwrap();
+                    let max = self.rules.def(e.def).hp;
+                    if e.owner == Some(player) && e.hp > 0 && e.pos.distance(at) <= radius {
+                        e.hp = (e.hp + hp).min(max);
+                    }
+                }
+            }
+            PowerKind::Ambush { def, count } => {
+                // Every squad needs open ground (walkable, no water, cliff or bridge deck within
+                // its radius): the point itself and each ring spot, else the power is refused.
+                let r = self.rules.def(def).radius;
+                let spread = r * Fx::from_int(2);
+                let spots: Vec<Vec2> =
+                    (0..count).map(|k| if k == 0 { at } else { self.map.clamp(at + around(k - 1, spread)) }).collect();
+                if spots.iter().any(|&p| !self.map.walkable(p) || self.map.terrain_within(p, r)) {
+                    return Err(Reject::InvalidTarget);
+                }
+                for pos in spots {
+                    self.spawn_owned(def, player, pos);
+                    self.stats[player.0 as usize].units_built += 1;
+                    self.events.push(Event::Produced { player, def, at: pos });
+                }
+            }
+        }
+        self.players[player.0 as usize].power_ready = Some(self.tick + power.cooldown_ticks);
+        self.events.push(Event::PowerUsed { player, at });
+        Ok(())
+    }
+
     /// Applies this tick's shots together, so every unit alive at the start of the tick fires
     /// and the outcome does not depend on entity order: two units that shoot each other both
     /// land their hit. `killed` is reported once, by the shot that took the target to zero.
@@ -1475,6 +1548,16 @@ impl World {
 /// and for a shell not inside its minimum range).
 fn in_band(w: crate::defs::Weapon, gap: Fx) -> bool {
     gap <= w.range && w.shell.is_none_or(|s| gap >= s.min_range)
+}
+
+/// The `k`-th point of a fixed ring pattern around a centre, `r` away along one of eight
+/// directions (diagonals at 7/10 of `r` on each axis, near enough to a circle); later laps are
+/// farther out. Exact in fixed point, so every machine places the same points.
+fn around(k: u32, r: Fx) -> Vec2 {
+    const DIRS: [(i64, i64); 8] = [(10, 0), (7, 7), (0, 10), (-7, 7), (-10, 0), (-7, -7), (0, -10), (7, -7)];
+    let (x, y) = DIRS[k as usize % 8];
+    let lap = Fx::from_int(1 + k as i64 / 8);
+    Vec2::new(r * lap * Fx::from_ratio(x, 10), r * lap * Fx::from_ratio(y, 10))
 }
 
 /// Whether segments `a`–`b` and `c`–`d` properly cross (touching ends and collinear overlap

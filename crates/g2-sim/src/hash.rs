@@ -64,6 +64,10 @@ impl World {
             if let Some(g) = p.general {
                 h.u64(0x6e6e_0000 | g.0 as u64);
             }
+            // Only for generals with a power, so matches without one hash as before.
+            if let Some(t) = p.power_ready {
+                h.u64(0x7077_0000_0000 | t as u64);
+            }
         }
         for v in &self.visions {
             v.hash_into(|x| h.u64(x));

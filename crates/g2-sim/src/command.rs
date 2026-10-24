@@ -60,6 +60,10 @@ pub enum CommandKind {
         units: Vec<EntityId>,
         deployed: bool,
     },
+    /// Use the player's general's power at `at`.
+    Power {
+        at: Vec2,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.
@@ -80,4 +84,8 @@ pub enum Reject {
     QueueFull,
     /// None of the units can deploy.
     CannotDeploy,
+    /// The player's general has no power, or it is still recharging.
+    PowerNotReady,
+    /// The point is unexplored or (for an ambush) not open ground.
+    InvalidTarget,
 }

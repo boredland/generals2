@@ -6,7 +6,9 @@
 //! With a constructor selected: B opens build mode, 1-9 pick a building, left click places, Esc cancels.
 //! With a building selected: 1-9 queue production, Backspace cancels the last item.
 //! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
-//! collector and centres the camera on it. M (mute) is handled by `audio`.
+//! collector and centres the camera on it. G arms the general's power: the next left click
+//! aims it (right click or Esc disarms). Esc is handled by `menu` alone, so it cancels a
+//! placement or an armed power before it opens the pause menu. M (mute) is handled by `audio`.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -20,6 +22,10 @@ pub struct Selection(pub Vec<EntityId>);
 
 #[derive(Resource, Default)]
 pub struct Placement(pub Option<DefId>);
+
+/// The general's power is armed: the next left click on the ground uses it there.
+#[derive(Resource, Default)]
+pub struct PowerAim(pub bool);
 
 #[derive(Resource, Default)]
 struct Drag(Option<Vec2>);
@@ -38,12 +44,23 @@ const DIGITS: [KeyCode; 9] = [
 
 pub struct InputPlugin;
 
+/// The gameplay input systems, as one unit for ordering against other plugins.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct InputSet;
+
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Selection>().init_resource::<Placement>().init_resource::<Drag>().add_systems(
-            Update,
-            (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays).chain().run_if(crate::menu::playing),
-        );
+        app.init_resource::<Selection>()
+            .init_resource::<Placement>()
+            .init_resource::<PowerAim>()
+            .init_resource::<Drag>()
+            .add_systems(
+                Update,
+                (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays)
+                    .chain()
+                    .in_set(InputSet)
+                    .run_if(crate::menu::playing),
+            );
     }
 }
 
@@ -123,11 +140,12 @@ fn selected_building(sim: &Sim, sel: &Selection) -> Option<EntityId> {
     }
 }
 
-fn keyboard(
+pub(crate) fn keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut sim: ResMut<Sim>,
     sel: Res<Selection>,
     mut placing: ResMut<Placement>,
+    mut aim: ResMut<PowerAim>,
 ) {
     if keys.just_pressed(KeyCode::Space) {
         sim.speed = if sim.speed == 0 { 1 } else { 0 };
@@ -141,7 +159,8 @@ fn keyboard(
     if keys.just_pressed(KeyCode::F10) {
         sim.order(CommandKind::Surrender);
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    if keys.just_pressed(KeyCode::KeyG) && sim.power_ready_in().is_some_and(|t| t == 0) {
+        aim.0 = true;
         placing.0 = None;
     }
     let rules = sim.world.rules;
@@ -195,11 +214,23 @@ fn mouse(
     mut sim: ResMut<Sim>,
     mut sel: ResMut<Selection>,
     mut placing: ResMut<Placement>,
+    mut aim: ResMut<PowerAim>,
     mut drag: ResMut<Drag>,
 ) {
     let (Ok(window), Ok(cam)) = (window.single(), cam.single()) else { return };
     let Some(ground) = cursor_ground(&sim, window, cam) else { return };
     let here = to_sim(ground);
+
+    if aim.0 {
+        if buttons.just_pressed(MouseButton::Left) {
+            sim.order(CommandKind::Power { at: here });
+            aim.0 = false;
+        }
+        if buttons.just_pressed(MouseButton::Right) {
+            aim.0 = false;
+        }
+        return;
+    }
 
     if let Some(def) = placing.0 {
         if buttons.just_pressed(MouseButton::Left)
@@ -371,5 +402,34 @@ mod tests {
             }
         }
         assert!(relief.1 - relief.0 > 10.0, "Defcon6 should have relief, got {relief:?}");
+    }
+
+    /// G arms the general's power only once it is ready, and never for a player without one.
+    #[test]
+    fn g_arms_the_power_only_when_ready() {
+        use bevy::ecs::system::RunSystemOnce;
+        let armed = |general: Option<g2_sim::GeneralId>, ticks: u32| {
+            let mut players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false);
+            players[0].general = general;
+            let mut sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+            for _ in 0..ticks {
+                sim.world.step();
+            }
+            let mut world = World::new();
+            let mut keys = ButtonInput::<KeyCode>::default();
+            keys.press(KeyCode::KeyG);
+            world.insert_resource(keys);
+            world.insert_resource(sim);
+            world.init_resource::<Selection>();
+            world.init_resource::<Placement>();
+            world.init_resource::<PowerAim>();
+            world.run_system_once(keyboard).unwrap();
+            world.resource::<PowerAim>().0
+        };
+        let bulldog = g2_rules::generals::BULLDOG;
+        let ready = g2_rules::rules().general(bulldog).power.unwrap().first_ticks;
+        assert!(!armed(Some(bulldog), ready - 30), "still charging");
+        assert!(armed(Some(bulldog), ready), "ready");
+        assert!(!armed(None, ready), "no general, no power");
     }
 }

@@ -242,6 +242,7 @@ fn interact(
     keys: Res<ButtonInput<KeyCode>>,
     ui: Res<Ui>,
     mut placing: Option<ResMut<crate::input::Placement>>,
+    mut aim: Option<ResMut<crate::input::PowerAim>>,
     buttons: Query<(&Btn, &RelativeCursorPosition)>,
     mut pending: ResMut<Pending>,
 ) {
@@ -253,9 +254,10 @@ fn interact(
         }
     }
     if keys.just_pressed(KeyCode::Escape) {
-        // Esc closes whatever is open: a placement first, then a menu.
-        let cancelled = placing.as_mut().is_some_and(|p| p.0.take().is_some());
-        if !cancelled {
+        // Esc closes whatever is open: a placement or an armed power first, then a menu.
+        let placed = placing.as_mut().is_some_and(|p| p.0.take().is_some());
+        let aimed = aim.as_mut().is_some_and(|a| std::mem::take(&mut a.0));
+        if !placed && !aimed {
             pending.0.push(match (ui.screen, ui.paused) {
                 (Screen::Setup | Screen::Controls, _) => Act::BackToMain,
                 (Screen::Match, false) => Act::Pause,
@@ -432,6 +434,7 @@ pub(crate) fn swap_world(world: &mut World, sim: Sim) {
     world.insert_resource(crate::sim::Heard::default());
     world.insert_resource(crate::input::Selection::default());
     world.insert_resource(crate::input::Placement::default());
+    world.insert_resource(crate::input::PowerAim::default());
     world.resource_mut::<MatchEpoch>().0 += 1;
 }
 
@@ -759,6 +762,7 @@ mod tests {
             ))
             .init_resource::<crate::input::Selection>()
             .init_resource::<crate::input::Placement>()
+            .init_resource::<crate::input::PowerAim>()
             .init_resource::<crate::sim::Previous>()
             .init_resource::<crate::sim::Hits>()
             .init_resource::<crate::sim::Deliveries>()
@@ -888,5 +892,47 @@ mod tests {
         assert!(playing_now(&mut app));
         act(&mut app, Act::Pause);
         assert!(!playing_now(&mut app));
+    }
+
+    /// Esc with the general's power armed (or a building being placed) cancels that and opens
+    /// no menu, whichever order the input and menu systems run in; a new match never starts
+    /// with a power still armed from the last one.
+    #[test]
+    fn esc_disarms_a_power_and_a_new_match_starts_unarmed() {
+        for input_first in [false, true] {
+            let (mut app, _) = app();
+            // The input system that reads Esc, ordered before or after the menu (the real app
+            // leaves them unordered).
+            let keyboard = crate::input::keyboard.in_set(crate::input::InputSet).run_if(playing);
+            app.add_systems(Update, keyboard);
+            if input_first {
+                app.configure_sets(Update, MenuSet.after(crate::input::InputSet));
+            } else {
+                app.configure_sets(Update, MenuSet.before(crate::input::InputSet));
+            }
+            act(&mut app, Act::Start);
+            let esc = |app: &mut App| {
+                app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Escape);
+                app.update();
+                app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset_all();
+            };
+            let paused = |app: &App| app.world().resource::<Ui>().paused;
+            app.world_mut().resource_mut::<crate::input::PowerAim>().0 = true;
+            esc(&mut app);
+            assert!(!app.world().resource::<crate::input::PowerAim>().0, "Esc disarms ({input_first})");
+            assert!(!paused(&app), "and opens no menu ({input_first})");
+            app.world_mut().resource_mut::<crate::input::Placement>().0 = Some(g2_rules::ids::EU_BARRACKS);
+            esc(&mut app);
+            assert!(app.world().resource::<crate::input::Placement>().0.is_none());
+            assert!(!paused(&app), "a placement too ({input_first})");
+            esc(&mut app);
+            assert!(paused(&app), "the next Esc pauses ({input_first})");
+        }
+        let (mut app, _) = app();
+        act(&mut app, Act::Start);
+        app.world_mut().resource_mut::<crate::input::PowerAim>().0 = true;
+        act(&mut app, Act::Surrender);
+        act(&mut app, Act::Start);
+        assert!(!app.world().resource::<crate::input::PowerAim>().0, "the new match starts unarmed");
     }
 }
