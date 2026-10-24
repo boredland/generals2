@@ -305,6 +305,20 @@ pub(crate) fn clock(ticks: u32) -> String {
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
 }
 
+/// "Wave 3/10 in 0:00:41", or "Last wave" once every wave is out; `None` without an
+/// `Onslaught` opponent.
+fn onslaught_status(world: &g2_sim::World) -> Option<String> {
+    use g2_sim::onslaught::{WAVES, next_wave};
+    let onslaught = (0..world.players().len()).any(|i| {
+        let p = g2_sim::PlayerId(i as u8);
+        world.ai_level(p) == Some(g2_sim::AiLevel::Onslaught) && !world.player(p).defeated
+    });
+    onslaught.then(|| match next_wave(world.tick()) {
+        Some((k, at)) => format!("Wave {}/{WAVES} in {}", k + 1, clock(at - world.tick())),
+        None => "Last wave: hold out".into(),
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn update_fields(
     sim: Res<Sim>,
@@ -367,8 +381,14 @@ fn update_fields(
                     (_, _, _, Some(def)) => format!("Place {}  -  Esc cancels", rules.def(def).name),
                     // Screenshot mode freezes the frame; a "PAUSED" label there would be a lie.
                     (_, _, 0, _) if !menu_open && frozen.is_none() => "PAUSED".into(),
-                    (_, _, 0 | 1, _) => String::new(),
-                    (_, _, s, _) => format!("x{s}"),
+                    (_, _, s, _) => {
+                        let speed = if s > 1 { format!("x{s}") } else { String::new() };
+                        match onslaught_status(world) {
+                            Some(waves) if speed.is_empty() => waves,
+                            Some(waves) => format!("{waves}   {speed}"),
+                            None => speed,
+                        }
+                    }
                 }
             }
             Field::SelName => {

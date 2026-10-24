@@ -18,6 +18,7 @@ mod hash;
 pub mod map;
 pub mod nav;
 pub mod net;
+pub mod onslaught;
 pub mod replay;
 pub mod rng;
 pub mod world;

@@ -11,8 +11,8 @@ use crate::map::{AiLevel, PlayerSetup};
 const MAGIC: &[u8; 4] = b"G2RP";
 /// v2 added `map_fingerprint`, v3 each player's general, v4 the AI level (0 human, 1 + level;
 /// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI), v5 the
-/// `Power` command (tag 11). Older replays still decode.
-pub const VERSION: u16 = 5;
+/// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3). Older replays still decode.
+pub const VERSION: u16 = 6;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -96,6 +96,7 @@ impl Replay {
                 (..=3, _) => Some(AiLevel::Easy),
                 (_, 1) => Some(AiLevel::Easy),
                 (_, 2) => Some(AiLevel::Normal),
+                (6.., 3) => Some(AiLevel::Onslaught),
                 (_, t) => return Err(DecodeError::BadTag(t)),
             };
             let general = match version {

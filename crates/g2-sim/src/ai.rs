@@ -58,9 +58,14 @@ impl Ai {
         Ai { player, level, enemy_seen: 0, regroup_until: 0 }
     }
 
-    /// Hash input: the state a `Normal` AI decides on. `Easy` keeps none, so it adds nothing.
+    pub fn level(&self) -> AiLevel {
+        self.level
+    }
+
+    /// Hash input: the state a `Normal` AI decides on. `Easy` and `Onslaught` keep none, so
+    /// they add nothing.
     pub(crate) fn hash_into(&self, mut put: impl FnMut(u64)) {
-        if self.level != AiLevel::Easy {
+        if self.level == AiLevel::Normal {
             put(self.enemy_seen as u64);
             put(self.regroup_until as u64);
         }
@@ -166,6 +171,10 @@ impl Ai {
 
     pub(crate) fn think(&mut self, world: &World, out: &mut Vec<CommandKind>) {
         if world.tick() % THINK_INTERVAL != self.player.0 as u32 % THINK_INTERVAL {
+            return;
+        }
+        if self.level == AiLevel::Onslaught {
+            self.onslaught(world, out);
             return;
         }
         let me = self.player;
@@ -395,6 +404,23 @@ impl Ai {
         if idle.len() >= WAVE
             && let Some(home) = home
             && let Some(target) = self.enemy_base(world, home)
+        {
+            out.push(CommandKind::AttackMove { units: idle, target });
+        }
+    }
+
+    /// `Onslaught`: no economy, no base building. Every idle unit (a wave the sim has just
+    /// placed, or what is left of one) attack-moves on the nearest enemy building it knows, else
+    /// scouts for one, so every wave reaches the player.
+    fn onslaught(&self, world: &World, out: &mut Vec<CommandKind>) {
+        let (me, rules) = (self.player, world.rules);
+        let idle: Vec<EntityId> = world
+            .entities()
+            .filter(|e| e.owner == Some(me) && e.order == Order::Idle && rules.def(e.def).weapon().is_some())
+            .map(|e| e.id)
+            .collect();
+        if !idle.is_empty()
+            && let Some(target) = self.enemy_base(world, world.map.spawns[me.0 as usize])
         {
             out.push(CommandKind::AttackMove { units: idle, target });
         }

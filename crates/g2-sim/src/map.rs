@@ -69,21 +69,25 @@ pub struct PlayerSetup {
 
 /// How strong the built-in AI plays. `Easy` is the original wave AI. `Normal` judges the battle
 /// (army strength seen, threats at home, its own fights) before attacking, retreats from losing
-/// fights, guards its constructors and expands when its base's supply runs low.
+/// fights, guards its constructors and expands when its base's supply runs low. `Onslaught`
+/// runs no economy: its waves appear on a schedule (`crate::onslaught`) and attack.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub enum AiLevel {
     #[default]
     Easy,
     Normal,
+    Onslaught,
 }
 
 impl AiLevel {
+    /// The levels that play a skirmish; `Onslaught` is its own mode.
     pub const ALL: [AiLevel; 2] = [AiLevel::Easy, AiLevel::Normal];
 
     pub fn name(self) -> &'static str {
         match self {
             AiLevel::Easy => "Easy",
             AiLevel::Normal => "Normal",
+            AiLevel::Onslaught => "Onslaught",
         }
     }
 }

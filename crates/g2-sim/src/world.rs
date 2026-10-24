@@ -3,7 +3,7 @@ use crate::command::{Command, CommandKind, Reject};
 use crate::defs::{BuildingRole, Class, DefId, Faction, PowerKind, Rules};
 use crate::entity::{DeployState, Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Production, Route};
 use crate::fixed::{Fx, Vec2};
-use crate::map::{MapDef, MatchSetup};
+use crate::map::{AiLevel, MapDef, MatchSetup};
 use crate::rng::Pcg32;
 
 /// Logic rate, matching SAGE's `BaseFps`.
@@ -210,6 +210,10 @@ impl World {
                 power_ready: p.general.and_then(|g| rules.general(g).power).map(|pw| pw.first_ticks),
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
+            // The onslaught has no base: its waves are all there is of it.
+            if p.ai == Some(AiLevel::Onslaught) {
+                continue;
+            }
             let spawn = setup.map.spawns[i];
             let cc = rules.command_center(p.faction);
             let cc_id = world.spawn_owned(cc, owner, spawn);
@@ -317,6 +321,11 @@ impl World {
         self.ai.get(player.0 as usize).is_some_and(Option::is_some)
     }
 
+    /// The built-in AI's level for `player`; `None` for a human.
+    pub fn ai_level(&self, player: PlayerId) -> Option<AiLevel> {
+        self.ai.get(player.0 as usize).and_then(|a| a.as_ref()).map(|a| a.level())
+    }
+
     /// The last player standing, once every other player is defeated.
     pub fn winner(&self) -> Option<PlayerId> {
         let mut alive = self.players.iter().enumerate().filter(|(_, p)| !p.defeated);
@@ -422,6 +431,7 @@ impl World {
         // After construction, so a building finished this tick is powered (or not) immediately.
         self.update_power();
         self.refresh_nav();
+        self.spawn_onslaught_waves();
         for id in self.entities.ids() {
             if self.entities.get(id).is_some_and(|e| self.rules.def(e.def).is_unit()) {
                 self.update_unit(id);
@@ -1531,14 +1541,53 @@ impl World {
                 continue;
             }
             let owner = Some(PlayerId(i as u8));
+            let onslaught = self.ai[i].as_ref().is_some_and(|a| a.level() == AiLevel::Onslaught);
             // Entities killed this tick (hp ≤ 0) are swept by `cleanup` right after.
             let alive = self.entities.iter().any(|e| {
                 let d = self.rules.def(e.def);
                 e.owner == owner && e.hp > 0 && (d.is_building() || d.is_constructor())
             });
-            p.defeated = !alive;
+            // The onslaught has no base to lose: it is beaten once its last wave is out and gone.
+            p.defeated = if onslaught {
+                crate::onslaught::next_wave(self.tick).is_none()
+                    && !self.entities.iter().any(|e| e.owner == owner && e.hp > 0 && self.rules.def(e.def).is_unit())
+            } else {
+                !alive
+            };
             if p.defeated {
                 self.stats[i].defeated_at = Some(self.tick);
+            }
+        }
+    }
+
+    /// An `Onslaught` player's wave for this tick, if one is due: units of its faction, cycling
+    /// through what its barracks and war factory train, placed on open ground in front of its
+    /// start (toward the map centre). They arrive idle; its AI sends them on next think.
+    fn spawn_onslaught_waves(&mut self) {
+        let Some(k) = crate::onslaught::wave_at(self.tick) else { return };
+        for i in 0..self.players.len() {
+            let level = self.ai_level(PlayerId(i as u8));
+            if level != Some(AiLevel::Onslaught) || self.players[i].defeated {
+                continue;
+            }
+            let owner = PlayerId(i as u8);
+            let faction = self.players[i].faction;
+            let roster: Vec<DefId> = self
+                .rules
+                .defs
+                .iter()
+                .filter(|d| d.faction == Some(faction) && d.role() == Some(BuildingRole::Factory))
+                .flat_map(|d| d.produces.iter().copied())
+                .collect();
+            let spawn = self.map.spawns[i];
+            let front = spawn + Vec2::new(Fx::ZERO, Fx::from_int(30) * self.toward_centre(spawn));
+            for n in 0..crate::onslaught::wave_size(k) {
+                let def = roster[(n as usize + k as usize) % roster.len()];
+                let at = if n == 0 { front } else { front + around(n - 1, Fx::from_int(6)) };
+                let pos = self.nav.free_point(self.map.clamp(at));
+                self.spawn_owned(def, owner, pos);
+                self.stats[i].units_built += 1;
+                self.events.push(Event::Produced { player: owner, def, at: pos });
             }
         }
     }

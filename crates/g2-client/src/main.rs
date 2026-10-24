@@ -7,6 +7,8 @@
 //!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [...]
 //!             headless: simulate N ticks, render one frame
 //!
+//! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
+//! mode: no base, waves on a schedule, and you win by outlasting the last one.
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
 //! Generals / Zero Hour map (`g2-tools maps` lists them). `--general` picks a general of your
 //! faction (Bulldog, Taskmaster, Junkyard); without one you play the plain faction. `--spectate`
@@ -114,7 +116,8 @@ fn parse_args() -> Result<Args, String> {
                 a.ai = match it.next().as_deref() {
                     Some("easy") => g2_sim::AiLevel::Easy,
                     Some("normal") => g2_sim::AiLevel::Normal,
-                    other => return Err(format!("--ai expects easy|normal, got {other:?}")),
+                    Some("onslaught") => g2_sim::AiLevel::Onslaught,
+                    other => return Err(format!("--ai expects easy|normal|onslaught, got {other:?}")),
                 }
             }
             "--reveal" => a.reveal = true,
@@ -223,17 +226,17 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
         }
         Ok(Some(id))
     };
-    let player = |i: usize, ai: bool| -> Result<PlayerSetup, String> {
-        Ok(PlayerSetup {
-            faction: args.factions[i],
-            starting_credits: 5_000,
-            ai: ai.then_some(args.ai),
-            general: general(i)?,
-        })
+    let player = |i: usize, ai: Option<g2_sim::AiLevel>| -> Result<PlayerSetup, String> {
+        Ok(PlayerSetup { faction: args.factions[i], starting_credits: 5_000, ai, general: general(i)? })
+    };
+    // `--ai onslaught` makes the enemy the waves; a spectated player 0 is then `Normal`.
+    let own = match args.ai {
+        g2_sim::AiLevel::Onslaught => g2_sim::AiLevel::Normal,
+        level => level,
     };
     // A hosted match is two humans: the joiner plays the enemy slot.
-    let enemy_ai = args.host.is_none();
-    let mut sim = Sim::new(map, source, args.seed, [player(0, spectate)?, player(1, enemy_ai)?]);
+    let enemy = args.host.is_none().then_some(args.ai);
+    let mut sim = Sim::new(map, source, args.seed, [player(0, spectate.then_some(own))?, player(1, enemy)?]);
     sim.fog = !args.reveal;
     Ok(sim)
 }

@@ -405,7 +405,11 @@ fn apply_one(world: &mut World, act: Act) {
             Act::CycleAi(i) => {
                 // Slot 0 is the player at the keyboard and has no level to set.
                 if let Some(s) = world.resource_mut::<Ui>().config.slots.get_mut(i).filter(|_| i > 0) {
-                    s.ai = Some(if s.ai == Some(AiLevel::Easy) { AiLevel::Normal } else { AiLevel::Easy });
+                    s.ai = Some(match s.ai {
+                        Some(AiLevel::Easy) => AiLevel::Normal,
+                        Some(AiLevel::Normal) => AiLevel::Onslaught,
+                        _ => AiLevel::Easy,
+                    });
                 }
             }
             Act::CycleCredits => {
@@ -658,14 +662,7 @@ fn options_panel(p: &mut ChildSpawnerCommands, ui: &Ui) {
     let teams = crate::models::team_slots(&ui.config.slots.iter().map(|s| s.faction).collect::<Vec<_>>());
     for (i, slot) in ui.config.slots.iter().enumerate() {
         let general = slot.general.map_or("No general".to_owned(), |g| g2_rules::rules().general(g).name.to_owned());
-        let level = if i == 0 {
-            "YOU".to_owned()
-        } else {
-            match slot.ai {
-                Some(AiLevel::Easy) => "Easy".to_owned(),
-                _ => "Normal".to_owned(),
-            }
-        };
+        let level = if i == 0 { "YOU".to_owned() } else { slot.ai.unwrap_or_default().name().to_owned() };
         p.spawn(Node { column_gap: px(6), align_items: AlignItems::Center, ..default() }).with_children(|r| {
             r.spawn((
                 Node { width: px(12), height: px(12), ..default() },
