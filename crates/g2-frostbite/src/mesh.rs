@@ -189,7 +189,8 @@ impl Le<'_> {
 
 /// A binary glTF (`.glb`) with one mesh, a primitive per drawn subset, and an embedded
 /// PNG per material when `textures[material_index]` is given. Frostbite is left-handed
-/// with +Z forward; glTF is right-handed, so Z is negated and the winding flipped.
+/// and models face +Z (a tank's barrel points there), as the client's do; glTF is
+/// right-handed, so X is negated (keeping +Z forward) and the winding flipped.
 pub fn to_glb(mesh: &MeshSet, textures: &[Option<Vec<u8>>]) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut views = Vec::new();
@@ -211,7 +212,7 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<Vec<u8>>]) -> Vec<u8> {
     let mut materials = Vec::new();
     let mut material_of = std::collections::BTreeMap::new();
     for s in mesh.subsets.iter().filter(|s| !s.shadow_only && !s.indices.is_empty()) {
-        let pos: Vec<[f32; 3]> = s.positions.iter().map(|p| [p[0], p[1], -p[2]]).collect();
+        let pos: Vec<[f32; 3]> = s.positions.iter().map(|p| [-p[0], p[1], p[2]]).collect();
         let (lo, hi) = pos.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(lo, hi), p| {
             (std::array::from_fn(|i| lo[i].min(p[i])), std::array::from_fn(|i| hi[i].max(p[i])))
         });
@@ -232,7 +233,7 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<Vec<u8>>]) -> Vec<u8> {
                 .iter()
                 .map(|n| {
                     let l = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-6);
-                    [n[0] / l, n[1] / l, -n[2] / l]
+                    [-n[0] / l, n[1] / l, n[2] / l]
                 })
                 .collect();
             let v = view(&mut bin, &f32_bytes(n.iter().flatten()), Some(34962));
@@ -358,13 +359,18 @@ mod tests {
         assert_eq!(json.matches(r#""attributes""#).count(), 1);
         assert!(json.contains(r#""mimeType":"image/png""#));
         assert!(json.contains(r#""name":"m\"1""#));
-        // Z negated: the third vertex's z bound is -2.
-        assert!(json.contains(r#""min":[0,0,-2]"#), "{json}");
+        // X negated, Z kept: positions span x -1..0 and z 0..2.
+        let bound = |key: &str| -> Vec<f32> {
+            let at = json.find(key).unwrap() + key.len();
+            json[at..json[at..].find(']').unwrap() + at].split(',').map(|v| v.parse().unwrap()).collect()
+        };
+        assert_eq!((bound(r#""min":["#), bound(r#""max":["#)), (vec![-1.0, 0.0, 0.0], vec![0.0, 1.0, 2.0]));
         let bin = &glb[20 + json_len + 8..];
         // Positions first (36 bytes), normals (36), uvs (24), then indices flipped 0,2,1.
         let idx: Vec<u32> = bin[96..108].chunks(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
         assert_eq!(idx, [0, 2, 1]);
+        let nx = f32::from_le_bytes(bin[36..40].try_into().unwrap());
         let nz = f32::from_le_bytes(bin[44..48].try_into().unwrap());
-        assert_eq!(nz, 1.0, "normal normalised and negated");
+        assert_eq!((nx, nz), (0.0, -1.0), "normal normalised, z kept");
     }
 }

@@ -169,8 +169,9 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
                         .clone()
                 })
                 .collect();
+            // In the glTF's space: X negated, as `to_glb` writes it.
             let (lo, hi) = m.bounds;
-            let _ = writeln!(bounds, "{name} {} {} {} {} {} {}", lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+            let _ = writeln!(bounds, "{name} {} {} {} {} {} {}", -hi[0], lo[1], lo[2], -lo[0], hi[1], hi[2]);
             mesh::to_glb(&m, &textures)
         });
         match result.and_then(|glb| write(&out.join("models").join(format!("{name}.glb")), &glb)) {

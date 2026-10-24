@@ -484,7 +484,23 @@ mod headless {
                 .poll(PollType::Wait { submission_index: None, timeout: None })
                 .expect("GPU poll failed");
         };
-        // Spawn mirrors and compile pipelines before capturing.
+        // Spawn mirrors and compile pipelines before capturing; with an imported alpha, also
+        // wait (up to ~10 s of frames) until every model's scene has loaded, or the frame
+        // would show bare team rings.
+        for _ in 0..3 {
+            wait(&mut apps);
+        }
+        for _ in 0..600 {
+            if crate::view::alpha_models_loaded(apps.main.world()) {
+                break;
+            }
+            wait(&mut apps);
+        }
+        if !crate::view::alpha_models_loaded(apps.main.world()) {
+            eprintln!("imported alpha models did not finish loading");
+            return AppExit::error();
+        }
+        // Scenes spawn their meshes a frame or two after the load completes.
         for _ in 0..3 {
             wait(&mut apps);
         }
