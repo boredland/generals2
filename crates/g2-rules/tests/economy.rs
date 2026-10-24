@@ -101,6 +101,46 @@ fn harvesters_carry_supplies_from_pile_to_center() {
     assert_eq!(delivered, earned, "every credit earned is reported as a delivery");
 }
 
+/// A collector delivers to the nearest supply center with room, not to the one it was trained
+/// at: once a second center stands next to its pile, its loads go there. A full center is
+/// passed over, but a collector's own home always has room for it.
+#[test]
+fn collectors_deliver_to_the_nearest_center_with_room() {
+    let mut w = world(Faction::Eu, 100_000);
+    // Well away from the pile at (130, 60): the trips are long.
+    let far = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(40, 140));
+    assert_eq!(order(&mut w, CommandKind::Train { producer: far, def: EU_HARVESTER }), vec![]);
+    let deliveries = |w: &mut World, ticks: u32| {
+        let mut at = Vec::new();
+        for _ in 0..ticks {
+            w.step();
+            at.extend(w.events().iter().filter_map(|e| match *e {
+                Event::Delivered { depot, .. } => Some(depot),
+                _ => None,
+            }));
+        }
+        at
+    };
+    let before = deliveries(&mut w, 30 * 60);
+    assert!(!before.is_empty() && before.iter().all(|&d| d == far), "{before:?}");
+    let near = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(110, 80));
+    let after = deliveries(&mut w, 30 * 60);
+    assert!(after.iter().filter(|&&d| d == near).count() >= 2, "loads go to the new center: {after:?}");
+    assert_eq!(after.last(), Some(&near));
+    let harvester = first(&w, P0, EU_HARVESTER).unwrap();
+    assert_eq!(w.entity(harvester).unwrap().home, Some(near));
+    // Fill the near center to its cap: a harvester trained at the far one stays there.
+    for _ in 0..2 {
+        assert_eq!(order(&mut w, CommandKind::Train { producer: near, def: EU_HARVESTER }), vec![]);
+    }
+    assert_eq!(w.depot_load(near), 3);
+    assert_eq!(order(&mut w, CommandKind::Train { producer: far, def: EU_HARVESTER }), vec![]);
+    run(&mut w, 30 * 90);
+    let homes: Vec<_> = all(&w, P0, EU_HARVESTER).iter().map(|&h| w.entity(h).unwrap().home).collect();
+    assert_eq!(homes.iter().filter(|&&h| h == Some(near)).count(), 3, "{homes:?}");
+    assert_eq!(homes.iter().filter(|&&h| h == Some(far)).count(), 1, "{homes:?}");
+}
+
 /// Collectors must route between tightly packed buildings: none may sit still for 20 seconds
 /// on a gather run. The layout is pinned to the one that exposed two bugs, the AI's original
 /// placement around Crater Ridge's first start: supply center (60,60), power plant (80,64),

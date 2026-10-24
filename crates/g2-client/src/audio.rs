@@ -98,21 +98,28 @@ impl Cue {
 #[derive(Resource, Default)]
 pub struct Muted(pub bool);
 
-/// A synthesized mono sound.
+/// A synthesized mono sound, played in stereo at `pan` (-1 left .. 1 right).
 #[derive(Asset, TypePath, Clone)]
-pub struct Sound(Arc<[f32]>);
+pub struct Sound {
+    samples: Arc<[f32]>,
+    pan: f32,
+}
 
 impl Decodable for Sound {
     type Decoder = Playback;
 
     fn decoder(&self) -> Playback {
-        Playback { samples: self.0.clone(), at: 0 }
+        // Constant-power panning: the sum of both channels' power stays the same at any pan.
+        let angle = (self.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
+        Playback { samples: self.samples.clone(), gains: [angle.cos(), angle.sin()], at: 0 }
     }
 }
 
-/// Plays a `Sound`'s samples once.
+/// Plays a `Sound`'s samples once, interleaved left/right.
 pub struct Playback {
     samples: Arc<[f32]>,
+    gains: [f32; 2],
+    /// Index into the interleaved output: sample `at / 2`, channel `at % 2`.
     at: usize,
 }
 
@@ -120,19 +127,20 @@ impl Iterator for Playback {
     type Item = bevy::audio::Sample;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let s = *self.samples.get(self.at)?;
+        let s = *self.samples.get(self.at / 2)?;
+        let out = s * self.gains[self.at % 2];
         self.at += 1;
-        Some(s as bevy::audio::Sample)
+        Some(out as bevy::audio::Sample)
     }
 }
 
 impl bevy::audio::Source for Playback {
     fn current_span_len(&self) -> Option<usize> {
-        Some(self.samples.len() - self.at)
+        Some(self.samples.len() * 2 - self.at)
     }
 
     fn channels(&self) -> ChannelCount {
-        ChannelCount::new(1).unwrap()
+        ChannelCount::new(2).unwrap()
     }
 
     fn sample_rate(&self) -> SampleRate {
@@ -144,12 +152,36 @@ impl bevy::audio::Source for Playback {
     }
 }
 
+/// Pan positions a placed cue snaps to, from hard left to hard right; each is its own handle
+/// on the same samples.
+const PANS: usize = 9;
+/// Placed cues never pan further than this, so nothing plays in one ear only.
+const MAX_PAN: f32 = 0.8;
+
 #[derive(Resource)]
-struct Bank(BTreeMap<Cue, Handle<Sound>>);
+struct Bank(BTreeMap<(Cue, usize), Handle<Sound>>);
 
 fn load_sounds(mut commands: Commands, mut sounds: ResMut<Assets<Sound>>) {
-    let bank = Cue::ALL.into_iter().map(|c| (c, sounds.add(Sound(synth(c).into())))).collect();
+    let mut bank = BTreeMap::new();
+    for cue in Cue::ALL {
+        let samples: Arc<[f32]> = synth(cue).into();
+        for k in 0..PANS {
+            let pan = pan_of_slot(k);
+            bank.insert((cue, k), sounds.add(Sound { samples: samples.clone(), pan }));
+        }
+    }
     commands.insert_resource(Bank(bank));
+}
+
+fn pan_of_slot(k: usize) -> f32 {
+    (k as f32 / (PANS - 1) as f32 * 2.0 - 1.0) * MAX_PAN
+}
+
+/// The pan slot for a sound `offset` world units right of the camera's focus, along the
+/// camera's own right direction: full pan a screen-half (`NEAR`) to the side.
+fn pan_slot(offset: f32) -> usize {
+    let pan = (offset / NEAR).clamp(-1.0, 1.0);
+    ((pan + 1.0) / 2.0 * (PANS - 1) as f32).round() as usize
 }
 
 fn toggle_mute(keys: Res<ButtonInput<KeyCode>>, mut muted: ResMut<Muted>) {
@@ -177,12 +209,20 @@ fn play_cues(
     if muted.0 {
         return;
     }
-    let focus = cam.iter().next().map(|c| Vec2::new(c.pivot.x, c.pivot.z));
+    // The camera's focus and its right-hand direction on the ground: placed cues pan by how
+    // far right of the focus they are, as seen on screen whatever the camera's yaw.
+    let view = cam.iter().next().map(|c| {
+        let right = c.transform().right();
+        (Vec2::new(c.pivot.x, c.pivot.z), Vec2::new(right.x, right.z).normalize_or_zero())
+    });
     let mut started = BTreeMap::<Cue, usize>::new();
     for (cue, at) in cues {
-        let gain = match (at, focus) {
-            (Some(p), Some(f)) => attenuation(Vec2::new(p.x.to_f32(), p.y.to_f32()).distance(f)),
-            _ => 1.0,
+        let (gain, slot) = match (at, view) {
+            (Some(p), Some((focus, right))) => {
+                let p = Vec2::new(p.x.to_f32(), p.y.to_f32());
+                (attenuation(p.distance(focus)), pan_slot((p - focus).dot(right)))
+            }
+            _ => (1.0, PANS / 2),
         };
         let n = started.entry(cue).or_default();
         if gain <= 0.0 || *n >= VOICES_PER_FRAME {
@@ -190,7 +230,7 @@ fn play_cues(
         }
         *n += 1;
         commands.spawn((
-            AudioPlayer(bank.0[&cue].clone()),
+            AudioPlayer(bank.0[&(cue, slot)].clone()),
             PlaybackSettings::DESPAWN.with_volume(Volume::Linear(gain * cue.level())),
         ));
     }
@@ -423,6 +463,30 @@ mod tests {
         }
     }
 
+    /// A sound right of the camera's focus is louder in the right channel and one on the left
+    /// in the left, mirrored; one at the focus is balanced; and panning keeps the total power
+    /// (so a sound doesn't get louder or quieter as it crosses the screen).
+    #[test]
+    fn sounds_pan_with_their_side_of_the_screen() {
+        let channels = |offset: f32| {
+            let sound = Sound { samples: synth(Cue::Click).into(), pan: pan_of_slot(pan_slot(offset)) };
+            let out: Vec<f32> = sound.decoder().collect();
+            let power = |ch: usize| out.iter().skip(ch).step_by(2).map(|v| v * v).sum::<f32>();
+            (power(0), power(1))
+        };
+        let (l0, r0) = channels(0.0);
+        assert!((l0 - r0).abs() < 1e-3 * l0, "centred: {l0} / {r0}");
+        let (lr, rr) = channels(NEAR);
+        let (ll, rl) = channels(-NEAR);
+        assert!(rr > 5.0 * lr, "right: {lr} / {rr}");
+        assert!((lr - rl).abs() < 1e-3 * l0 && (rr - ll).abs() < 1e-3 * l0, "mirrored");
+        assert!(lr > 0.0, "never in one ear only");
+        for offset in [-200.0, -NEAR / 2.0, 7.0, NEAR / 3.0, 500.0] {
+            let (l, r) = channels(offset);
+            assert!(((l + r) - (l0 + r0)).abs() < 1e-3 * (l0 + r0), "power at {offset}");
+        }
+    }
+
     /// Notifications are the local player's own: in an AI match the local side's every
     /// finished unit and building is announced, the enemy's never are.
     #[test]
@@ -483,6 +547,25 @@ mod tests {
         // Every unseen hit is exactly the part not heard.
         assert_eq!(heard_hidden, hidden);
         assert!(heard_with_fog_off > 0);
+    }
+
+    /// Left and right are the screen's: a point the in-game camera draws right of the screen's
+    /// centre pans right, at every yaw the camera can turn to.
+    #[test]
+    fn the_right_of_the_screen_pans_right() {
+        for yaw in [0.0, 0.7, std::f32::consts::PI, -2.0] {
+            let cam =
+                RtsCamera { pivot: Vec3::new(100.0, 0.0, 100.0), distance: 105.0, yaw, pitch: crate::look::PITCH };
+            let tf = cam.transform();
+            let right = tf.right();
+            let ground_right = Vec2::new(right.x, right.z).normalize();
+            let p = Vec3::new(100.0, 0.0, 100.0) + Vec3::new(ground_right.x, 0.0, ground_right.y) * 30.0;
+            // Camera space: +X is right on screen.
+            let in_view = tf.compute_affine().inverse().transform_point3(p);
+            assert!(in_view.x > 0.0, "yaw {yaw}: the point is drawn left of centre");
+            let offset = (Vec2::new(p.x, p.z) - Vec2::new(100.0, 100.0)).dot(ground_right);
+            assert!(pan_of_slot(pan_slot(offset)) > 0.0, "yaw {yaw}");
+        }
     }
 
     /// Through the real schedule: an order clicks once, a played minute turns into sounds with

@@ -339,11 +339,17 @@ impl World {
     }
 
     fn find_depot(&self, player: PlayerId, near: Vec2) -> Option<EntityId> {
+        self.depot_for(player, near, None)
+    }
+
+    /// The nearest complete supply center of `player` with room under its collector cap; the
+    /// collector's own `home` always has room for it, since it already counts there.
+    fn depot_for(&self, player: PlayerId, near: Vec2, home: Option<EntityId>) -> Option<EntityId> {
         self.nearest(near, |e| {
             e.owner == Some(player)
                 && e.is_complete()
                 && matches!(self.rules.def(e.def).role(), Some(BuildingRole::SupplyCenter { collector_cap })
-                    if self.depot_load(e.id) < collector_cap)
+                    if home == Some(e.id) || self.depot_load(e.id) < collector_cap)
         })
     }
 
@@ -1304,8 +1310,10 @@ impl World {
                 pe.resource -= take;
                 let u = self.entities.get_mut(id).unwrap();
                 u.cargo += take;
-                let home = u.home;
-                let depot = home.filter(|&h| live_depot(self, h).is_some()).or_else(|| self.find_depot(owner, pos));
+                let home = u.home.filter(|&h| live_depot(self, h).is_some());
+                // The nearest supply center with room, so a newer one closer to the pile takes
+                // over from the one the collector was trained at.
+                let depot = self.depot_for(owner, pos, home);
                 match depot {
                     Some(depot) => {
                         self.entities.get_mut(id).unwrap().home = Some(depot);
