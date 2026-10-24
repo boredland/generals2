@@ -7,8 +7,11 @@ use std::path::PathBuf;
 
 use g2_frostbite::{Alpha, res_type, texture};
 
+/// A relative `G2_ALPHA_DIR` is taken from the repository root: cargo runs tests in the
+/// crate's folder, where the same value would point nowhere.
 fn install() -> Option<Alpha> {
     let dir = PathBuf::from(std::env::var_os("G2_ALPHA_DIR")?);
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").join(dir);
     Some(Alpha::open(&dir).expect("G2_ALPHA_DIR is not a readable alpha install"))
 }
 
