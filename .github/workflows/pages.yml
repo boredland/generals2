@@ -26,6 +26,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/configure-pages@v5
+        with:
+          # Enable Pages here if it is not already on, so the workflow is self-contained.
+          enablement: true
 
       # The site is static HTML over the screenshots the game itself renders; no build step.
       - uses: actions/upload-pages-artifact@v3
