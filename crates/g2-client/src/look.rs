@@ -46,6 +46,10 @@ pub fn spawn_lights(commands: &mut Commands, map_size: f32) {
             color: Color::srgb(1.0, 0.93, 0.80),
             illuminance: 110_000.0,
             shadow_maps_enabled: true,
+            // The ground is nearly flat under grazing light across cascades that span the whole
+            // map: the defaults leave it shadowing itself in distance bands (contour rings).
+            shadow_depth_bias: 0.08,
+            shadow_normal_bias: 4.5,
             ..default()
         },
         // Afternoon sun from the upper left of the default view (camera looks toward -Z, screen
