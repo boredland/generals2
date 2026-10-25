@@ -8,12 +8,11 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use bevy::prelude::*;
 use g2_sim::Def;
 
-use crate::audio::Cue;
+use crate::audio::{Cue, Sound};
 
 /// Before `DefaultPlugins`: when an import exists, its folder becomes the `alpha://` asset
 /// source and the `Cache` resource. Without one, nothing changes.
@@ -184,19 +183,20 @@ fn effect_for(cue: Cue) -> &'static str {
 /// The menu's music: the alpha's main-menu loop.
 pub const MENU_MUSIC: &str = "sound/music/waves/xlevel_menumusic_loop_v1";
 
-/// Decoded alpha sounds: the cue effects and every unit's voice lines, as variations.
+/// Decoded alpha sounds, each at its own channels and rate: the cue effects and every
+/// unit's voice lines, as variations, and the menu music.
 #[derive(Resource, Default)]
 pub struct Sounds {
-    pub effects: BTreeMap<Cue, Vec<Arc<[f32]>>>,
-    pub voices: BTreeMap<(&'static str, Response), Vec<Arc<[f32]>>>,
-    /// The menu music and the sample its loop starts at (it repeats from there to the end).
-    pub music: Option<(Arc<[f32]>, usize)>,
+    pub effects: BTreeMap<Cue, Vec<Sound>>,
+    pub voices: BTreeMap<(&'static str, Response), Vec<Sound>>,
+    /// Plays its intro once, then repeats its loop.
+    pub music: Option<Sound>,
 }
 
 impl Sounds {
-    pub fn load(cache: &Cache, rate: u32) -> Sounds {
-        let read = |paths: Vec<PathBuf>| -> Vec<Arc<[f32]>> {
-            paths.iter().filter_map(|p| read_wav(p, rate).ok()).map(|w| w.samples.into()).collect()
+    pub fn load(cache: &Cache) -> Sounds {
+        let read = |paths: Vec<PathBuf>| -> Vec<Sound> {
+            paths.iter().filter_map(|p| read_wav(p).ok()).map(Wav::sound).collect()
         };
         let mut s = Sounds::default();
         for cue in Cue::ALL {
@@ -218,26 +218,38 @@ impl Sounds {
         // The track is an intro then a loop: it repeats from the loop's start, or from the top
         // when the file names no loop. Whatever follows the loop (nothing, in the alpha's
         // menu music) is never reached, so it is cut.
-        s.music = cache.variations(MENU_MUSIC).first().and_then(|p| read_wav(p, rate).ok()).map(|w| {
-            let (from, to) = w.looped.map_or((0, w.samples.len()), |l| (l.start, l.end));
-            let mut samples = w.samples;
-            samples.truncate(to);
-            (samples.into(), from)
+        s.music = cache.variations(MENU_MUSIC).first().and_then(|p| read_wav(p).ok()).map(|mut w| {
+            let (from, to) = w.looped.clone().map_or((0, w.frames()), |l| (l.start, l.end));
+            w.samples.truncate(to * usize::from(w.channels));
+            w.sound().looping(from)
         });
         s
     }
 }
 
-/// A WAV read by [`read_wav`]: mono samples, and the samples its loop covers, if any.
+/// A WAV read by [`read_wav`]: its samples (interleaved, at most two channels), its rate,
+/// and the frames its loop covers, if any.
 pub struct Wav {
     pub samples: Vec<f32>,
+    pub channels: u16,
+    pub rate: u32,
     pub looped: Option<std::ops::Range<usize>>,
 }
 
-/// A 16-bit PCM WAV as mono samples at `rate`: channels averaged, linearly resampled. The
-/// cue sounds are mono and panned by the player, so the alpha's are folded down to match.
-/// A `smpl` chunk's first loop (frames, last one inclusive) is carried over at `rate`.
-pub fn read_wav(path: &Path, rate: u32) -> Result<Wav, String> {
+impl Wav {
+    pub fn frames(&self) -> usize {
+        self.samples.len() / usize::from(self.channels)
+    }
+
+    fn sound(self) -> Sound {
+        Sound::new(self.samples.into(), self.channels, self.rate)
+    }
+}
+
+/// A 16-bit PCM WAV, kept at its own rate. Mono and stereo stay as they are; more channels
+/// (two of the alpha's ambience loops are quad) fold to stereo, front and rear summed per
+/// side. A `smpl` chunk's first loop (frames, last one inclusive) is kept.
+pub fn read_wav(path: &Path) -> Result<Wav, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let bad = || format!("{}: not a 16-bit PCM WAV", path.display());
     if bytes.get(..4) != Some(b"RIFF") || bytes.get(8..12) != Some(b"WAVE") {
@@ -270,28 +282,27 @@ pub fn read_wav(path: &Path, rate: u32) -> Result<Wav, String> {
     if channels == 0 || src_rate == 0 {
         return Err(bad());
     }
-    let mono: Vec<f32> = data
-        .as_chunks::<2>()
-        .0
-        .chunks_exact(channels)
-        .map(|frame| frame.iter().map(|s| f32::from(i16::from_le_bytes(*s))).sum::<f32>() / (channels as f32 * 32768.0))
-        .collect();
-    let looped = looped.filter(|l: &std::ops::Range<usize>| l.start < l.end && l.end <= mono.len());
-    if src_rate == rate || mono.is_empty() {
-        return Ok(Wav { samples: mono, looped });
-    }
-    let step = src_rate as f64 / rate as f64;
-    let n = ((mono.len() - 1) as f64 / step) as usize + 1;
-    let samples = (0..n)
-        .map(|i| {
-            let x = i as f64 * step;
-            let (k, f) = (x as usize, (x.fract()) as f32);
-            let next = mono.get(k + 1).copied().unwrap_or(mono[k]);
-            mono[k] + (next - mono[k]) * f
-        })
-        .collect();
-    let at = |frame: usize| ((frame as f64 / step).round() as usize).min(n);
-    Ok(Wav { samples, looped: looped.map(|l| at(l.start)..at(l.end)) })
+    let sample = |s: &[u8; 2]| f32::from(i16::from_le_bytes(*s)) / 32768.0;
+    let frames = data.as_chunks::<2>().0.chunks_exact(channels);
+    let (samples, out_channels): (Vec<f32>, u16) = match channels {
+        1 | 2 => (frames.flatten().map(sample).collect(), channels as u16),
+        // Even channels to the left, odd to the right (L, R, rear L, rear R), averaged.
+        _ => (
+            frames
+                .flat_map(|f| {
+                    let side = |odd: usize| {
+                        let (sum, n) = f.iter().skip(odd).step_by(2).fold((0.0, 0), |(s, n), x| (s + sample(x), n + 1));
+                        sum / n as f32
+                    };
+                    [side(0), side(1)]
+                })
+                .collect(),
+            2,
+        ),
+    };
+    let frames = samples.len() / usize::from(out_channels);
+    let looped = looped.filter(|l: &std::ops::Range<usize>| l.start < l.end && l.end <= frames);
+    Ok(Wav { samples, channels: out_channels, rate: src_rate, looped })
 }
 
 #[cfg(test)]
@@ -322,7 +333,7 @@ mod tests {
         for def in g2_rules::rules().defs.iter().filter(|d| d.faction.is_some()) {
             assert!(cache.model(def, &bounds).is_some(), "{}: model missing from the import", def.name);
         }
-        let s = Sounds::load(&cache, crate::audio::RATE);
+        let s = Sounds::load(&cache);
         for cue in Cue::ALL {
             assert!(s.effects.contains_key(&cue), "{cue:?}: effect missing");
         }
@@ -334,11 +345,14 @@ mod tests {
                 assert!(s.voices.contains_key(&(def.name, r)), "{} {r:?}: voice missing", def.name);
             }
         }
-        // The menu music: a 175 s intro, then its 150 s loop repeats.
-        let (music, from) = s.music.expect("menu music");
-        let secs = |n: usize| n as f32 / crate::audio::RATE as f32;
-        assert!((secs(from) - 175.2).abs() < 0.5, "loop starts after the intro, at {} s", secs(from));
-        assert!((secs(music.len() - from) - 150.8).abs() < 0.5, "loop lasts {} s", secs(music.len() - from));
+        // The menu music, stereo at 48 kHz as the alpha has it: its intro segment (175.213 s)
+        // once, then its loop segment (150.752 s) repeats.
+        let music = s.music.expect("menu music");
+        assert_eq!((music.channels(), music.rate()), (2, 48_000));
+        let from = music.loop_from().expect("music loops");
+        let secs = |n: usize| n as f32 / music.rate() as f32;
+        assert!((secs(from) - 175.213).abs() < 0.01, "loop starts after the intro, at {} s", secs(from));
+        assert!((secs(music.frames() - from) - 150.75).abs() < 0.01, "loop lasts {} s", secs(music.frames() - from));
     }
 
     fn wav(channels: u16, rate: u32, samples: &[i16], looped: Option<(u32, u32)>) -> Vec<u8> {
@@ -368,24 +382,30 @@ mod tests {
         w
     }
 
+    /// Mono and stereo WAVs read as they are, at their own rate; four channels fold to
+    /// stereo by side; a `smpl` loop is kept in frames.
     #[test]
-    fn stereo_folds_to_mono_and_resamples() {
+    fn wavs_keep_their_channels_rate_and_loop() {
         let dir = std::env::temp_dir().join(format!("g2-alpha-wav-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.wav");
-        // Stereo at 2 Hz: frames (L, R) = (16384, 0), (0, -16384), (16384, 16384).
-        std::fs::write(&path, wav(2, 2, &[16384, 0, 0, -16384, 16384, 16384], None)).unwrap();
-        let w = read_wav(&path, 2).unwrap();
-        assert_eq!((w.samples.as_slice(), w.looped), ([0.25, -0.25, 0.5].as_slice(), None));
-        // Upsampled to 4 Hz: halfway points interpolated.
-        assert_eq!(read_wav(&path, 4).unwrap().samples, [0.25, 0.0, -0.25, 0.125, 0.5]);
-        // A loop over frames 1..=2 (the last two) stays on those samples, and moves with the
-        // samples when resampled: at 4 Hz frame 1 is sample 2.
-        std::fs::write(&path, wav(2, 2, &[16384, 0, 0, -16384, 16384, 16384], Some((1, 2)))).unwrap();
-        assert_eq!(read_wav(&path, 2).unwrap().looped, Some(1..3));
-        assert_eq!(read_wav(&path, 4).unwrap().looped, Some(2..5));
-        std::fs::write(&path, b"RIFF....WAVEjunk").unwrap();
-        assert!(read_wav(&path, 4).is_err());
+        let read = |bytes: Vec<u8>| {
+            std::fs::write(&path, bytes).unwrap();
+            read_wav(&path)
+        };
+        // Stereo at 48 kHz: frames (L, R) = (16384, 0), (0, -16384), (16384, 16384).
+        let w = read(wav(2, 48_000, &[16384, 0, 0, -16384, 16384, 16384], None)).unwrap();
+        assert_eq!((w.channels, w.rate, w.frames(), w.looped.clone()), (2, 48_000, 3, None));
+        assert_eq!(w.samples, [0.5, 0.0, 0.0, -0.5, 0.5, 0.5]);
+        let w = read(wav(1, 44_100, &[16384, -8192], None)).unwrap();
+        assert_eq!((w.channels, w.rate, w.samples.as_slice()), (1, 44_100, [0.5, -0.25].as_slice()));
+        // Quad (L, R, rear L, rear R): each side averages its front and rear.
+        let w = read(wav(4, 48_000, &[16384, 0, 0, -16384], None)).unwrap();
+        assert_eq!((w.channels, w.samples.as_slice()), (2, [0.25, -0.25].as_slice()));
+        // A loop over frames 1..=2 (the last two).
+        let w = read(wav(2, 48_000, &[16384, 0, 0, -16384, 16384, 16384], Some((1, 2)))).unwrap();
+        assert_eq!(w.looped, Some(1..3));
+        assert!(read(b"RIFF....WAVEjunk".to_vec()).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
