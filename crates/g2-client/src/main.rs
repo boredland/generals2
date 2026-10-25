@@ -552,8 +552,12 @@ mod headless {
             }
             wait(&mut apps);
         }
-        if !crate::view::alpha_models_loaded(apps.main.world()) || !crate::movie::held_frame_loaded(apps.main.world()) {
+        if !crate::view::alpha_models_loaded(apps.main.world()) {
             eprintln!("imported alpha models did not finish loading");
+            return AppExit::error();
+        }
+        if !crate::movie::held_frame_loaded(apps.main.world()) {
+            eprintln!("--movie-frame: the movie frame did not finish loading");
             return AppExit::error();
         }
         // Scenes spawn their meshes a frame or two after the load completes.
