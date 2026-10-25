@@ -39,9 +39,13 @@ pub struct Ai {
 
 /// What a unit adds to a fight: hit points times damage per second, so a fresh tank counts
 /// for more than a damaged one and a fast gun for more than a slow one, with its owner's
-/// upgrades and its rank. Unarmed units: 0.
+/// upgrades and its rank. Unarmed units and every building (a base defence holds its ground,
+/// it is no army to outweigh): 0.
 pub fn strength(world: &World, e: &Entity) -> i64 {
     let d = world.rules.def(e.def);
+    if !d.is_unit() {
+        return 0;
+    }
     let Some(w) = d.weapon_for(e.deploy == DeployState::Deployed).or(d.deploy.map(|dep| dep.weapon)) else {
         return 0;
     };
@@ -75,9 +79,8 @@ impl Ai {
 
     /// The armour most of the visible enemy army (by combat strength) wears, if any is seen.
     fn enemy_armour(&self, world: &World) -> Option<Armour> {
-        let vision = world.vision(self.player);
         let mut by = [0i64; 3];
-        for e in world.entities().filter(|e| e.owner.is_some_and(|o| o != self.player) && vision.is_visible(e.pos)) {
+        for e in world.entities().filter(|e| e.owner.is_some_and(|o| o != self.player) && world.sees(self.player, e)) {
             let a = world.rules.def(e.def).armour;
             if a != Armour::Structure {
                 by[a as usize] += strength(world, e);
@@ -89,9 +92,8 @@ impl Ai {
 
     /// Whether any visible enemy unit flies.
     fn enemy_air(&self, world: &World) -> bool {
-        let vision = world.vision(self.player);
         world.entities().any(|e| {
-            e.owner.is_some_and(|o| o != self.player) && world.rules.def(e.def).flies() && vision.is_visible(e.pos)
+            e.owner.is_some_and(|o| o != self.player) && world.rules.def(e.def).flies() && world.sees(self.player, e)
         })
     }
 
@@ -118,7 +120,7 @@ impl Ai {
             PowerKind::Barrage { radius, .. } => {
                 let enemies: Vec<&Entity> = world
                     .entities()
-                    .filter(|e| e.owner.is_some_and(|o| o != self.player) && vision.is_visible(e.pos))
+                    .filter(|e| e.owner.is_some_and(|o| o != self.player) && world.sees(self.player, e))
                     .collect();
                 let points: Vec<Vec2> = enemies.iter().map(|e| e.pos).collect();
                 let reach = radius * Fx::from_int(3);
@@ -160,7 +162,7 @@ impl Ai {
                     .filter(|e| {
                         e.owner.is_some_and(|o| o != self.player)
                             && world.rules.def(e.def).is_building()
-                            && vision.is_visible(e.pos)
+                            && world.sees(self.player, e)
                     })
                     .min_by_key(|e| (e.pos.distance(home), e.id))
                     .map(|e| {
@@ -211,7 +213,13 @@ impl Ai {
         let rebuild = mine.iter().filter(|e| e.is_complete()).find_map(|e| {
             rules.def(e.def).produces.iter().find(|&&u| rules.def(u).is_constructor()).map(|&u| (e.id, u))
         });
-        let saving = constructors == 0 && rebuild.is_some();
+        // Once a stealth unit has hit it, Normal (whose factories all stand) also holds back the
+        // army until its detector is placed, so its credits can't keep the turret away.
+        let needs_detector = self.level == AiLevel::Normal
+            && world.player(me).hit_by_stealth
+            && !mine.iter().any(|e| rules.def(e.def).role() == Some(BuildingRole::Defense))
+            && mine.iter().filter(|e| rules.def(e.def).role() == Some(BuildingRole::Factory)).count() >= 2;
+        let saving = (constructors == 0 && rebuild.is_some()) || needs_detector;
         if constructors == 0
             && let Some((producer, def)) = rebuild
             && world.player(me).credits >= rules.def(def).cost.credits
@@ -296,6 +304,14 @@ impl Ai {
                 labs.sort_by_key(|&b| rules.def(b).cost.credits);
                 labs.into_iter().find(|&l| !mine.iter().any(|e| e.def == l))
             };
+            // Normal: one base defence, its only detector: as soon as its factories stand once
+            // a stealth unit has hit it, else after its tech buildings (earlier, it cost wins).
+            let turret = builder_def
+                .builds
+                .iter()
+                .copied()
+                .find(|&b| rules.def(b).role() == Some(BuildingRole::Defense))
+                .filter(|&b| !mine.iter().any(|e| e.def == b));
             let want = if depots.is_empty() {
                 supply
             } else if world.player(me).faction.uses_power() && count(|r| r == BuildingRole::PowerPlant) == 0 {
@@ -306,10 +322,14 @@ impl Ai {
                 Some(f)
             } else if expand_to.is_some() {
                 supply
+            } else if smart && world.player(me).hit_by_stealth && turret.is_some() {
+                turret
             } else if smart && rich {
                 factories.last().copied()
             } else if smart && lab.is_some() && world.player(me).credits >= 3_000 {
                 lab
+            } else if smart && turret.is_some() && world.player(me).credits >= 3_000 {
+                turret
             } else if smart && airfield.is_some() && world.player(me).credits >= 3_000 {
                 airfield
             } else {
@@ -422,9 +442,13 @@ impl Ai {
             out.push(CommandKind::Gather { units: idle, pile });
         }
 
-        // 5. Army. Units inside a garrison hold it; they aren't sent anywhere.
-        let army: Vec<_> =
-            mine.iter().copied().filter(|e| rules.def(e.def).weapon().is_some() && e.inside.is_none()).collect();
+        // 5. Army: armed units (not base defences, which don't move). Units inside a garrison
+        // hold it; they aren't sent anywhere.
+        let army: Vec<_> = mine
+            .iter()
+            .copied()
+            .filter(|e| rules.def(e.def).is_unit() && rules.def(e.def).weapon().is_some() && e.inside.is_none())
+            .collect();
         let home = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos));
         if self.level == AiLevel::Easy {
             self.waves(world, &mine, &army, home, out);
@@ -438,11 +462,11 @@ impl Ai {
     /// shoot it anyway if it comes within range.
     fn waves(&self, world: &World, mine: &[&Entity], army: &[&Entity], home: Option<Vec2>, out: &mut Vec<CommandKind>) {
         let (me, rules) = (self.player, world.rules);
-        let vision = world.vision(me);
         let intruder = world.entities().find(|e| {
             e.owner.is_some_and(|o| o != me)
+                && rules.def(e.def).is_unit()
                 && rules.def(e.def).weapon().is_some()
-                && vision.is_visible(e.pos)
+                && world.sees(me, e)
                 && mine.iter().any(|b| rules.def(b.def).is_building() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
         });
         if let Some(intruder) = intruder {
@@ -481,6 +505,7 @@ impl Ai {
             .filter(|e| {
                 e.owner == Some(me)
                     && e.order == Order::Idle
+                    && rules.def(e.def).is_unit()
                     && rules.def(e.def).weapon().is_some()
                     && e.inside.is_none()
             })
@@ -509,10 +534,8 @@ impl Ai {
         let (me, rules) = (self.player, world.rules);
         let Some(home) = home else { return };
         let vision = world.vision(me);
-        let enemies: Vec<&Entity> = world
-            .entities()
-            .filter(|e| e.owner.is_some_and(|o| o != me) && e.hp > 0 && vision.is_visible(e.pos))
-            .collect();
+        let enemies: Vec<&Entity> =
+            world.entities().filter(|e| e.owner.is_some_and(|o| o != me) && e.hp > 0 && world.sees(me, e)).collect();
         let sum = |units: &mut dyn Iterator<Item = &&Entity>| units.map(|e| strength(world, e)).sum::<i64>();
         let seen_now = sum(&mut enemies.iter());
         // Slow fade (a 64th per second): an army that walked out of sight still exists.

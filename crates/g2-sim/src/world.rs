@@ -23,6 +23,9 @@ const REPLAN: Fx = Fx::from_int(8);
 /// The `shooter` of shells from a general's power: no entity fired them. Never a live id
 /// (generation `u32::MAX` is never reached), so `World::entity` finds nothing for it.
 pub const POWER_SOURCE: EntityId = EntityId { index: u32::MAX, generation: u32::MAX };
+/// A stealth unit that fires is revealed for this long: the alpha's `StealthDisableOnFire`
+/// (2.5 s on every weapon).
+pub const STEALTH_REVEAL_TICKS: u32 = 5 * TICKS_PER_SECOND / 2;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Player {
@@ -37,6 +40,8 @@ pub struct Player {
     pub power_ready: Option<u32>,
     /// Researched upgrades, in ascending id order.
     pub upgrades: Vec<UpgradeId>,
+    /// A stealth unit has hit one of this player's entities: they know stealth is in play.
+    pub hit_by_stealth: bool,
 }
 
 /// Running totals for the end-of-match screen. Output only: nothing in the simulation reads
@@ -240,6 +245,7 @@ impl World {
                 defeated: false,
                 power_ready: p.general.and_then(|g| rules.general(g).power).map(|pw| pw.first_ticks),
                 upgrades: Vec::new(),
+                hit_by_stealth: false,
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
             // The onslaught has no base: its waves are all there is of it.
@@ -281,6 +287,7 @@ impl World {
             last_hit: None,
             experience: 0,
             inside: None,
+            revealed_until: None,
             route: Route::default(),
         }
     }
@@ -551,8 +558,12 @@ impl World {
         self.refresh_nav();
         self.spawn_onslaught_waves();
         for id in self.entities.ids() {
-            if self.entities.get(id).is_some_and(|e| self.rules.def(e.def).is_unit()) {
+            let Some(e) = self.entities.get(id) else { continue };
+            let d = self.rules.def(e.def);
+            if d.is_unit() {
                 self.update_unit(id);
+            } else if d.role() == Some(BuildingRole::Defense) {
+                self.update_defense(id);
             }
         }
         // Shells fired on earlier ticks land before this tick's shots are applied, so their
@@ -594,6 +605,22 @@ impl World {
     /// What `player` sees and has explored.
     pub fn vision(&self, player: PlayerId) -> &crate::fog::Vision {
         &self.visions[player.0 as usize]
+    }
+
+    /// Whether `player` sees entity `e` now: its cell is in view and, if it is stealthy, a
+    /// detector of theirs has it in range or it fired lately. Own entities are always seen.
+    pub fn sees(&self, player: PlayerId, e: &Entity) -> bool {
+        if e.owner == Some(player) {
+            return true;
+        }
+        let v = &self.visions[player.0 as usize];
+        v.is_visible(e.pos) && (!self.hidden(e) || v.detected.contains(&e.id))
+    }
+
+    /// Whether `e` is stealthed right now: a stealth unit that hasn't fired in the last
+    /// `STEALTH_REVEAL_TICKS`.
+    pub fn hidden(&self, e: &Entity) -> bool {
+        self.rules.def(e.def).stealth && e.revealed_until.is_none_or(|t| self.tick >= t)
     }
 
     fn apply_due_commands(&mut self) {
@@ -1375,7 +1402,14 @@ impl World {
                 }
             },
             Order::Gather { pile, phase } => self.gather_step(id, pile, phase, pos, speed, radius, owner),
-            Order::Attack { target } => match (weapon, self.live_enemy(owner, target).map(|t| (t.pos, t.def))) {
+            // A target that slips back into stealth (no detector, no recent shot) is lost; one
+            // that only walks into the fog is still chased.
+            Order::Attack { target } => match (
+                weapon,
+                self.live_enemy(owner, target)
+                    .filter(|t| !self.hidden(t) || self.visions[owner.0 as usize].detected.contains(&t.id))
+                    .map(|t| (t.pos, t.def)),
+            ) {
                 // A weapon that can't reach the target's domain (a tank at a helicopter) drops
                 // the order, as an attack order on it is refused in the first place.
                 (Some(w), Some((tpos, tdef))) if w.targets.hits(self.rules.def(tdef).flies()) => {
@@ -1407,12 +1441,11 @@ impl World {
                     // Keep the current target while it lives, stays visible and within
                     // acquisition range (a leash: a guard isn't dragged across the map, nor
                     // into the fog); else look around.
-                    let vision = &self.visions[owner.0 as usize];
                     let target = engaged
                         .filter(|&t| {
                             self.live_enemy(owner, t).is_some_and(|e| {
                                 let d = self.rules.def(e.def);
-                                vision.is_visible(e.pos)
+                                self.sees(owner, e)
                                     && w.range_vs(d.flies())
                                         .is_some_and(|r| e.pos.distance(pos) - d.radius <= r + ACQUIRE)
                             })
@@ -1513,6 +1546,24 @@ impl World {
         }
     }
 
+    /// A finished, powered base defence fires at the nearest enemy it sees in its band, from
+    /// its edge: range counts from its footprint, as a garrison's does. It never moves.
+    fn update_defense(&mut self, id: EntityId) {
+        let e = self.entities.get_mut(id).unwrap();
+        e.cooldown = e.cooldown.saturating_sub(1);
+        let e = self.entities.get(id).unwrap();
+        let d = self.rules.def(e.def);
+        let (Some(mut w), Some(owner)) = (d.weapon(), e.owner) else { return };
+        if !e.is_complete() || !e.powered {
+            return;
+        }
+        w.range += d.radius;
+        w.air_range = w.air_range.map(|r| r + d.radius);
+        if let Some(t) = self.enemy_in_band(owner, e.pos, w, Fx::ZERO) {
+            self.engage(id, t, w, Fx::ZERO);
+        }
+    }
+
     fn start_deploy(&mut self, id: EntityId, ticks: u32) {
         let e = self.entities.get_mut(id).unwrap();
         e.deploy = if ticks == 0 { DeployState::Deployed } else { DeployState::Deploying(ticks) };
@@ -1533,11 +1584,11 @@ impl World {
         self.entities.get(target).filter(|t| t.owner.is_some_and(|o| o != owner) && t.hp > 0 && t.inside.is_none())
     }
 
-    /// Whether `owner` may order an attack on `target`: a live enemy it sees now, or an enemy
-    /// building it remembers.
+    /// Whether `owner` may order an attack on `target`: a live enemy it sees now (a stealth
+    /// unit only while detected or revealed), or an enemy building it remembers.
     fn attackable(&self, owner: PlayerId, target: EntityId) -> bool {
         let vision = &self.visions[owner.0 as usize];
-        self.live_enemy(owner, target).is_some_and(|t| vision.is_visible(t.pos) || vision.memory.contains_key(&target))
+        self.live_enemy(owner, target).is_some_and(|t| self.sees(owner, t) || vision.memory.contains_key(&target))
     }
 
     /// The visible enemy whose edge is nearest `pos`, in the band weapon `w` can fire at: of a
@@ -1547,7 +1598,6 @@ impl World {
     /// entity id.
     fn enemy_in_band(&self, owner: PlayerId, pos: Vec2, w: crate::defs::Weapon, extra: Fx) -> Option<EntityId> {
         let near = w.shell.map_or(Fx::ZERO, |s| s.min_range);
-        let vision = &self.visions[owner.0 as usize];
         let mut best: Option<(bool, Fx, EntityId)> = None;
         for e in self.entities.iter() {
             if !e.owner.is_some_and(|o| o != owner) || e.hp <= 0 || e.inside.is_some() {
@@ -1562,7 +1612,7 @@ impl World {
                 continue;
             }
             let gap = (e.pos.distance(pos) - d.radius).max(Fx::ZERO);
-            if gap > reach || gap < near || !vision.is_visible(e.pos) {
+            if gap > reach || gap < near || !self.sees(owner, e) {
                 continue;
             }
             let key = (!d.is_unit(), gap, e.id);
@@ -1596,7 +1646,14 @@ impl World {
         if !ready || !in_band(w, gap, flying) {
             return pos;
         }
-        self.entities.get_mut(id).unwrap().cooldown = w.cooldown_ticks;
+        let tick = self.tick;
+        let stealthy = self.rules.def(self.entities.get(id).unwrap().def).stealth;
+        let e = self.entities.get_mut(id).unwrap();
+        e.cooldown = w.cooldown_ticks;
+        // Firing gives a stealth unit away for a while.
+        if stealthy {
+            e.revealed_until = Some(tick + STEALTH_REVEAL_TICKS);
+        }
         match w.shell {
             None => {
                 let damage = w.damage_vs(armour) + self.garrison_bonus_vs(w.garrison_bonus, target);
@@ -1745,6 +1802,11 @@ impl World {
             let killed = was_alive && t.hp <= 0;
             let at = t.pos;
             let (victim, def) = (t.owner, t.def);
+            if let Some(v) = victim
+                && self.entities.get(shooter).is_some_and(|s| self.rules.def(s.def).stealth)
+            {
+                self.players[v.0 as usize].hit_by_stealth = true;
+            }
             self.events.push(Event::Hit { shooter, target, at, damage, killed, splash, target_def: def });
             if killed {
                 self.stats[by.0 as usize].kills += 1;

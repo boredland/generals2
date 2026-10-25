@@ -62,6 +62,9 @@ pub mod ids {
     pub const SHANTY: DefId = DefId(47);
     pub const TOWN_HOUSE: DefId = DefId(48);
     pub const URBAN_BLOCK: DefId = DefId(49);
+    pub const EU_GUN_TURRET: DefId = DefId(50);
+    pub const APA_FLAME_TURRET: DefId = DefId(51);
+    pub const GLA_ROCKET_SITE: DefId = DefId(52);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -120,7 +123,12 @@ const fn building(
     Def {
         name,
         faction: Some(faction),
-        class: Class::Building { power, power_radius: Fx::from_int(if power > 0 { 60 } else { 0 }), role },
+        class: Class::Building {
+            power,
+            power_radius: Fx::from_int(if power > 0 { 60 } else { 0 }),
+            role,
+            weapon: None,
+        },
         hp,
         armour: Armour::Structure,
         cost,
@@ -133,7 +141,34 @@ const fn building(
         experience: 0,
         veterancy: None,
         garrison: None,
+        stealth: false,
+        detection: Fx::ZERO,
     }
+}
+
+/// A base defence firing `weapon`, revealing enemy stealth within `detection` of its centre.
+#[allow(clippy::too_many_arguments)]
+const fn defense(
+    name: &'static str,
+    faction: Faction,
+    power: i32,
+    hp: i32,
+    cost: Cost,
+    build_secs: u32,
+    radius: i64,
+    weapon: Weapon,
+    detection: i64,
+) -> Def {
+    let mut d = building(name, faction, BuildingRole::Defense, power, hp, cost, build_secs, radius, NONE);
+    d.class = Class::Building { power, power_radius: Fx::ZERO, role: BuildingRole::Defense, weapon: Some(weapon) };
+    d.detection = Fx::from_int(detection);
+    d
+}
+
+/// `d` is hidden from enemies without a detector in range (the alpha's passive stealth).
+const fn stealthy(mut d: Def) -> Def {
+    d.stealth = true;
+    d
 }
 
 /// `d` researches `upgrades`, shown after the units it trains.
@@ -172,6 +207,8 @@ const fn unit(
         experience: 1,
         veterancy: None,
         garrison: None,
+        stealth: false,
+        detection: Fx::ZERO,
     }
 }
 
@@ -216,6 +253,8 @@ const fn soldier(
         experience: 1,
         veterancy: None,
         garrison: None,
+        stealth: false,
+        detection: Fx::ZERO,
     }
 }
 
@@ -319,7 +358,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 50] = [
+static DEFS: [Def; 53] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -336,6 +375,8 @@ static DEFS: [Def; 50] = [
         experience: 0,
         veterancy: None,
         garrison: None,
+        stealth: false,
+        detection: Fx::ZERO,
     },
     Def {
         name: "Oil Well",
@@ -353,6 +394,8 @@ static DEFS: [Def; 50] = [
         experience: 0,
         veterancy: None,
         garrison: None,
+        stealth: false,
+        detection: Fx::ZERO,
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
@@ -378,7 +421,17 @@ static DEFS: [Def; 50] = [
             14,
             true,
             None,
-            &[EU_SUPPLY, EU_POWER, EU_DERRICK, EU_BARRACKS, EU_FACTORY, EU_TECH_LAB, EU_ADVANCED_LAB, EU_AIRFIELD],
+            &[
+                EU_SUPPLY,
+                EU_POWER,
+                EU_DERRICK,
+                EU_BARRACKS,
+                EU_FACTORY,
+                EU_TECH_LAB,
+                EU_ADVANCED_LAB,
+                EU_AIRFIELD,
+                EU_GUN_TURRET,
+            ],
         ),
         Armour::Heavy,
     ),
@@ -420,7 +473,7 @@ static DEFS: [Def; 50] = [
         13,
         true,
         None,
-        &[APA_SUPPLY, APA_POWER, APA_DERRICK, APA_BARRACKS, APA_FACTORY, APA_AIRFIELD],
+        &[APA_SUPPLY, APA_POWER, APA_DERRICK, APA_BARRACKS, APA_FACTORY, APA_AIRFIELD, APA_FLAME_TURRET],
     ),
     // src: Supply center collector cap APA 5.
     building(
@@ -461,7 +514,7 @@ static DEFS: [Def; 50] = [
         16,
         true,
         Some(HARVEST_WORKER),
-        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY, GLA_SALVAGE_BAY],
+        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY, GLA_SALVAGE_BAY, GLA_ROCKET_SITE],
     ),
     // src: Supply center collector cap GLA 8.
     building(
@@ -657,7 +710,8 @@ static DEFS: [Def; 50] = [
     // Placeholder throughout: no GLA anti-armour infantry is archived. A Rabble-priced squad
     // with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks. The
     // alpha's RPG targets ground and air alike (`TargetType` 0), at the same reach.
-    ranked(
+    // src: stealthed, the alpha's passive `GLA_RocketSoldier_Stealth`, unlocked from the start.
+    stealthy(ranked(
         soldier(
             "GLA RPG Squad",
             Faction::Gla,
@@ -671,7 +725,7 @@ static DEFS: [Def; 50] = [
         ),
         14,
         93,
-    ),
+    )),
     // src: Armored Personnel Carrier hp 390, Light, $435, 14.66 s, EU war factory; machine gun
     // 46, cooldown 2.25, range 45; land speed 19. Carries two infantry squads who can't fire
     // from inside (the alpha's `RtsGarrisonComponentData`: capacity 2, no attack from garrison).
@@ -815,6 +869,39 @@ static DEFS: [Def; 50] = [
     civilian("Shanty", 600, 2, 2),
     civilian("Town House", 800, 3, 3),
     civilian("Urban Block", 1200, 4, 5),
+    // ---- Base defences ------------------------------------------------------------------
+    // src: the alpha's base defences, each the first ground turret its builder lists: EU
+    // es_basedefensegun (autocannon 26, +8 vs. infantry, every 0.8 s, range 57, ground only;
+    // hp 450, $450, 18 s, 20 power; detects stealth within 50), APA as_basedefenseflame
+    // (flamethrower 44, +20 vs. infantry and +60 vs. garrisoned buildings, every 2 s, range 45;
+    // hp 500, $500, 18 s, 20 power; detects within 40), GLA gs_basedefenserocket, the wiki's
+    // Rocket Site (RPG 40, +28 vs. heavy, every 2.3 s, range 47 against the ground and 57
+    // against aircraft, where the alpha fires a heavier second rocket; hp 400, $300, 18 s;
+    // detects within 45). Ranges count from the edge, as a garrison's do. The EU and APA names
+    // and every footprint are placeholders.
+    defense("EU Gun Turret", Faction::Eu, -20, 450, credits(450), 18, 3, weapon(26, [8, 0, 0, 0], 57, 8), 50),
+    defense(
+        "APA Flame Turret",
+        Faction::Apa,
+        -20,
+        500,
+        credits(500),
+        18,
+        3,
+        garrison_buster(weapon(44, [20, 0, 0, 0], 45, 20), 60),
+        40,
+    ),
+    defense(
+        "GLA Rocket Site",
+        Faction::Gla,
+        0,
+        400,
+        credits(300),
+        18,
+        4,
+        anti_air(weapon(40, [0, 0, 28, 0], 47, 23), 57),
+        45,
+    ),
 ];
 
 /// A neutral civilian building infantry can garrison: `capacity` places, firing out with the
@@ -823,7 +910,7 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
     Def {
         name,
         faction: None,
-        class: Class::Building { power: 0, power_radius: Fx::ZERO, role: BuildingRole::Civilian },
+        class: Class::Building { power: 0, power_radius: Fx::ZERO, role: BuildingRole::Civilian, weapon: None },
         hp,
         armour: Armour::Structure,
         cost: credits(0),
@@ -836,6 +923,8 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
         experience: 0,
         veterancy: None,
         garrison: Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(8) }),
+        stealth: false,
+        detection: Fx::ZERO,
     }
 }
 
@@ -1104,6 +1193,9 @@ mod tests {
             (SHANTY, "Shanty"),
             (TOWN_HOUSE, "Town House"),
             (URBAN_BLOCK, "Urban Block"),
+            (EU_GUN_TURRET, "EU Gun Turret"),
+            (APA_FLAME_TURRET, "APA Flame Turret"),
+            (GLA_ROCKET_SITE, "GLA Rocket Site"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

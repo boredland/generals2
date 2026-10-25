@@ -329,6 +329,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
     let w = r * 1.75;
     match (faction, role) {
         (_, BuildingRole::Civilian) => civilian(&mut p, r),
+        (_, BuildingRole::Defense) => turret(&mut p, faction, r),
         (_, BuildingRole::OilDerrick { .. }) => derrick(&mut p, faction, r),
         (Faction::Gla, BuildingRole::SupplyCenter { .. }) => stash(&mut p, w),
         (Faction::Gla, BuildingRole::CommandCenter) => fortress(&mut p, w),
@@ -351,6 +352,47 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
         (_, BuildingRole::Lab) => lab(&mut p, faction, w),
     }
     p
+}
+
+/// A base defence on a concrete pad: EU a squat armoured box with a long twin autocannon, APA
+/// a round bunker with a stubby flame nozzle and fuel tanks, GLA a sandbag ring around a
+/// rocket rack on a scrap frame. Team colour on the gun housing.
+fn turret(p: &mut Vec<Part>, faction: Faction, r: f32) {
+    let w = r * 1.6;
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w, 0.3, w));
+    match faction {
+        Faction::Eu => {
+            p.push(block(Slot::Hull, 0.0, 0.0, 0.3, w * 0.75, 1.4, w * 0.75));
+            p.push(cyl(Slot::Dark, Vec3::new(0.0, 1.85, 0.0), Vec3::new(w * 0.55, 0.3, w * 0.55)));
+            p.push(block(Slot::Panel, 0.0, 0.0, 2.0, w * 0.5, 0.8, w * 0.6));
+            p.push(block(Slot::Team, 0.0, -w * 0.05, 2.8, w * 0.45, 0.12, w * 0.3));
+            for x in [-0.15, 0.15] {
+                p.push(block(Slot::Dark, x * w, w * 0.45, 2.25, 0.18, 0.18, w * 0.65));
+            }
+            hazard_trim(p, w * 0.75, w * 0.75, 1.68);
+        }
+        Faction::Apa => {
+            p.push(cyl(Slot::Hull, Vec3::new(0.0, 1.0, 0.0), Vec3::new(w * 0.8, 1.4, w * 0.8)));
+            p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.95, 0.0), Vec3::new(w * 0.6, 0.5, w * 0.6)));
+            p.push(block(Slot::Team, 0.0, 0.0, 2.2, w * 0.4, 0.12, w * 0.4));
+            p.push(block(Slot::Dark, 0.0, w * 0.4, 1.75, 0.45, 0.45, w * 0.35));
+            for x in [-0.28, 0.28] {
+                p.push(cyl(Slot::Crate(4), Vec3::new(x * w, 0.9, -w * 0.32), Vec3::new(0.7, 1.2, 0.7)));
+            }
+        }
+        Faction::Gla => {
+            sandbags(p, -w * 0.42, w * 0.42, w * 0.42, w * 0.42, 0.3, 5);
+            sandbags(p, -w * 0.42, -w * 0.42, -w * 0.42, w * 0.3, 0.3, 4);
+            sandbags(p, w * 0.42, -w * 0.42, w * 0.42, w * 0.3, 0.3, 4);
+            p.push(block(Slot::Wood, 0.0, 0.0, 0.3, w * 0.5, 1.0, w * 0.5));
+            p.push(block(Slot::Crate(2), 0.0, 0.0, 1.3, w * 0.4, 0.5, w * 0.6));
+            for x in [-0.12, 0.0, 0.12] {
+                p.push(cyl(Slot::Dark, Vec3::new(x * w, 1.95, w * 0.12), Vec3::new(0.32, 0.8, 0.32)));
+            }
+            p.push(block(Slot::Team, 0.0, -w * 0.25, 1.8, w * 0.3, 0.12, 0.3));
+            scrap(p, -w * 0.25, -w * 0.25, 0.3, w * 0.15, w * 0.15, 17);
+        }
+    }
 }
 
 /// Command center: a stepped mass with a recessed entry, a landing pad on the roof and the

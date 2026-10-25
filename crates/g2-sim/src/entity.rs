@@ -113,6 +113,8 @@ pub struct Entity {
     /// The building or vehicle this unit is inside, if any. Inside it neither moves nor can be
     /// targeted; its position follows the container's.
     pub inside: Option<EntityId>,
+    /// Stealthy units: the tick until which firing keeps them revealed. `None` when not set.
+    pub revealed_until: Option<u32>,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -264,6 +266,7 @@ mod tests {
             last_hit: None,
             experience: 0,
             inside: None,
+            revealed_until: None,
             route: Route::default(),
         }
     }

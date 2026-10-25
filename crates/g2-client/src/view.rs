@@ -31,6 +31,10 @@ struct Scaffold;
 #[derive(Component)]
 struct Outriggers;
 
+/// A dark ring under an own stealth unit, shown while it is hidden from the enemy.
+#[derive(Component)]
+struct StealthHalo;
+
 #[derive(Component)]
 struct Rotor;
 
@@ -285,6 +289,18 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
             c.spawn((Outriggers, Transform::default(), Visibility::Hidden))
                 .with_children(|s| spawn_parts(s, assets, faction, team, &legs));
         }
+        // Stealth units: a dark ring on the ground while hidden, so their owner sees which
+        // ones the enemy can't.
+        if def.stealth {
+            let r = def.radius.to_f32() * 1.6;
+            c.spawn((
+                StealthHalo,
+                Mesh3d(assets.ring.clone()),
+                MeshMaterial3d(assets.materials[&(Some(Faction::Gla), SlotKey::from(Slot::Dark))].clone()),
+                Transform::from_xyz(0.0, 0.12, 0.0).with_scale(Vec3::new(r, 1.0, r)),
+                Visibility::Hidden,
+            ));
+        }
     });
     root.id()
 }
@@ -340,9 +356,10 @@ fn sync_entities(
     mut bodies: Query<&mut Transform, (With<Body>, Without<SimRef>, Without<Scaffold>, Without<Outriggers>)>,
     mut scaffolds: Query<&mut Visibility, (With<Scaffold>, Without<SimRef>, Without<Outriggers>)>,
     mut legs: Query<(&mut Transform, &mut Visibility), (With<Outriggers>, Without<SimRef>, Without<Body>)>,
+    mut halos: Query<&mut Visibility, (With<StealthHalo>, Without<SimRef>, Without<Scaffold>, Without<Outriggers>)>,
     mut root_tf: Query<
         (&mut Transform, &mut Visibility),
-        (With<SimRef>, Without<Body>, Without<Scaffold>, Without<Outriggers>),
+        (With<SimRef>, Without<Body>, Without<Scaffold>, Without<Outriggers>, Without<StealthHalo>),
     >,
 ) {
     let world = &sim.world;
@@ -382,6 +399,8 @@ fn sync_entities(
             (g2_sim::entity::DeployState::Packing(t), Some(d)) => t as f32 / d.ticks.max(1) as f32,
             _ => 0.0,
         };
+        // Hidden from the enemy right now: the owner's ring shows it.
+        let hidden = e.owner == Some(sim.local) && world.hidden(e);
         for &child in children {
             if let Ok(mut tf) = bodies.get_mut(child) {
                 tf.scale = Vec3::new(1.0, rise, 1.0);
@@ -392,6 +411,9 @@ fn sync_entities(
             if let Ok((mut tf, mut v)) = legs.get_mut(child) {
                 tf.scale = Vec3::new(0.4 + 0.6 * out, 1.0, 1.0);
                 v.set_if_neq(if out > 0.0 { Visibility::Inherited } else { Visibility::Hidden });
+            }
+            if let Ok(mut v) = halos.get_mut(child) {
+                v.set_if_neq(if hidden { Visibility::Inherited } else { Visibility::Hidden });
             }
         }
     }

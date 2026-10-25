@@ -120,6 +120,9 @@ fn model_for(def: &str) -> Option<&'static str> {
         "Shanty" => "civilian/africa/afri_cb_shanty/afri_cb_shanty_05_mesh",
         "Town House" => "civilian/africa/afri_cb_town/afri_cb_town_09_mesh",
         "Urban Block" => "civilian/africa/afri_cb_urban/afri_cb_urban_03_mesh",
+        "EU Gun Turret" => "_eur/es_basedefensegun/es_basedefensegun_mesh",
+        "APA Flame Turret" => "_asia/as_basedefenseflame/as_basedefenseflame_mesh",
+        "GLA Rocket Site" => "_gla/gs_basedefenserocket/gs_basedefenserocket_mesh",
         _ => return None,
     })
 }

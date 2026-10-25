@@ -41,6 +41,9 @@ pub struct Vision {
     /// Enemy buildings last seen on explored cells, keyed by entity. A building seen destroyed
     /// (its cell visible, the building gone) is forgotten.
     pub memory: BTreeMap<EntityId, Seen>,
+    /// Enemy stealth units one of this player's detectors has in range now. Recomputed every
+    /// tick from positions, so it is not hashed.
+    pub detected: std::collections::BTreeSet<EntityId>,
 }
 
 impl Vision {
@@ -48,7 +51,14 @@ impl Vision {
         let w = (width.floor_int() / CELL + 1) as i32;
         let h = (height.floor_int() / CELL + 1) as i32;
         let n = (w * h) as usize;
-        Vision { w, h, visible: vec![false; n], explored: vec![false; n], memory: BTreeMap::new() }
+        Vision {
+            w,
+            h,
+            visible: vec![false; n],
+            explored: vec![false; n],
+            memory: BTreeMap::new(),
+            detected: Default::default(),
+        }
     }
 
     fn cell(&self, p: Vec2) -> Option<usize> {
@@ -134,10 +144,12 @@ pub fn sight(rules: &Rules, def: DefId, complete: bool, acquire: Fx) -> Fx {
     }
 }
 
-/// Recomputes every player's visible cells and updates explored cells and building memory.
+/// Recomputes every player's visible cells, the enemy stealth units their detectors reveal,
+/// and updates explored cells and building memory.
 pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquire: Fx) {
     for v in visions.iter_mut() {
         v.visible.fill(false);
+        v.detected.clear();
     }
     for e in entities.iter() {
         let Some(owner) = e.owner else { continue };
@@ -147,6 +159,23 @@ pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquir
         let r = sight(rules, e.def, e.is_complete(), acquire);
         if let Some(v) = visions.get_mut(owner.0 as usize) {
             v.reveal(e.pos, r);
+        }
+    }
+    let detectors: Vec<(PlayerId, Vec2, Fx)> = entities
+        .iter()
+        .filter(|e| e.hp > 0 && e.is_complete() && e.inside.is_none())
+        .filter_map(|e| Some((e.owner?, e.pos, rules.def(e.def).detection)))
+        .filter(|&(_, _, r)| r > Fx::ZERO)
+        .collect();
+    for e in entities.iter().filter(|e| e.hp > 0 && rules.def(e.def).stealth) {
+        let Some(owner) = e.owner else { continue };
+        for &(p, at, r) in &detectors {
+            if p != owner
+                && at.distance(e.pos) <= r + rules.def(e.def).radius
+                && let Some(v) = visions.get_mut(p.0 as usize)
+            {
+                v.detected.insert(e.id);
+            }
         }
     }
     for (p, v) in visions.iter_mut().enumerate() {

@@ -74,12 +74,14 @@ impl Sim {
     }
 
     /// Whether the local player sees `e` right now: own entities always, neutral resources once
-    /// their spot is explored (they never change hands or move), enemies only where visible.
+    /// their spot is explored (they never change hands or move), enemies only where visible,
+    /// and a stealthed enemy only while one of their detectors has it or it just fired. With
+    /// the fog off every enemy shows, stealthed or not.
     pub fn sees(&self, e: &g2_sim::Entity) -> bool {
         let v = self.world.vision(self.local);
         !self.fog
             || match e.owner {
-                Some(o) => o == self.local || v.is_visible(e.pos),
+                Some(_) => self.world.sees(self.local, e),
                 None => v.is_explored(e.pos),
             }
     }

@@ -59,6 +59,8 @@ pub enum Class {
         /// Sources power consumers whose centre lies within this distance.
         power_radius: Fx,
         role: BuildingRole,
+        /// Base defences fire this from where they stand.
+        weapon: Option<Weapon>,
     },
     SupplyPile,
     OilWell,
@@ -175,6 +177,8 @@ pub enum BuildingRole {
     /// A neutral building on the map (houses, shops): no production and no power. Infantry may
     /// garrison it; while they do, it belongs to their player.
     Civilian,
+    /// A base defence: fires its weapon from where it stands, while powered.
+    Defense,
 }
 
 #[derive(Clone, Debug)]
@@ -201,6 +205,12 @@ pub struct Def {
     pub veterancy: Option<Veterancy>,
     /// Units may enter it (`Garrison`); `None` for everything else.
     pub garrison: Option<Garrison>,
+    /// Hidden from enemies unless a detector of theirs is in range (the alpha's passive
+    /// stealth abilities). Firing reveals it for `STEALTH_REVEAL_TICKS`.
+    pub stealth: bool,
+    /// Reveals enemy stealth within this distance of its centre (the alpha's
+    /// `StealthDetectionRange`); zero for everything that can't.
+    pub detection: Fx,
 }
 
 /// What a unit gains by rank, after the alpha's `RtsVeterancyComponentData`: three ranks at
@@ -224,9 +234,10 @@ impl Def {
         matches!(self.class, Class::Unit { .. })
     }
 
+    /// The weapon a unit, or a base defence, fires.
     pub fn weapon(&self) -> Option<Weapon> {
         match self.class {
-            Class::Unit { weapon, .. } => weapon,
+            Class::Unit { weapon, .. } | Class::Building { weapon, .. } => weapon,
             _ => None,
         }
     }

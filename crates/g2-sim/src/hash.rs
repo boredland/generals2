@@ -81,6 +81,10 @@ impl World {
             for u in &p.upgrades {
                 h.u64(0x7570_0000 | u.0 as u64);
             }
+            // Only once set, so matches without stealth hash as before.
+            if p.hit_by_stealth {
+                h.u64(0x6873_7468);
+            }
         }
         for v in &self.visions {
             v.hash_into(|x| h.u64(x));
@@ -116,6 +120,10 @@ impl World {
             h.u64(e.income_ticks as u64);
             h.u64(e.cooldown as u64);
             h.u64(e.experience as u64);
+            // Only once a stealth unit has fired, so matches without stealth hash as before.
+            if let Some(t) = e.revealed_until {
+                h.u64(0x7276_0000_0000 | t as u64);
+            }
             // Only for units inside something, so matches without garrisons hash as before.
             if let Some(c) = e.inside {
                 h.u64(0x6761_7272);

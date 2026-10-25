@@ -701,6 +701,9 @@ fn update_fields(
                             s += " (E: evacuate)";
                         }
                     }
+                    if d.stealth {
+                        s += if world.hidden(e) { "  -  stealthed" } else { "  -  REVEALED" };
+                    }
                     s
                 })
             }

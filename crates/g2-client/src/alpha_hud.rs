@@ -162,6 +162,16 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
         "GLA Toxin Chopper" => {
             ("BuildButtons/Active/GLA/GU_LightChemicalHelo", "UnitPortraits/GLA/Vehicles/GU_LightChemicalHelo_Portrait")
         }
+        "EU Gun Turret" => {
+            ("BuildButtons/Active/EU/ES_BaseDefenseGun", "UnitPortraits/EU/Structures/ES_BaseDefenseGun_Portrait")
+        }
+        "APA Flame Turret" => {
+            ("BuildButtons/Active/APA/AS_BaseDefenseFlame", "UnitPortraits/APA/Structures/AS_BaseDefenseFlame_Portrait")
+        }
+        "GLA Rocket Site" => (
+            "BuildButtons/Active/GLA/GS_BaseDefenseRocket",
+            "UnitPortraits/GLA/Structures/GS_BaseDefenseRocket_Portrait",
+        ),
         _ => return None,
     })
 }
