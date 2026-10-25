@@ -174,10 +174,11 @@ pub fn hold(app: &mut App, cache: &crate::alpha::Cache, i: usize) -> bool {
 #[derive(Component)]
 struct HeldFrame;
 
-/// True unless a held frame is still loading (or failed to).
+/// True unless a held frame is still loading (or failed to). Without `hold` the component
+/// was never registered, so there is nothing to wait for.
 pub fn held_frame_loaded(world: &World) -> bool {
     let Some(server) = world.get_resource::<AssetServer>() else { return true };
-    let mut q = world.try_query_filtered::<&ImageNode, With<HeldFrame>>().unwrap();
+    let Some(mut q) = world.try_query_filtered::<&ImageNode, With<HeldFrame>>() else { return true };
     q.iter(world).all(|n| server.is_loaded_with_dependencies(&n.image))
 }
 
@@ -206,6 +207,16 @@ mod tests {
             [at(0), at(33), at(34), at(66), at(67), at(99), at(100)],
             [Some(0), Some(0), Some(1), Some(1), Some(2), Some(2), None]
         );
+    }
+
+    /// The headless capture asks whether a held movie frame has loaded before every
+    /// screenshot, `--movie-frame` or not: with no frame ever held there is nothing to wait
+    /// for, and the answer must be yes rather than a crash.
+    #[test]
+    fn nothing_held_means_nothing_to_wait_for() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default())).init_asset::<Image>();
+        assert!(held_frame_loaded(app.world()));
     }
 
     /// Against a real import (`G2_ALPHA_CACHE`; skipped when unset): in front of the main
