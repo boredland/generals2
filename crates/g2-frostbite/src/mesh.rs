@@ -187,11 +187,12 @@ impl Le<'_> {
     }
 }
 
-/// A binary glTF (`.glb`) with one mesh, a primitive per drawn subset, and an embedded
-/// PNG per material when `textures[material_index]` is given. Frostbite is left-handed
-/// and models face +Z (a tank's barrel points there), as the client's do; glTF is
-/// right-handed, so X is negated (keeping +Z forward) and the winding flipped.
-pub fn to_glb(mesh: &MeshSet, textures: &[Option<Vec<u8>>]) -> Vec<u8> {
+/// A binary glTF (`.glb`) with one mesh and a primitive per drawn subset. A material whose
+/// `textures[material_index]` is given uses that image, by URI relative to the `.glb` (the
+/// import writes each texture once and every model that uses it points there). Frostbite
+/// is left-handed and models face +Z (a tank's barrel points there), as the client's do;
+/// glTF is right-handed, so X is negated (keeping +Z forward) and the winding flipped.
+pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>]) -> Vec<u8> {
     let mut bin: Vec<u8> = Vec::new();
     let mut views = Vec::new();
     let mut accessors = Vec::new();
@@ -252,9 +253,8 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<Vec<u8>>]) -> Vec<u8> {
             .push(format!(r#"{{"bufferView":{v},"componentType":5125,"count":{},"type":"SCALAR"}}"#, s.indices.len()));
         let indices = accessors.len() - 1;
         let material = *material_of.entry(s.material_index).or_insert_with(|| {
-            let texture = textures.get(s.material_index).and_then(Option::as_ref).map(|png| {
-                let v = view(&mut bin, png, None);
-                images.push(format!(r#"{{"bufferView":{v},"mimeType":"image/png"}}"#));
+            let texture = textures.get(s.material_index).and_then(Option::as_ref).map(|uri| {
+                images.push(format!(r#"{{"uri":{},"mimeType":"image/png"}}"#, json_str(uri)));
                 images.len() - 1
             });
             let pbr = match texture {
@@ -350,14 +350,16 @@ mod tests {
             bounds: ([0.0; 3], [1.0; 3]),
             subsets: vec![triangle(false), triangle(true)],
         };
-        let glb = to_glb(&mesh, &[Some(vec![0x89, b'P', b'N', b'G'])]);
+        let glb = to_glb(&mesh, &[Some("../../textures/a b%.png".into())]);
         assert_eq!(&glb[..4], b"glTF");
         assert_eq!(u32::from_le_bytes(glb[8..12].try_into().unwrap()) as usize, glb.len());
         let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
         let json = std::str::from_utf8(&glb[20..20 + json_len]).unwrap();
-        // One primitive (the shadow proxy is dropped), one embedded image, escaped names.
+        // One primitive (the shadow proxy is dropped), one image by URI (not embedded, so
+        // the binary chunk holds geometry only), escaped names.
         assert_eq!(json.matches(r#""attributes""#).count(), 1);
-        assert!(json.contains(r#""mimeType":"image/png""#));
+        assert!(json.contains(r#""images":[{"uri":"../../textures/a b%.png","mimeType":"image/png"}]"#));
+        assert_eq!(json.matches(r#""bufferView":"#).count(), 4, "positions, normals, uvs, indices");
         assert!(json.contains(r#""name":"m\"1""#));
         // X negated, Z kept: positions span x -1..0 and z 0..2.
         let bound = |key: &str| -> Vec<f32> {

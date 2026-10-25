@@ -3,7 +3,7 @@
 //! ```text
 //! <out>/<asset path>[ <variation>].wav          every sound wave (asset paths start sound/), English
 //! <out>/movies/<asset path>.vp6, .alpha.vp6, .wav   video, alpha matte, decoded audio
-//! <out>/models/<asset path>.glb                 every mesh, diffuse map embedded
+//! <out>/models/<asset path>.glb                 every mesh, pointing at its textures below
 //! <out>/models/bounds.txt                       each model's bounding box (name, min xyz, max xyz)
 //! <out>/textures/<asset path>.png               every flat texture
 //! <out>/ui/                                     the HUD's images, layouts, fonts, as installed
@@ -186,26 +186,30 @@ fn movies(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
 
 fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
     let maps = material::diffuse_maps(alpha)?;
-    // Mesh assets name their MeshSet res `<asset path>`; a shared texture is decoded once.
-    let mut pngs: BTreeMap<String, Option<Vec<u8>>> = BTreeMap::new();
+    // Mesh assets name their MeshSet res `<asset path>`. A texture is written once, to
+    // `textures/<name>.png` (the flat texture export writes the same file), and every model
+    // that uses it points there; one that fails to decode leaves its materials untextured.
+    let mut written: BTreeMap<String, bool> = BTreeMap::new();
     // `name min.x min.y min.z max.x max.y max.z` per model, so the client sizes a model to
     // its footprint without parsing it.
     let mut bounds = String::new();
     for (name, e) in alpha.res_of(res_type::MESH_SET) {
         let result = mesh::read(alpha, e).map(|m| {
-            let textures: Vec<Option<Vec<u8>>> = maps
+            let textures: Vec<Option<String>> = maps
                 .get(name)
                 .map(Vec::as_slice)
                 .unwrap_or_default()
                 .iter()
                 .map(|t| {
                     let t = t.as_ref()?;
-                    pngs.entry(t.clone())
-                        .or_insert_with(|| {
-                            let e = alpha.res.get(t)?;
-                            texture::decode(alpha, e).ok().map(|img| png(&img))
-                        })
-                        .clone()
+                    let ok = *written.entry(t.clone()).or_insert_with(|| {
+                        let path = out.join("textures").join(format!("{t}.png"));
+                        path.is_file()
+                            || alpha.res.get(t).is_some_and(|e| {
+                                texture::decode(alpha, e).is_ok_and(|img| write(&path, &png(&img)).is_ok())
+                            })
+                    });
+                    ok.then(|| texture_uri(name, t))
                 })
                 .collect();
             // In the glTF's space: X negated, as `to_glb` writes it.
@@ -219,6 +223,23 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
         }
     }
     write(&out.join("models/bounds.txt"), bounds.as_bytes())
+}
+
+/// The URI from `models/<model>.glb` to `textures/<texture>.png`: up out of the model's
+/// folders, then down; each path segment percent-encoded, as glTF URIs are.
+fn texture_uri(model: &str, texture: &str) -> String {
+    let up = "../".repeat(model.matches('/').count() + 1);
+    let encode = |segment: &str| {
+        segment
+            .bytes()
+            .map(|b| match b {
+                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+                _ => format!("%{b:02X}"),
+            })
+            .collect::<String>()
+    };
+    let down: Vec<String> = texture.split('/').map(encode).collect();
+    format!("{up}textures/{}.png", down.join("/"))
 }
 
 fn write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
@@ -294,5 +315,29 @@ mod tests {
         assert_eq!(&p[37..41], b"IDAT");
         let raw = miniz_oxide::inflate::decompress_to_vec_zlib(&p[41..41 + idat_len]).unwrap();
         assert_eq!(raw, [0, 1, 2, 3, 4, 5, 6, 7, 8]);
+    }
+
+    /// A model's texture URI climbs out of every folder of the model's path to the cache
+    /// root and descends into `textures/`, so it resolves from the `.glb`'s own folder;
+    /// characters a URI can't hold are percent-encoded per segment, `/` kept.
+    #[test]
+    fn texture_uris_resolve_from_the_model_folder() {
+        assert_eq!(
+            texture_uri("_rts/art/eu/tank", "_rts/art/eu/tank_di"),
+            "../../../../textures/_rts/art/eu/tank_di.png"
+        );
+        assert_eq!(texture_uri("tank", "a b/c%d"), "../textures/a%20b/c%25d.png");
+        let model = Path::new("models/_rts/art/eu/tank.glb");
+        let resolved = model.parent().unwrap().join(texture_uri("_rts/art/eu/tank", "x/y"));
+        let mut parts = Vec::new();
+        for c in resolved.components() {
+            match c {
+                std::path::Component::ParentDir => {
+                    parts.pop();
+                }
+                c => parts.push(c),
+            }
+        }
+        assert_eq!(parts.iter().collect::<PathBuf>(), Path::new("textures/x/y.png"));
     }
 }
