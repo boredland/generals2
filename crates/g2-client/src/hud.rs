@@ -35,6 +35,8 @@ pub(crate) enum Field {
     /// A player's tag in the match bar, dimmed once that player is defeated.
     Tag(g2_sim::PlayerId),
     Power,
+    /// Power as bare figures ("20/180"), for the alpha's power slot beside its own icon.
+    PowerFigures,
     Money,
     /// The general's power: "G <name>" when ready, else its countdown; hidden without one.
     GeneralPower,
@@ -550,6 +552,10 @@ fn update_fields(
                 } else {
                     "PWR -".into()
                 }
+            }
+            Field::PowerFigures => {
+                t.0 =
+                    if me.faction.uses_power() { format!("{}/{}", me.power_drain, me.power_supply) } else { "-".into() }
             }
             Field::Money => t.0 = format!("${}", me.credits),
             Field::GeneralPower => {

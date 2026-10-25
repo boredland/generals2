@@ -131,7 +131,7 @@
 
 <main>
   <section class="hero">
-    <img src="img/hero.png" alt="An APA tank and infantry attacking an EU base on a savanna in Open RTS">
+    <img src="img/hero.png" alt="EU infantry trading fire with a GLA raid of infantry and a Technical at 3:53, under the 2013 alpha's HUD">
     <div class="veil"></div>
     <div class="copy">
       <h1>Open RTS <span class="glow">— hold the line.</span></h1>
@@ -194,8 +194,10 @@
   </div>
 
   <h2 id="screens">Screens</h2>
-  <p class="lede">Everything is rendered by the game itself — original procedural meshes and
-    textures, no borrowed art.</p>
+  <p class="lede">Rendered by the game itself, with a copy of the 2013 closed alpha imported: the
+    unit and building models, the bottom-bar HUD, portraits and build icons are the alpha's (EA's
+    art), laid out by its own HUD files and fed by this game's simulation. Without the import the
+    game draws its own procedural models and HUD instead.</p>
   <div class="shots">
     <figure>
       <img src="img/menu.png" alt="The Open RTS main menu over a battlefield">
@@ -206,16 +208,16 @@
       <figcaption>Skirmish setup: 86 maps, slots, factions, generals, credits, fog.</figcaption>
     </figure>
     <figure>
-      <img src="img/base.png" alt="An APA base at 1:40: command center, barracks under scaffolding and a power plant">
-      <figcaption>An APA base going up: command center, a power plant, and barracks still in their scaffold.</figcaption>
+      <img src="img/base.png" alt="An APA base at 1:40 with the command center selected: its portrait and build button in the alpha HUD">
+      <figcaption>An APA base going up, the command center selected: its portrait, and the harvester it trains in the build grid.</figcaption>
     </figure>
     <figure>
-      <img src="img/battle.png" alt="A GLA base at three minutes: sandbagged command center, factories, tanks and the supply stash">
-      <figcaption>Three minutes in: a GLA base of scrap and sandbags, its tanks and infantry, and the crate-yard supply stash.</figcaption>
+      <img src="img/battle.png" alt="A GLA base at three minutes with the war factory selected: its three vehicles in the build grid">
+      <figcaption>Three minutes in, GLA: the war factory selected, its Scorpion, Toxin Artillery and Technical in the alpha's build grid.</figcaption>
     </figure>
     <figure>
-      <img src="img/maps.png" alt="An original Zero Hour map imported into Open RTS">
-      <figcaption>The original maps load from EA's GPL map sources at runtime.</figcaption>
+      <img src="img/maps.png" alt="Zero Hour's Tournament Desert imported into Open RTS, whole map revealed">
+      <figcaption>The original maps load from EA's GPL map sources at runtime: Tournament Desert, whole map.</figcaption>
     </figure>
     <figure>
       <img src="img/bridge.png" alt="A concrete bridge crossing the river on Winding River">
@@ -260,8 +262,16 @@ cargo test --workspace</pre>
     </div>
     <div class="card">
       <h3>What is not</h3>
-      <p>A network lobby, music and voices, campaign, generals' perks, real art. The balance is
+      <p>A network lobby, campaign, generals' perks, art of its own beyond procedural shapes; the
+        alpha's music and voices only play from an imported copy. The balance is
         unexamined by design — the numbers are sourced, not tuned.</p>
+    </div>
+    <div class="card">
+      <h3>The 2013 alpha</h3>
+      <p>If you have the closed-alpha client, <code>g2-tools alpha DIR import</code> decodes it into
+        a cache on your machine; the game then uses its models, sounds, voices, music and HUD.
+        Neither the alpha nor the cache is in this repository or the AppImage; the screenshots
+        above show it.</p>
     </div>
     <div class="card">
       <h3>The maps</h3>

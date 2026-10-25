@@ -176,7 +176,7 @@ fn slot(name: &str) -> Option<Slot> {
         // The alpha shows one of two gold texts, with or without power beside it; ours has
         // its own power field, so the "with power" one carries the money.
         "Gold Text with power" => Slot::Field(|| Field::Money),
-        "Power Container" => Slot::Field(|| Field::Power),
+        "Power Container" => Slot::Field(|| Field::PowerFigures),
         "Minimap container" => Slot::Minimap,
         "Timer" => Slot::Field(|| Field::Clock),
         "GeneralPortrait" => Slot::Portrait,
@@ -285,7 +285,7 @@ impl Ctx<'_, '_, '_> {
             }
             Some(Slot::Field(f)) => {
                 let color = match f() {
-                    Field::Money | Field::Power => Color::srgb_u8(0x00, 0xfd, 0x77),
+                    Field::Money | Field::Power | Field::PowerFigures => Color::srgb_u8(0x00, 0xfd, 0x77),
                     _ => Color::WHITE,
                 };
                 let font = TextFont {
@@ -293,8 +293,26 @@ impl Ctx<'_, '_, '_> {
                     font_size: FontSize::Px((16.0 * s).max(9.0)),
                     ..default()
                 };
+                // The alpha's own text child, when there is one, marks where the text goes
+                // (beside the power icon, inside the timer's plate); else the whole slot.
+                let [tx, ty, tw, th] = w.children.iter().find(|c| c.text.is_some()).map_or([0.0, 0.0, wd, ht], |c| {
+                    let ([cx, cy, cw, ch], _) = utfwin::place(c, (x, y), s, self.screen);
+                    [cx - x, cy - y, cw, ch]
+                });
+                let area = Node {
+                    position_type: PositionType::Absolute,
+                    left: px(tx),
+                    top: px(ty),
+                    width: px(tw.max(0.0)),
+                    height: px(th.max(0.0)),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                };
                 e.with_children(|t| {
-                    t.spawn((Text::new(""), font, TextColor(color), f()));
+                    t.spawn((area, GlobalZIndex(1))).with_children(|t| {
+                        t.spawn((Text::new(""), TextLayout::no_wrap(), font, TextColor(color), f()));
+                    });
                 });
             }
             None => {
@@ -308,12 +326,20 @@ impl Ctx<'_, '_, '_> {
             }
         }
         // Our content replaces whatever the alpha drew inside a filled slot (minimap pins,
-        // text backgrounds, its own button art).
-        if matches!(slot, Some(Slot::Minimap | Slot::Field(_) | Slot::BuildGrid)) {
-            return;
-        }
-        for c in &w.children {
-            self.window(c, (x, y), s);
+        // its own text, its button art); a field keeps the plates behind its text (the
+        // timer's dark backing), with the text raised above them.
+        match slot {
+            Some(Slot::Minimap | Slot::BuildGrid) => {}
+            Some(Slot::Field(_)) => {
+                for c in w.children.iter().filter(|c| c.image.is_some() && c.text.is_none()) {
+                    self.window(c, (x, y), s);
+                }
+            }
+            _ => {
+                for c in &w.children {
+                    self.window(c, (x, y), s);
+                }
+            }
         }
     }
 }
