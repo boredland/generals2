@@ -158,7 +158,39 @@ fn every_mesh_decodes_inside_its_bounds() {
     }
     assert_eq!(meshes, 2_154);
     assert!(triangles > 4_000_000, "{triangles} triangles");
-    let maps = material::diffuse_maps(&a).unwrap();
+    let maps = material::diffuse_maps(&a, &mut |name, e| panic!("{name}: {e}"));
     let bound = maps.values().flatten().flatten().filter(|t| a.res.contains_key(*t)).count();
     assert!(bound > 2_500, "{bound} materials with a diffuse map");
+}
+
+/// A texture the models need but the install lacks (its res taken out of the index here)
+/// leaves those models untextured, and each gets one manifest line naming the texture;
+/// the rest of the import goes on.
+#[test]
+fn a_missing_texture_is_reported_for_each_model_that_uses_it() {
+    use g2_frostbite::import::{Parts, import};
+    let Some(mut a) = install() else { return };
+    let maps = material::diffuse_maps(&a, &mut |name, e| panic!("{name}: {e}"));
+    let mut users = std::collections::BTreeMap::<&str, Vec<&str>>::new();
+    for (model, slots) in &maps {
+        for t in slots.iter().flatten().collect::<std::collections::BTreeSet<_>>() {
+            if a.res_of(res_type::MESH_SET).any(|(n, _)| n == model) {
+                users.entry(t.as_str()).or_default().push(model.as_str());
+            }
+        }
+    }
+    let (texture, models) = users.iter().max_by_key(|(_, m)| m.len()).map(|(t, m)| (t.to_string(), m.clone())).unwrap();
+    let models: Vec<String> = models.into_iter().map(str::to_owned).collect();
+    assert!(models.len() > 1, "a shared texture to remove");
+    a.res.remove(&texture);
+    let out = std::env::temp_dir().join(format!("g2-missing-texture-{}", std::process::id()));
+    let parts = Parts { sounds: false, movies: false, textures: false, models: true, ui: false };
+    let report = import(&a, &out, parts, &mut |_| {}).expect("the import finishes");
+    let mut lines: Vec<&str> = report.failed.iter().map(|(what, _)| what.as_str()).collect();
+    lines.sort_unstable();
+    let mut want: Vec<String> = models.iter().map(|m| format!("{m} texture {texture}")).collect();
+    want.sort_unstable();
+    assert_eq!(lines, want);
+    assert_eq!(report.written.get("models"), Some(&2_154), "every model is still written");
+    let _ = std::fs::remove_dir_all(&out);
 }

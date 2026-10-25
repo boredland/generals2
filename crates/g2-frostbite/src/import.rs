@@ -32,8 +32,19 @@ impl Report {
         *self.written.entry(kind).or_default() += 1;
     }
 
+    /// Records a failure once: two parts can read the same broken asset (the material scan
+    /// reads every ebx), and a model can use one texture in several slots.
     fn fail(&mut self, what: &str, e: impl std::fmt::Display) {
-        self.failed.push((what.to_owned(), e.to_string()));
+        let entry = (what.to_owned(), e.to_string());
+        if !self.failed.contains(&entry) {
+            self.failed.push(entry);
+        }
+    }
+
+    /// An ebx asset, or `None` with the failure recorded: one unreadable asset is a line in
+    /// the manifest, not the end of the import.
+    fn asset(&mut self, alpha: &Alpha, name: &str) -> Option<crate::ebx::Partition> {
+        alpha.asset(name).map_err(|e| self.fail(name, e)).ok()
     }
 
     pub fn summary(&self) -> String {
@@ -101,7 +112,7 @@ pub fn import(alpha: &Alpha, out: &Path, parts: Parts, progress: &mut dyn FnMut(
 fn sounds(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
     let languages = media::languages(alpha)?;
     for name in alpha.ebx.keys().filter(|n| n.starts_with("sound/") && n.contains("/waves/")) {
-        let p = alpha.asset(name)?;
+        let Some(p) = report.asset(alpha, name) else { continue };
         if p.primary().and_then(Value::ty) != Some("SoundWaveAsset") {
             continue;
         }
@@ -159,7 +170,7 @@ fn ui(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
 
 fn movies(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
     for name in alpha.ebx.keys() {
-        let p = alpha.asset(name)?;
+        let Some(p) = report.asset(alpha, name) else { continue };
         if p.primary().and_then(Value::ty) != Some("MovieTextureAsset") {
             continue;
         }
@@ -185,11 +196,12 @@ fn movies(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
 }
 
 fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
-    let maps = material::diffuse_maps(alpha)?;
+    let maps = material::diffuse_maps(alpha, &mut |name, e| report.fail(name, e));
     // Mesh assets name their MeshSet res `<asset path>`. A texture is written once, to
     // `textures/<name>.png` (the flat texture export writes the same file), and every model
-    // that uses it points there; one that fails to decode leaves its materials untextured.
-    let mut written: BTreeMap<String, bool> = BTreeMap::new();
+    // that uses it points there. One that can't be written leaves its materials untextured
+    // and is a manifest line naming the model, so nothing goes missing silently.
+    let mut written: BTreeMap<String, Result<(), String>> = BTreeMap::new();
     // `name min.x min.y min.z max.x max.y max.z` per model, so the client sizes a model to
     // its footprint without parsing it.
     let mut bounds = String::new();
@@ -202,14 +214,21 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
                 .iter()
                 .map(|t| {
                     let t = t.as_ref()?;
-                    let ok = *written.entry(t.clone()).or_insert_with(|| {
+                    let state = written.entry(t.clone()).or_insert_with(|| {
                         let path = out.join("textures").join(format!("{t}.png"));
-                        path.is_file()
-                            || alpha.res.get(t).is_some_and(|e| {
-                                texture::decode(alpha, e).is_ok_and(|img| write(&path, &png(&img)).is_ok())
-                            })
+                        if path.is_file() {
+                            return Ok(());
+                        }
+                        let e = alpha.res.get(t).ok_or("no such texture res")?;
+                        texture::decode(alpha, e).and_then(|img| write(&path, &png(&img))).map_err(|e| e.to_string())
                     });
-                    ok.then(|| texture_uri(name, t))
+                    match state {
+                        Ok(()) => Some(texture_uri(name, t)),
+                        Err(why) => {
+                            report.fail(&format!("{name} texture {t}"), &*why);
+                            None
+                        }
+                    }
                 })
                 .collect();
             // In the glTF's space: X negated, as `to_glb` writes it.

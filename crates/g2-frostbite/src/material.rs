@@ -13,13 +13,20 @@ use crate::{Alpha, Error};
 const DIFFUSE: [&str; 5] = ["Diffuse", "Di", "_Diffuse", "diffuse", "Texture"];
 
 /// For each mesh asset (by ebx name), the diffuse texture asset name per material slot.
-/// Where levels disagree, the base variation (hash 0) with the most bindings wins.
-pub fn diffuse_maps(alpha: &Alpha) -> Result<BTreeMap<String, Vec<Option<String>>>, Error> {
+/// Where levels disagree, the base variation (hash 0) with the most bindings wins. An ebx
+/// asset that fails to parse goes to `failed` and is skipped (links to it don't resolve).
+pub fn diffuse_maps(alpha: &Alpha, failed: &mut dyn FnMut(&str, Error)) -> BTreeMap<String, Vec<Option<String>>> {
     // Partition GUID -> ebx name, to resolve the databases' external links.
     let mut names = HashMap::new();
     let mut databases = Vec::new();
     for name in alpha.ebx.keys() {
-        let p = alpha.asset(name)?;
+        let p = match alpha.asset(name) {
+            Ok(p) => p,
+            Err(e) => {
+                failed(name, e);
+                continue;
+            }
+        };
         names.insert(p.file_guid, name.clone());
         if name.ends_with("/meshvariationdb_win32") {
             databases.push(p);
@@ -59,5 +66,5 @@ pub fn diffuse_maps(alpha: &Alpha) -> Result<BTreeMap<String, Vec<Option<String>
             }
         }
     }
-    Ok(out)
+    out
 }
