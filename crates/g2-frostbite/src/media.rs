@@ -15,6 +15,10 @@ pub struct Variation {
     pub chunk: [u8; 16],
     /// Each segment's `SamplesOffset` into the chunk: where its SPS stream starts.
     pub segments: Vec<usize>,
+    /// The segments that repeat (`FirstLoopSegmentIndex..=LastLoopSegmentIndex`), for a
+    /// variation of several segments: music is an intro then a loop, a moving unit's sound
+    /// a start, a loop and an end. A single-segment variation (every one-shot) has none.
+    pub loop_segments: Option<std::ops::RangeInclusive<usize>>,
 }
 
 /// The language whose voice-over the alpha ships (`Loc/en.sb`). Other languages are listed
@@ -52,7 +56,14 @@ impl SoundWave {
                     usize::try_from(offset).map_err(|_| Error::Bad("segment offset"))
                 })
                 .collect::<Result<Vec<_>, Error>>()?;
-            all.push(Variation { chunk, segments });
+            let index = |key: &str| v.get(key).and_then(Value::int).and_then(|i| usize::try_from(i).ok());
+            let loop_segments = match (index("FirstLoopSegmentIndex"), index("LastLoopSegmentIndex")) {
+                (Some(first), Some(last)) if segments.len() > 1 && first <= last && last < segments.len() => {
+                    Some(first..=last)
+                }
+                _ => None,
+            };
+            all.push(Variation { chunk, segments, loop_segments });
         }
         let localization = prim.get("Localization").map(Value::items).unwrap_or_default();
         if localization.is_empty() {
@@ -88,19 +99,26 @@ pub fn languages(alpha: &Alpha) -> Result<Vec<([u8; 16], String)>, Error> {
         .collect())
 }
 
-/// Decodes one variation: its segments back to back.
-pub fn decode_variation(alpha: &Alpha, v: &Variation) -> Result<Pcm, Error> {
+/// Decodes one variation: its segments back to back, with the frames its loop segments
+/// cover (start..end), if it has any.
+pub fn decode_variation(alpha: &Alpha, v: &Variation) -> Result<(Pcm, Option<std::ops::Range<usize>>), Error> {
     let chunk = alpha.chunk(&v.chunk)?;
     let mut out: Option<Pcm> = None;
+    // The frame each segment starts at, and where the last one ends.
+    let mut starts = Vec::with_capacity(v.segments.len() + 1);
     for &offset in &v.segments {
         let pcm = audio::decode_sps(chunk.get(offset..).ok_or(Error::Truncated)?)?;
+        starts.push(out.as_ref().map_or(0, Pcm::frames));
         match &mut out {
             None => out = Some(pcm),
             Some(o) if (o.sample_rate, o.channels) == (pcm.sample_rate, pcm.channels) => o.samples.extend(pcm.samples),
             Some(_) => return Err(Error::Bad("segments differ in format")),
         }
     }
-    out.ok_or(Error::Bad("variation without segments"))
+    let pcm = out.ok_or(Error::Bad("variation without segments"))?;
+    starts.push(pcm.frames());
+    let looped = v.loop_segments.as_ref().map(|r| starts[*r.start()]..starts[*r.end() + 1]);
+    Ok((pcm, looped))
 }
 
 /// A `MovieTextureAsset`'s video: an EA VP6 stream (`MVhd`), which ffmpeg reads directly.

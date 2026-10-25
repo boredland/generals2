@@ -115,7 +115,9 @@ fn sounds(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
         let many = wave.variations.len() > 1;
         for (i, v) in wave.variations.iter().enumerate() {
             let file = if many { format!("{name} {i}.wav") } else { format!("{name}.wav") };
-            match media::decode_variation(alpha, v).and_then(|pcm| write(&out.join(file), &pcm.to_wav())) {
+            match media::decode_variation(alpha, v)
+                .and_then(|(pcm, looped)| write(&out.join(file), &pcm.to_wav(looped)))
+            {
                 Ok(()) => report.ok("sounds"),
                 Err(e) => report.fail(&format!("{name} {i}"), e),
             }
@@ -168,7 +170,7 @@ fn movies(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
                 write(&base.with_extension("alpha.vp6"), a)?;
             }
             match m.audio {
-                Some(Ok(pcm)) => write(&base.with_extension("wav"), &pcm.to_wav())?,
+                Some(Ok(pcm)) => write(&base.with_extension("wav"), &pcm.to_wav(None))?,
                 Some(Err(e)) => report.fail(&format!("{name} audio"), e),
                 None => {}
             }

@@ -100,11 +100,19 @@ impl Cue {
 #[derive(Resource, Default)]
 pub struct Muted(pub bool);
 
-/// A mono sound, played in stereo at `pan` (-1 left .. 1 right).
+/// A mono sound, played in stereo at `pan` (-1 left .. 1 right). With `loop_from`, it plays
+/// to the end and then repeats from that sample on, without end (music after its intro).
 #[derive(Asset, TypePath, Clone)]
 pub struct Sound {
     samples: Arc<[f32]>,
     pan: f32,
+    loop_from: Option<usize>,
+}
+
+impl Sound {
+    fn new(samples: Arc<[f32]>, pan: f32) -> Sound {
+        Sound { samples, pan, loop_from: None }
+    }
 }
 
 impl Decodable for Sound {
@@ -113,32 +121,52 @@ impl Decodable for Sound {
     fn decoder(&self) -> Playback {
         // Constant-power panning: the sum of both channels' power stays the same at any pan.
         let angle = (self.pan.clamp(-1.0, 1.0) + 1.0) * std::f32::consts::FRAC_PI_4;
-        Playback { samples: self.samples.clone(), gains: [angle.cos(), angle.sin()], at: 0 }
+        let loop_from = self.loop_from.filter(|&f| f < self.samples.len());
+        Playback { samples: self.samples.clone(), gains: [angle.cos(), angle.sin()], at: 0, loop_from, wrapped: false }
     }
 }
 
-/// Plays a `Sound`'s samples once, interleaved left/right.
+/// Plays a `Sound`'s samples once, interleaved left/right, or on from its loop start forever.
 pub struct Playback {
     samples: Arc<[f32]>,
     gains: [f32; 2],
     /// Index into the interleaved output: sample `at / 2`, channel `at % 2`.
     at: usize,
+    loop_from: Option<usize>,
+    /// The loop has repeated at least once: its start now follows its end, not the intro.
+    wrapped: bool,
 }
+
+/// Samples a repeat fades in over (5 ms). The alpha's music loop ends in silence and starts
+/// loud mid-phrase, which follows the intro seamlessly but would click after its own end.
+const LOOP_FADE: usize = RATE as usize / 200;
 
 impl Iterator for Playback {
     type Item = bevy::audio::Sample;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let s = *self.samples.get(self.at / 2)?;
-        let out = s * self.gains[self.at % 2];
+        if self.at / 2 == self.samples.len()
+            && let Some(from) = self.loop_from
+        {
+            self.at = from * 2;
+            self.wrapped = true;
+        }
+        let i = self.at / 2;
+        let mut out = *self.samples.get(i)? * self.gains[self.at % 2];
+        if self.wrapped
+            && let Some(into) = self.loop_from.map(|from| i - from).filter(|&k| k < LOOP_FADE)
+        {
+            out *= into as f32 / LOOP_FADE as f32;
+        }
         self.at += 1;
-        Some(out as bevy::audio::Sample)
+        Some(out)
     }
 }
 
 impl bevy::audio::Source for Playback {
     fn current_span_len(&self) -> Option<usize> {
-        Some(self.samples.len() * 2 - self.at)
+        // A loop never ends; the format holds throughout, so there is no span to report.
+        if self.loop_from.is_some() { None } else { Some(self.samples.len() * 2 - self.at) }
     }
 
     fn channels(&self) -> ChannelCount {
@@ -150,6 +178,9 @@ impl bevy::audio::Source for Playback {
     }
 
     fn total_duration(&self) -> Option<Duration> {
+        if self.loop_from.is_some() {
+            return None;
+        }
         Some(Duration::from_secs_f64(self.samples.len() as f64 / RATE as f64))
     }
 }
@@ -176,7 +207,7 @@ fn load_sounds(mut commands: Commands, mut sounds: ResMut<Assets<Sound>>, cache:
         let variations = alpha.effects.get(&cue).cloned().unwrap_or_else(|| vec![synth(cue).into()]);
         let handles = variations
             .into_iter()
-            .map(|samples| std::array::from_fn(|k| sounds.add(Sound { samples: samples.clone(), pan: pan_of_slot(k) })))
+            .map(|samples| std::array::from_fn(|k| sounds.add(Sound::new(samples.clone(), pan_of_slot(k)))))
             .collect();
         bank.insert(cue, handles);
     }
@@ -184,11 +215,11 @@ fn load_sounds(mut commands: Commands, mut sounds: ResMut<Assets<Sound>>, cache:
     let voices = alpha
         .voices
         .into_iter()
-        .map(|(key, v)| (key, v.into_iter().map(|samples| sounds.add(Sound { samples, pan: 0.0 })).collect()))
+        .map(|(key, v)| (key, v.into_iter().map(|samples| sounds.add(Sound::new(samples, 0.0))).collect()))
         .collect();
     commands.insert_resource(Voices(voices));
-    if let Some(music) = alpha.music {
-        commands.insert_resource(Music(sounds.add(Sound { samples: music, pan: 0.0 })));
+    if let Some((samples, from)) = alpha.music {
+        commands.insert_resource(Music(sounds.add(Sound { samples, pan: 0.0, loop_from: Some(from) })));
     }
 }
 
@@ -308,8 +339,9 @@ fn speak(
 #[derive(Component)]
 struct MenuMusic;
 
-/// The alpha's menu music, looping while a menu covers the battlefield (main menu, setup,
-/// end screen) and stopped in a match. Silent without an import.
+/// The alpha's menu music while a menu covers the battlefield (main menu, setup, end
+/// screen), stopped in a match: its intro once, then its loop (the sound repeats itself).
+/// Silent without an import.
 fn play_music(
     mut commands: Commands,
     music: Option<Res<Music>>,
@@ -323,7 +355,7 @@ fn play_music(
         (true, None) => {
             commands.spawn((
                 AudioPlayer(music.0.clone()),
-                PlaybackSettings::LOOP.with_volume(Volume::Linear(0.5)),
+                PlaybackSettings::ONCE.with_volume(Volume::Linear(0.5)),
                 MenuMusic,
             ));
         }
@@ -564,13 +596,40 @@ mod tests {
         }
     }
 
+    /// A sound with a loop plays its intro once, then repeats from the loop's start without
+    /// end; one without a loop plays once and stops. Each repeat fades in over `LOOP_FADE`
+    /// samples (the loop's end does not lead into its start), but the first pass from the
+    /// intro into the loop is left alone (the track leads into it).
+    #[test]
+    fn looped_sounds_repeat_from_their_loop_start() {
+        let left = |sound: Sound, n: usize| sound.decoder().step_by(2).take(n).collect::<Vec<f32>>();
+        let gain = std::f32::consts::FRAC_PI_4.cos();
+        // A constant 1.0: two fades' worth of intro, then a loop of three fades' worth.
+        let (intro, body) = (2 * LOOP_FADE, 3 * LOOP_FADE);
+        let samples: Arc<[f32]> = vec![1.0; intro + body].into();
+        let looped = Sound { samples: samples.clone(), pan: 0.0, loop_from: Some(intro) };
+        let out = left(looped, intro + 3 * body);
+        assert_eq!(out.len(), intro + 3 * body, "a loop never ends");
+        assert!(out[..intro + body].iter().all(|&s| s == gain), "first pass: intro into loop untouched");
+        for pass in 1..3 {
+            let start = intro + pass * body;
+            let fade = &out[start..start + LOOP_FADE];
+            assert_eq!(fade[0], 0.0, "repeat {pass} starts from silence");
+            assert!(fade.windows(2).all(|w| w[1] > w[0]), "repeat {pass} fades in");
+            assert!(fade[LOOP_FADE - 1] < gain && out[start + LOOP_FADE] == gain, "full level after the fade");
+            assert!(out[start + LOOP_FADE..start + body].iter().all(|&s| s == gain), "rest of repeat {pass} untouched");
+        }
+        let once = left(Sound::new(samples, 0.0), intro + 3 * body);
+        assert_eq!(once.len(), intro + body, "without a loop: played once");
+    }
+
     /// A sound right of the camera's focus is louder in the right channel and one on the left
     /// in the left, mirrored; one at the focus is balanced; and panning keeps the total power
     /// (so a sound doesn't get louder or quieter as it crosses the screen).
     #[test]
     fn sounds_pan_with_their_side_of_the_screen() {
         let channels = |offset: f32| {
-            let sound = Sound { samples: synth(Cue::Click).into(), pan: pan_of_slot(pan_slot(offset)) };
+            let sound = Sound::new(synth(Cue::Click).into(), pan_of_slot(pan_slot(offset)));
             let out: Vec<f32> = sound.decoder().collect();
             let power = |ch: usize| out.iter().skip(ch).step_by(2).map(|v| v * v).sum::<f32>();
             (power(0), power(1))
@@ -755,8 +814,7 @@ mod tests {
         for (i, def) in rules.defs.iter().enumerate() {
             for (k, r) in Response::ALL.into_iter().enumerate() {
                 let tag = (i * 4 + k) as f32;
-                let h =
-                    app.world_mut().resource_mut::<Assets<Sound>>().add(Sound { samples: vec![tag].into(), pan: 0.0 });
+                let h = app.world_mut().resource_mut::<Assets<Sound>>().add(Sound::new(vec![tag].into(), 0.0));
                 voices.0.insert((def.name, r), vec![h]);
             }
         }

@@ -32,13 +32,15 @@ impl Pcm {
         self.samples.len() / usize::from(self.channels)
     }
 
-    /// A 16-bit PCM WAV file.
-    pub fn to_wav(&self) -> Vec<u8> {
+    /// A 16-bit PCM WAV file. A loop (frames `start..end`) is written as a `smpl` chunk with
+    /// one forward loop, which players and editors read as the part to repeat.
+    pub fn to_wav(&self, looped: Option<std::ops::Range<usize>>) -> Vec<u8> {
         let data_len = (self.samples.len() * 2) as u32;
         let block_align = self.channels * 2;
-        let mut w = Vec::with_capacity(44 + data_len as usize);
+        let smpl_len: u32 = if looped.is_some() { 8 + 60 } else { 0 };
+        let mut w = Vec::with_capacity(44 + data_len as usize + smpl_len as usize);
         w.extend(b"RIFF");
-        w.extend((36 + data_len).to_le_bytes());
+        w.extend((36 + data_len + smpl_len).to_le_bytes());
         w.extend(b"WAVEfmt ");
         w.extend(16u32.to_le_bytes());
         w.extend(1u16.to_le_bytes());
@@ -51,6 +53,18 @@ impl Pcm {
         w.extend(data_len.to_le_bytes());
         for s in &self.samples {
             w.extend(s.to_le_bytes());
+        }
+        if let Some(l) = looped {
+            // Header: manufacturer, product, sample period (ns), MIDI note, pitch fraction,
+            // SMPTE format and offset, loop count, sampler data; then one loop: id, type
+            // (0 = forward), start, end (the last frame played, inclusive), fraction, count
+            // (0 = forever).
+            let period = 1_000_000_000 / self.sample_rate;
+            w.extend(b"smpl");
+            w.extend(60u32.to_le_bytes());
+            for v in [0, 0, period, 60, 0, 0, 0, 1, 0, 0, 0, l.start as u32, l.end as u32 - 1, 0, 0] {
+                w.extend(u32::to_le_bytes(v));
+            }
         }
         w
     }
@@ -222,9 +236,18 @@ mod tests {
         assert_eq!((pcm.sample_rate, pcm.channels, pcm.frames()), (48_000, 2, 200));
         // Interleaved: left frames carry 0x10, right 0x20 as their first samples.
         assert_eq!(&pcm.samples[..4], &[0x10, 0x20, 0x10, 0x20]);
-        let wav = pcm.to_wav();
+        let wav = pcm.to_wav(None);
         assert_eq!(&wav[..4], b"RIFF");
         assert_eq!(wav.len(), 44 + 200 * 2 * 2);
+        // A loop over frames 50..150 adds a `smpl` chunk naming frames 50 and 149, and the
+        // RIFF size grows with it.
+        let wav = pcm.to_wav(Some(50..150));
+        let smpl = 44 + 200 * 2 * 2;
+        assert_eq!(wav.len(), smpl + 68);
+        assert_eq!(u32::from_le_bytes(wav[4..8].try_into().unwrap()) as usize, wav.len() - 8);
+        assert_eq!(&wav[smpl..smpl + 4], b"smpl");
+        let word = |i: usize| u32::from_le_bytes(wav[smpl + 8 + i * 4..][..4].try_into().unwrap());
+        assert_eq!((word(7), word(11), word(12)), (1, 50, 149), "one loop, first and last frame");
     }
 
     #[test]

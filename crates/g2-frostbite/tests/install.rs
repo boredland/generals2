@@ -101,7 +101,7 @@ fn every_ebx_parses() {
 fn every_sound_variation_decodes() {
     let Some(a) = install() else { return };
     let languages = media::languages(&a).unwrap();
-    let mut variations = 0;
+    let (mut variations, mut looping) = (0, 0);
     for name in a.ebx.keys().filter(|n| n.starts_with("sound/") && n.contains("/waves/")) {
         let p = a.asset(name).unwrap();
         if p.primary().and_then(Value::ty) != Some("SoundWaveAsset") {
@@ -109,12 +109,19 @@ fn every_sound_variation_decodes() {
         }
         let wave = media::SoundWave::read(&p, &languages).unwrap_or_else(|e| panic!("{name}: {e}"));
         for v in &wave.variations {
-            let pcm = media::decode_variation(&a, v).unwrap_or_else(|e| panic!("{name}: {e}"));
+            let (pcm, looped) = media::decode_variation(&a, v).unwrap_or_else(|e| panic!("{name}: {e}"));
             assert!(pcm.frames() > 0 && [44_100, 48_000].contains(&pcm.sample_rate), "{name}");
+            if let Some(l) = &looped {
+                assert!(l.start < l.end && l.end <= pcm.frames(), "{name}: loop {l:?} of {}", pcm.frames());
+                looping += 1;
+            }
             variations += 1;
         }
     }
     assert_eq!(variations, 9_110);
+    // A part loops in music (intro, loop), moving units' sounds (start, loop, end) and
+    // weapon-fire loops (loop, tail).
+    assert_eq!(looping, 127);
 }
 
 /// Both movies split into a VP6 stream; the logo movie's EA-XA audio decodes to its

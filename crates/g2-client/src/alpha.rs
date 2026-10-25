@@ -189,13 +189,14 @@ pub const MENU_MUSIC: &str = "sound/music/waves/xlevel_menumusic_loop_v1";
 pub struct Sounds {
     pub effects: BTreeMap<Cue, Vec<Arc<[f32]>>>,
     pub voices: BTreeMap<(&'static str, Response), Vec<Arc<[f32]>>>,
-    pub music: Option<Arc<[f32]>>,
+    /// The menu music and the sample its loop starts at (it repeats from there to the end).
+    pub music: Option<(Arc<[f32]>, usize)>,
 }
 
 impl Sounds {
     pub fn load(cache: &Cache, rate: u32) -> Sounds {
         let read = |paths: Vec<PathBuf>| -> Vec<Arc<[f32]>> {
-            paths.iter().filter_map(|p| read_wav(p, rate).ok()).map(Into::into).collect()
+            paths.iter().filter_map(|p| read_wav(p, rate).ok()).map(|w| w.samples.into()).collect()
         };
         let mut s = Sounds::default();
         for cue in Cue::ALL {
@@ -214,20 +215,35 @@ impl Sounds {
                 }
             }
         }
-        s.music = cache.variations(MENU_MUSIC).first().and_then(|p| read_wav(p, rate).ok()).map(Into::into);
+        // The track is an intro then a loop: it repeats from the loop's start, or from the top
+        // when the file names no loop. Whatever follows the loop (nothing, in the alpha's
+        // menu music) is never reached, so it is cut.
+        s.music = cache.variations(MENU_MUSIC).first().and_then(|p| read_wav(p, rate).ok()).map(|w| {
+            let (from, to) = w.looped.map_or((0, w.samples.len()), |l| (l.start, l.end));
+            let mut samples = w.samples;
+            samples.truncate(to);
+            (samples.into(), from)
+        });
         s
     }
 }
 
+/// A WAV read by [`read_wav`]: mono samples, and the samples its loop covers, if any.
+pub struct Wav {
+    pub samples: Vec<f32>,
+    pub looped: Option<std::ops::Range<usize>>,
+}
+
 /// A 16-bit PCM WAV as mono samples at `rate`: channels averaged, linearly resampled. The
 /// cue sounds are mono and panned by the player, so the alpha's are folded down to match.
-pub fn read_wav(path: &Path, rate: u32) -> Result<Vec<f32>, String> {
+/// A `smpl` chunk's first loop (frames, last one inclusive) is carried over at `rate`.
+pub fn read_wav(path: &Path, rate: u32) -> Result<Wav, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let bad = || format!("{}: not a 16-bit PCM WAV", path.display());
     if bytes.get(..4) != Some(b"RIFF") || bytes.get(8..12) != Some(b"WAVE") {
         return Err(bad());
     }
-    let (mut channels, mut src_rate, mut data) = (0usize, 0u32, None);
+    let (mut channels, mut src_rate, mut data, mut looped) = (0usize, 0u32, None, None);
     let mut p = 12;
     while p + 8 <= bytes.len() {
         let size = u32::from_le_bytes(bytes[p + 4..p + 8].try_into().unwrap()) as usize;
@@ -241,6 +257,11 @@ pub fn read_wav(path: &Path, rate: u32) -> Result<Vec<f32>, String> {
                 src_rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
             }
             b"data" => data = Some(body),
+            // Loop count at 28, the first loop's start and end frames at 44 and 48.
+            b"smpl" if body.len() >= 60 && body[28..32] != [0; 4] => {
+                let word = |at: usize| u32::from_le_bytes(body[at..at + 4].try_into().unwrap()) as usize;
+                looped = Some(word(44)..word(48) + 1);
+            }
             _ => {}
         }
         p += 8 + size + size % 2;
@@ -255,19 +276,22 @@ pub fn read_wav(path: &Path, rate: u32) -> Result<Vec<f32>, String> {
         .chunks_exact(channels)
         .map(|frame| frame.iter().map(|s| f32::from(i16::from_le_bytes(*s))).sum::<f32>() / (channels as f32 * 32768.0))
         .collect();
+    let looped = looped.filter(|l: &std::ops::Range<usize>| l.start < l.end && l.end <= mono.len());
     if src_rate == rate || mono.is_empty() {
-        return Ok(mono);
+        return Ok(Wav { samples: mono, looped });
     }
     let step = src_rate as f64 / rate as f64;
     let n = ((mono.len() - 1) as f64 / step) as usize + 1;
-    Ok((0..n)
+    let samples = (0..n)
         .map(|i| {
             let x = i as f64 * step;
             let (k, f) = (x as usize, (x.fract()) as f32);
             let next = mono.get(k + 1).copied().unwrap_or(mono[k]);
             mono[k] + (next - mono[k]) * f
         })
-        .collect())
+        .collect();
+    let at = |frame: usize| ((frame as f64 / step).round() as usize).min(n);
+    Ok(Wav { samples, looped: looped.map(|l| at(l.start)..at(l.end)) })
 }
 
 #[cfg(test)]
@@ -310,10 +334,14 @@ mod tests {
                 assert!(s.voices.contains_key(&(def.name, r)), "{} {r:?}: voice missing", def.name);
             }
         }
-        assert!(s.music.as_ref().is_some_and(|m| m.len() > crate::audio::RATE as usize * 60), "menu music");
+        // The menu music: a 175 s intro, then its 150 s loop repeats.
+        let (music, from) = s.music.expect("menu music");
+        let secs = |n: usize| n as f32 / crate::audio::RATE as f32;
+        assert!((secs(from) - 175.2).abs() < 0.5, "loop starts after the intro, at {} s", secs(from));
+        assert!((secs(music.len() - from) - 150.8).abs() < 0.5, "loop lasts {} s", secs(music.len() - from));
     }
 
-    fn wav(channels: u16, rate: u32, samples: &[i16]) -> Vec<u8> {
+    fn wav(channels: u16, rate: u32, samples: &[i16], looped: Option<(u32, u32)>) -> Vec<u8> {
         let mut w = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
         w.extend(16u32.to_le_bytes());
         w.extend(1u16.to_le_bytes());
@@ -330,6 +358,13 @@ mod tests {
         for s in samples {
             w.extend(s.to_le_bytes());
         }
+        if let Some((start, last)) = looped {
+            w.extend(b"smpl");
+            w.extend(60u32.to_le_bytes());
+            for v in [0, 0, 0, 60, 0, 0, 0, 1, 0, 0, 0, start, last, 0, 0] {
+                w.extend(u32::to_le_bytes(v));
+            }
+        }
         w
     }
 
@@ -339,10 +374,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("t.wav");
         // Stereo at 2 Hz: frames (L, R) = (16384, 0), (0, -16384), (16384, 16384).
-        std::fs::write(&path, wav(2, 2, &[16384, 0, 0, -16384, 16384, 16384])).unwrap();
-        assert_eq!(read_wav(&path, 2).unwrap(), [0.25, -0.25, 0.5]);
+        std::fs::write(&path, wav(2, 2, &[16384, 0, 0, -16384, 16384, 16384], None)).unwrap();
+        let w = read_wav(&path, 2).unwrap();
+        assert_eq!((w.samples.as_slice(), w.looped), ([0.25, -0.25, 0.5].as_slice(), None));
         // Upsampled to 4 Hz: halfway points interpolated.
-        assert_eq!(read_wav(&path, 4).unwrap(), [0.25, 0.0, -0.25, 0.125, 0.5]);
+        assert_eq!(read_wav(&path, 4).unwrap().samples, [0.25, 0.0, -0.25, 0.125, 0.5]);
+        // A loop over frames 1..=2 (the last two) stays on those samples, and moves with the
+        // samples when resampled: at 4 Hz frame 1 is sample 2.
+        std::fs::write(&path, wav(2, 2, &[16384, 0, 0, -16384, 16384, 16384], Some((1, 2)))).unwrap();
+        assert_eq!(read_wav(&path, 2).unwrap().looped, Some(1..3));
+        assert_eq!(read_wav(&path, 4).unwrap().looped, Some(2..5));
         std::fs::write(&path, b"RIFF....WAVEjunk").unwrap();
         assert!(read_wav(&path, 4).is_err());
         let _ = std::fs::remove_dir_all(&dir);
