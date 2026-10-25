@@ -405,9 +405,11 @@ fn play_music(
     ui: Option<Res<crate::menu::Ui>>,
     muted: Res<Muted>,
     playing: Query<Entity, With<MenuMusic>>,
+    movie: Option<Res<crate::movie::Playing>>,
 ) {
     let Some(music) = music else { return };
-    let want = !muted.0 && ui.is_some_and(|u| u.screen != crate::menu::Screen::Match);
+    // The intro movie has its own soundtrack; the music starts once it is over.
+    let want = !muted.0 && movie.is_none() && ui.is_some_and(|u| u.screen != crate::menu::Screen::Match);
     match (want, playing.iter().next()) {
         (true, None) => {
             commands.spawn((

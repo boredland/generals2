@@ -3,6 +3,7 @@
 //! ```text
 //! <out>/<asset path>[ <variation>].wav          every sound wave (asset paths start sound/), English
 //! <out>/movies/<asset path>.vp6, .alpha.vp6, .wav   video, alpha matte, decoded audio
+//! <out>/movies/<asset path>.frames/NNNN.png, fps.txt  the video as frames (needs ffmpeg)
 //! <out>/models/<asset path>.glb                 every mesh, pointing at its textures below
 //! <out>/models/bounds.txt                       each model's bounding box (name, min xyz, max xyz)
 //! <out>/textures/<asset path>.png               every flat texture
@@ -188,11 +189,62 @@ fn movies(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
             Ok(())
         });
         match result {
-            Ok(()) => report.ok("movies"),
+            Ok(()) => {
+                report.ok("movies");
+                match movie_frames(&base.with_extension("vp6"), &base.with_extension("frames")) {
+                    Ok(()) => report.ok("movie frame sets"),
+                    Err(e) => report.fail(&format!("{name} frames"), e),
+                }
+            }
             Err(e) => report.fail(name, e),
         }
     }
     Ok(())
+}
+
+/// Decodes a VP6 stream to `dir/NNNN.png` (from 0001) and `dir/fps.txt` with ffmpeg, which
+/// reads EA VP6; the game shows the frames in turn. Without ffmpeg on the `PATH` this fails
+/// and the movie stays undecoded.
+fn movie_frames(vp6: &Path, dir: &Path) -> Result<(), Error> {
+    let io = |e| Error::Io(dir.to_path_buf(), e);
+    if dir.is_dir() {
+        std::fs::remove_dir_all(dir).map_err(io)?;
+    }
+    std::fs::create_dir_all(dir).map_err(io)?;
+    let run = |args: &[&std::ffi::OsStr], program: &str| -> Result<String, Error> {
+        let out = std::process::Command::new(program)
+            .args(args)
+            .output()
+            .map_err(|e| Error::Unsupported(format!("{program} not found on PATH ({e}); movie frames skipped")))?;
+        if !out.status.success() {
+            return Err(Error::Unsupported(format!(
+                "{program} failed: {}",
+                String::from_utf8_lossy(&out.stderr).lines().last().unwrap_or("")
+            )));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    };
+    let rate = run(
+        &["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0"]
+            .map(std::ffi::OsStr::new)
+            .iter()
+            .copied()
+            .chain([vp6.as_os_str()])
+            .collect::<Vec<_>>(),
+        "ffprobe",
+    )?;
+    let fps = rate
+        .trim()
+        .split_once('/')
+        .and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?))
+        .filter(|f| f.is_finite() && *f > 0.0)
+        .ok_or(Error::Bad("movie frame rate unreadable"))?;
+    let pattern = dir.join("%04d.png");
+    run(
+        &[std::ffi::OsStr::new("-v"), "error".as_ref(), "-i".as_ref(), vp6.as_os_str(), pattern.as_os_str()],
+        "ffmpeg",
+    )?;
+    write(&dir.join("fps.txt"), format!("{fps}\n").as_bytes())
 }
 
 fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {

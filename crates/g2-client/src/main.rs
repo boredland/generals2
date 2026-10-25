@@ -4,7 +4,7 @@
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [match flags as above]      two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--select DEF] [...]
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--select DEF] [--movie-frame N] [...]
 //!             headless: simulate N ticks, render one frame
 //!
 //! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
@@ -34,6 +34,7 @@ mod input;
 mod look;
 mod menu;
 mod models;
+mod movie;
 mod net;
 mod sim;
 mod terrain;
@@ -62,6 +63,8 @@ struct Args {
     paused: bool,
     /// Headless only: select the local player's first entity of this def.
     select: Option<String>,
+    /// Headless only: show the imported intro movie, held at this frame.
+    movie_frame: Option<usize>,
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
@@ -86,6 +89,7 @@ fn parse_args() -> Result<Args, String> {
         menu: None,
         paused: false,
         select: None,
+        movie_frame: None,
         screenshot: None,
         record: None,
         ticks: 900,
@@ -161,6 +165,10 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "--select" => a.select = Some(it.next().ok_or("--select needs a def name")?),
+            "--movie-frame" => {
+                a.movie_frame =
+                    Some(it.next().and_then(|v| v.parse().ok()).ok_or("--movie-frame needs a frame number")?)
+            }
             "--size" => {
                 let v = it.next().ok_or("--size needs WxH")?;
                 let (w, h) = v.split_once('x').ok_or("--size needs WxH")?;
@@ -203,7 +211,15 @@ fn main() -> AppExit {
     match args.screenshot {
         Some(path) => {
             let ui = menu::Ui { screen: args.menu.unwrap_or(menu::Screen::Match), paused: args.paused, ..default() };
-            headless::run(sim, ui, args.ticks, path, args.view, args.size, args.select)
+            let capture = headless::Capture {
+                ticks: args.ticks,
+                path,
+                view: args.view,
+                size: args.size,
+                select: args.select,
+                movie_frame: args.movie_frame,
+            };
+            headless::run(sim, ui, capture)
         }
         None => windowed(sim, args.record, args.direct),
     }
@@ -309,6 +325,7 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
         input::InputPlugin,
         hud::HudPlugin,
         audio::SoundPlugin,
+        movie::MoviePlugin,
     ))
     .add_systems(Startup, spawn_camera);
     if let Some(path) = record {
@@ -352,15 +369,19 @@ mod headless {
         At(f32, f32),
     }
 
-    pub fn run(
-        mut sim: Sim,
-        ui: crate::menu::Ui,
-        ticks: u32,
-        path: String,
-        view: View,
-        size: (u32, u32),
-        select: Option<String>,
-    ) -> AppExit {
+    /// What to capture: the sim's state after `ticks`, seen through `view`, at `size`, saved
+    /// to `path`; optionally with one entity selected or the intro movie on screen.
+    pub struct Capture {
+        pub ticks: u32,
+        pub path: String,
+        pub view: View,
+        pub size: (u32, u32),
+        pub select: Option<String>,
+        pub movie_frame: Option<usize>,
+    }
+
+    pub fn run(mut sim: Sim, ui: crate::menu::Ui, capture: Capture) -> AppExit {
+        let Capture { ticks, path, view, size, select, movie_frame } = capture;
         sim.speed = 0;
         // The capture is awaited by polling for the file, so an old one at `path` would be
         // taken for the new frame and nothing would be written.
@@ -436,6 +457,16 @@ mod headless {
             return AppExit::error();
         }
         app.insert_resource(crate::input::Selection(selected.into_iter().collect()));
+        if let Some(frame) = movie_frame {
+            let Some(cache) = app.world().get_resource::<crate::alpha::Cache>().cloned() else {
+                eprintln!("--movie-frame: no imported alpha");
+                return AppExit::error();
+            };
+            if !crate::movie::hold(&mut app, &cache, frame) {
+                eprintln!("--movie-frame: the import has no intro frame {frame}");
+                return AppExit::error();
+            }
+        }
         app.finish();
         app.cleanup();
         let mut apps: SubApps = std::mem::take(app.sub_apps_mut());
@@ -515,12 +546,13 @@ mod headless {
             wait(&mut apps);
         }
         for _ in 0..600 {
-            if crate::view::alpha_models_loaded(apps.main.world()) {
+            if crate::view::alpha_models_loaded(apps.main.world()) && crate::movie::held_frame_loaded(apps.main.world())
+            {
                 break;
             }
             wait(&mut apps);
         }
-        if !crate::view::alpha_models_loaded(apps.main.world()) {
+        if !crate::view::alpha_models_loaded(apps.main.world()) || !crate::movie::held_frame_loaded(apps.main.world()) {
             eprintln!("imported alpha models did not finish loading");
             return AppExit::error();
         }

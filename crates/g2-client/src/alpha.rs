@@ -196,7 +196,7 @@ pub struct Sounds {
 impl Sounds {
     pub fn load(cache: &Cache) -> Sounds {
         let read = |paths: Vec<PathBuf>| -> Vec<Sound> {
-            paths.iter().filter_map(|p| read_wav(p).ok()).map(Wav::sound).collect()
+            paths.iter().filter_map(|p| read_wav(p).ok()).map(Wav::into_sound).collect()
         };
         let mut s = Sounds::default();
         for cue in Cue::ALL {
@@ -221,7 +221,7 @@ impl Sounds {
         s.music = cache.variations(MENU_MUSIC).first().and_then(|p| read_wav(p).ok()).map(|mut w| {
             let (from, to) = w.looped.clone().map_or((0, w.frames()), |l| (l.start, l.end));
             w.samples.truncate(to * usize::from(w.channels));
-            w.sound().looping(from)
+            w.into_sound().looping(from)
         });
         s
     }
@@ -241,7 +241,7 @@ impl Wav {
         self.samples.len() / usize::from(self.channels)
     }
 
-    fn sound(self) -> Sound {
+    pub fn into_sound(self) -> Sound {
         Sound::new(self.samples.into(), self.channels, self.rate)
     }
 }
