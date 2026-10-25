@@ -776,8 +776,13 @@ impl World {
                 if !self.attackable(player, *target) {
                     return Err(Reject::CannotAttack);
                 }
-                let units =
-                    self.own_units(player, units, |d| d.weapon().is_some()).map_err(|_| Reject::CannotAttack)?;
+                let flying = self.entities.get(*target).is_some_and(|t| self.rules.def(t.def).flies());
+                // Units whose weapons can't reach the target's domain keep their orders.
+                let units = self
+                    .own_units(player, units, |d| {
+                        d.weapon().or(d.deploy.map(|dep| dep.weapon)).is_some_and(|w| w.targets.hits(flying))
+                    })
+                    .map_err(|_| Reject::CannotAttack)?;
                 for u in units {
                     let e = self.entities.get_mut(u).unwrap();
                     e.order = Order::Attack { target: *target };
@@ -831,9 +836,9 @@ impl World {
     /// guess pairs units and slots by their order front-to-back, then left-to-right, and any
     /// two units whose straight legs still cross swap slots. A swap always shortens the total
     /// of all legs (the triangle inequality), so this ends, and the result has no crossings.
-    /// A slot inside a building or on blocked terrain moves to the nearest free cell;
-    /// otherwise the unit could never arrive, and every attempt to route there would search
-    /// the whole reachable map.
+    /// A ground unit's slot inside a building or on blocked terrain moves to the nearest free
+    /// cell; otherwise the unit could never arrive, and every attempt to route there would
+    /// search the whole reachable map. Aircraft keep theirs: they fly over both.
     fn formation(&self, units: &[EntityId], target: Vec2) -> Vec<(EntityId, Vec2)> {
         let target = self.map.clamp(target);
         let n = units.len() as i64;
@@ -855,14 +860,17 @@ impl World {
         for row in order.chunks_mut(side as usize) {
             row.sort_by_key(|&u| (-dot(pos(u) - centre, left), u));
         }
-        let slots: Vec<Vec2> = (0..n)
+        let flies: Vec<bool> =
+            order.iter().map(|&u| self.rules.def(self.entities.get(u).unwrap().def).flies()).collect();
+        let open: Vec<Vec2> = (0..n)
             .map(|i| {
                 let (row, col) = (i / side, i % side);
                 let back = spacing * Fx::from_int(row) - spacing * Fx::from_ratio(side - 1, 2);
                 let across = spacing * Fx::from_ratio(side - 1, 2) - spacing * Fx::from_int(col);
-                self.nav.free_point(self.map.clamp(target - fwd.scale(back) + left.scale(across)))
+                self.map.clamp(target - fwd.scale(back) + left.scale(across))
             })
             .collect();
+        let slots: Vec<Vec2> = open.iter().map(|&p| self.nav.free_point(p)).collect();
         let from: Vec<Vec2> = order.iter().map(|&u| pos(u)).collect();
         let mut slot_of: Vec<usize> = (0..order.len()).collect();
         // Bounded for safety: each swap shortens the total, so it converges long before this.
@@ -880,7 +888,11 @@ impl World {
                 break;
             }
         }
-        order.iter().enumerate().map(|(i, &u)| (u, slots[slot_of[i]])).collect()
+        order
+            .iter()
+            .enumerate()
+            .map(|(i, &u)| (u, if flies[i] { open[slot_of[i]] } else { slots[slot_of[i]] }))
+            .collect()
     }
 
     /// The subset of `ids` that are live units owned by `player` and match `filter`.
@@ -1107,6 +1119,12 @@ impl World {
             return (pos, true);
         }
         let stop = target + delta.scale(contact / dist);
+        // Aircraft fly straight over buildings, cliffs and water.
+        if self.rules.def(e.def).flies() {
+            let p = pos.step_toward(stop, speed);
+            self.entities.get_mut(id).unwrap().route = Route::default();
+            return (p, p.distance(target) <= contact + SLACK);
+        }
         let planned = e.route.key == self.nav_key && e.route.target.is_some_and(|t| t.distance(target) <= REPLAN);
         if !planned {
             // `find` fails only when the unit stands deep inside blocked cells; it then walks
@@ -1263,17 +1281,23 @@ impl World {
             },
             Order::Gather { pile, phase } => self.gather_step(id, pile, phase, pos, speed, radius, owner),
             Order::Attack { target } => match (weapon, self.live_enemy(owner, target).map(|t| (t.pos, t.def))) {
-                (Some(w), Some((tpos, tdef))) => {
+                // A weapon that can't reach the target's domain (a tank at a helicopter) drops
+                // the order, as an attack order on it is refused in the first place.
+                (Some(w), Some((tpos, tdef))) if w.targets.hits(self.rules.def(tdef).flies()) => {
+                    let flying = self.rules.def(tdef).flies();
                     let gap = tpos.distance(pos) - self.rules.def(tdef).radius;
+                    let reach = w.range_vs(flying).unwrap_or(Fx::ZERO);
                     match deploy {
                         // Packed, with the target beyond the cannon but within the howitzer's
                         // reach: stop and set up rather than drive closer.
-                        Some(dep) if !deployed && gap > w.range && gap <= dep.weapon.range => {
+                        Some(dep)
+                            if !deployed && gap > reach && dep.weapon.range_vs(flying).is_some_and(|r| gap <= r) =>
+                        {
                             self.start_deploy(id, dep.ticks);
                             return;
                         }
                         // Deployed but the target left the howitzer's band: pack up to follow.
-                        Some(_) if deployed && !in_band(w, gap) => {
+                        Some(_) if deployed && !in_band(w, gap, flying) => {
                             self.pack(id);
                             return;
                         }
@@ -1292,8 +1316,10 @@ impl World {
                     let target = engaged
                         .filter(|&t| {
                             self.live_enemy(owner, t).is_some_and(|e| {
+                                let d = self.rules.def(e.def);
                                 vision.is_visible(e.pos)
-                                    && e.pos.distance(pos) - self.rules.def(e.def).radius <= w.range + ACQUIRE
+                                    && w.range_vs(d.flies())
+                                        .is_some_and(|r| e.pos.distance(pos) - d.radius <= r + ACQUIRE)
                             })
                         })
                         .or_else(|| self.enemy_in_band(owner, pos, w, ACQUIRE));
@@ -1301,8 +1327,11 @@ impl World {
                         // A deployed unit can't chase: it fires at what is in its band, else
                         // waits for the guard check (Idle) to pick another target.
                         Some(t) if deployed => {
-                            let gap = self.entities.get(t).map(|e| e.pos.distance(pos) - self.rules.def(e.def).radius);
-                            if gap.is_some_and(|g| in_band(w, g)) {
+                            let band = self.entities.get(t).map(|e| {
+                                let d = self.rules.def(e.def);
+                                (e.pos.distance(pos) - d.radius, d.flies())
+                            });
+                            if band.is_some_and(|(g, f)| in_band(w, g, f)) {
                                 (self.engage(id, t, w, speed), Order::AttackMove { dest, pace, engaged: Some(t) })
                             } else {
                                 (pos, Order::Idle)
@@ -1364,12 +1393,13 @@ impl World {
         self.live_enemy(owner, target).is_some_and(|t| vision.is_visible(t.pos) || vision.memory.contains_key(&target))
     }
 
-    /// The visible enemy whose edge is nearest `pos`, in the band weapon `w` can fire at: no
-    /// closer than its shell's minimum range and no further than its range plus `extra` (the
-    /// acquisition margin). Units come before buildings, so a squad fights the army before the
-    /// walls; ties go to the lower entity id.
+    /// The visible enemy whose edge is nearest `pos`, in the band weapon `w` can fire at: of a
+    /// domain it targets (ground or air), no closer than its shell's minimum range and no
+    /// further than its range against that domain plus `extra` (the acquisition margin). Units
+    /// come before buildings, so a squad fights the army before the walls; ties go to the lower
+    /// entity id.
     fn enemy_in_band(&self, owner: PlayerId, pos: Vec2, w: crate::defs::Weapon, extra: Fx) -> Option<EntityId> {
-        let (near, reach) = (w.shell.map_or(Fx::ZERO, |s| s.min_range), w.range + extra);
+        let near = w.shell.map_or(Fx::ZERO, |s| s.min_range);
         let vision = &self.visions[owner.0 as usize];
         let mut best: Option<(bool, Fx, EntityId)> = None;
         for e in self.entities.iter() {
@@ -1377,6 +1407,8 @@ impl World {
                 continue;
             }
             let d = self.rules.def(e.def);
+            let Some(range) = w.range_vs(d.flies()) else { continue };
+            let reach = range + extra;
             // Cheap box test first: almost every entity is far away, and `distance` is a sqrt.
             let far = reach + d.radius;
             if (e.pos.x - pos.x).abs() > far || (e.pos.y - pos.y).abs() > far {
@@ -1400,20 +1432,21 @@ impl World {
     fn engage(&mut self, id: EntityId, target: EntityId, w: crate::defs::Weapon, speed: Fx) -> Vec2 {
         let t = self.entities.get(target).unwrap();
         let (tpos, tdef) = (t.pos, self.rules.def(t.def));
-        let (tr, armour) = (tdef.radius, tdef.armour);
+        let (tr, armour, flying) = (tdef.radius, tdef.armour, tdef.flies());
         let e = self.entities.get(id).unwrap();
         let (pos, ready, owner, deployed) =
             (e.pos, e.cooldown == 0, e.owner.unwrap(), e.deploy == DeployState::Deployed);
+        let Some(range) = w.range_vs(flying) else { return pos };
         let gap = pos.distance(tpos) - tr;
-        if gap > w.range {
+        if gap > range {
             if deployed {
                 return pos;
             }
             // Close to a point just inside range, so separation can't push it back out.
-            return self.approach(id, tpos, tr + w.range - SLACK, speed).0;
+            return self.approach(id, tpos, tr + range - SLACK, speed).0;
         }
         self.entities.get_mut(id).unwrap().route = Route::default();
-        if !ready || !in_band(w, gap) {
+        if !ready || !in_band(w, gap, flying) {
             return pos;
         }
         self.entities.get_mut(id).unwrap().cooldown = w.cooldown_ticks;
@@ -1454,6 +1487,10 @@ impl World {
                     continue;
                 }
                 let d = self.rules.def(e.def);
+                // Shells burst on the ground; aircraft overhead are untouched.
+                if d.flies() {
+                    continue;
+                }
                 if e.pos.distance(s.at) - d.radius > s.radius {
                     continue;
                 }
@@ -1676,7 +1713,8 @@ impl World {
     ///
     /// Collectors are exempt from unit-unit pushing: they shuttle the same narrow lanes between
     /// a pile and a depot in both directions, and two of them meeting head-on in a gap between
-    /// buildings would otherwise block each other for good.
+    /// buildings would otherwise block each other for good. Aircraft push only each other and
+    /// never against structures: they fly over them.
     fn separate_units(&mut self) {
         let ids = self.entities.ids();
         let units: Vec<EntityId> =
@@ -1697,8 +1735,13 @@ impl World {
         let mut pos: Vec<Vec2> = pushed.iter().map(|&i| self.entities.get(units[i]).unwrap().pos).collect();
         let rad: Vec<Fx> =
             pushed.iter().map(|&i| self.rules.def(self.entities.get(units[i]).unwrap().def).radius).collect();
+        let air: Vec<bool> =
+            pushed.iter().map(|&i| self.rules.def(self.entities.get(units[i]).unwrap().def).flies()).collect();
         for i in 0..pos.len() {
             for j in i + 1..pos.len() {
+                if air[i] != air[j] {
+                    continue;
+                }
                 let min = rad[i] + rad[j];
                 let delta = pos[j] - pos[i];
                 // Box test before the sqrt in `length`: nearly every pair is far apart.
@@ -1720,6 +1763,9 @@ impl World {
         }
         for &u in &units {
             let e = self.entities.get(u).unwrap();
+            if self.rules.def(e.def).flies() {
+                continue;
+            }
             let r = self.rules.def(e.def).radius;
             let mut pos = e.pos;
             for &(spos, srad) in &statics {
@@ -1807,12 +1853,14 @@ impl World {
             }
             let owner = PlayerId(i as u8);
             let faction = self.players[i].faction;
+            // Ground units only: the waves walk in, so the schedule's tuning holds.
             let roster: Vec<DefId> = self
                 .rules
                 .defs
                 .iter()
                 .filter(|d| d.faction == Some(faction) && d.role() == Some(BuildingRole::Factory))
                 .flat_map(|d| d.produces.iter().copied())
+                .filter(|&u| !self.rules.def(u).flies())
                 .collect();
             let spawn = self.map.spawns[i];
             let front = spawn + Vec2::new(Fx::ZERO, Fx::from_int(30) * self.toward_centre(spawn));
@@ -1839,10 +1887,10 @@ fn rank_for(v: Option<crate::defs::Veterancy>, experience: u32) -> u8 {
     v.map_or(0, |v| v.experience.iter().filter(|&&need| experience >= need).count() as u8)
 }
 
-/// Whether a target whose edge is `gap` away is in weapon `w`'s firing band (within range,
-/// and for a shell not inside its minimum range).
-fn in_band(w: crate::defs::Weapon, gap: Fx) -> bool {
-    gap <= w.range && w.shell.is_none_or(|s| gap >= s.min_range)
+/// Whether a target whose edge is `gap` away is in weapon `w`'s firing band: of a domain it
+/// targets, within its range against that domain, and for a shell not inside its minimum range.
+fn in_band(w: crate::defs::Weapon, gap: Fx, flying: bool) -> bool {
+    w.range_vs(flying).is_some_and(|r| gap <= r) && w.shell.is_none_or(|s| gap >= s.min_range)
 }
 
 /// The `k`-th point of a fixed ring pattern around a centre, `r` away along one of eight

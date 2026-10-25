@@ -151,6 +151,17 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
         "GLA Salvage Bay" => {
             ("BuildButtons/Active/GLA/GS_TechStructureB", "UnitPortraits/GLA/Structures/GS_TechStructureB_Portrait")
         }
+        "EU Airfield" => ("BuildButtons/Active/EU/ES_Airfield", "UnitPortraits/EU/Structures/ES_Airfield_Portrait"),
+        "APA Airfield" => ("BuildButtons/Active/APA/AS_Airfield", "UnitPortraits/APA/Structures/AS_Airfield_Portrait"),
+        "EU Valkyrie" => {
+            ("BuildButtons/Active/EU/EU_HeavyRocketHelo", "UnitPortraits/EU/Vehicles/EU_HeavyRocketHelo_Portrait")
+        }
+        "APA Mantis" => {
+            ("BuildButtons/Active/APA/AU_LightGunHelo", "UnitPortraits/APA/Vehicles/AU_LightGunHelo_Portrait")
+        }
+        "GLA Toxin Chopper" => {
+            ("BuildButtons/Active/GLA/GU_LightChemicalHelo", "UnitPortraits/GLA/Vehicles/GU_LightChemicalHelo_Portrait")
+        }
         _ => return None,
     })
 }

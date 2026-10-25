@@ -112,6 +112,11 @@ fn model_for(def: &str) -> Option<&'static str> {
         "EU Tech Lab" => "_eur/es_techstructurea/es_techstructurea_mesh",
         "EU Advanced Tech Lab" => "_eur/es_techstructureb/es_techstructureb_mesh",
         "GLA Salvage Bay" => "_gla/gs_techstructureb/gs_techstructureb_mesh",
+        "EU Airfield" => "_eur/es_airfield/es_airfield_mesh",
+        "APA Airfield" => "_asia/as_airfield/as_airfield_mesh",
+        "EU Valkyrie" => "_eur/eu_heavyrockethelo/eu_heavyrockethelo_skn_mesh",
+        "APA Mantis" => "_asia/au_lightgunhelo/au_lightgunhelo_skn_mesh",
+        "GLA Toxin Chopper" => "_gla/gu_lightchemicalhelo/gu_lightchemicalhelo_skn_mesh",
         _ => return None,
     })
 }
@@ -140,6 +145,9 @@ fn voice_for(def: &str) -> Option<(&'static str, &'static str)> {
         "GLA Scorpion Tank" => ("gla/gu_mediumcannontank", "gu_mediumcannontank"),
         "GLA Toxin Artillery" => ("gla/gu_heavytoxinartillery", "gu_heavytoxinartillery"),
         "GLA Technical" => ("gla/gu_lightreconvehicle", "gu_lightreconvehicle"),
+        "EU Valkyrie" => ("eu/eu_heavyrockethelo", "eu_heavyrockethelo"),
+        "APA Mantis" => ("apa/au_lightgunhelo", "au_lightgunhelo"),
+        "GLA Toxin Chopper" => ("gla/gu_lightchemicalhelo", "gu_lightchemicalhelo"),
         _ => return None,
     })
 }

@@ -241,7 +241,7 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     let mut root = commands.spawn((
         crate::menu::MatchEntity,
         SimRef(e.id),
-        Transform::from_translation(sim.to_world(e.pos)),
+        Transform::from_translation(sim.to_world(e.pos) + Vec3::Y * flight_height(def)),
         Visibility::default(),
     ));
     root.with_children(|c| {
@@ -403,17 +403,23 @@ fn interpolate(sim: Res<Sim>, prev: Res<Previous>, fixed: Res<Time<Fixed>>, mut 
             continue;
         }
         // Lerp on the flat sim plane, then sample the ground once, so a unit follows the
-        // terrain between ticks instead of cutting through it.
+        // terrain between ticks instead of cutting through it. Aircraft ride above it.
         let now = to_world(e.pos);
         let before = prev.0.get(&r.0).map_or(now, |&p| to_world(p));
         let mut at = before.lerp(now, alpha);
-        at.y = sim.ground_y(at.x, at.z);
+        at.y = sim.ground_y(at.x, at.z) + flight_height(sim.world.rules.def(e.def));
         tf.translation = at;
         let heading = now - before;
         if heading.length_squared() > 1e-6 {
             tf.rotation = Quat::from_rotation_y(heading.x.atan2(heading.z));
         }
     }
+}
+
+/// How high an aircraft flies above the ground: the alpha helicopters' `AirCeiling` (16.5).
+/// Ground units: 0.
+pub fn flight_height(def: &g2_sim::Def) -> f32 {
+    if def.flies() { 16.5 } else { 0.0 }
 }
 
 fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
@@ -612,7 +618,7 @@ pub fn overlay_anchor(sim: &Sim, e: &g2_sim::Entity) -> Vec3 {
         }
         _ => 4.0,
     };
-    sim.to_world(e.pos) + Vec3::Y * height
+    sim.to_world(e.pos) + Vec3::Y * (height + flight_height(def))
 }
 
 /// Whether the local player should see a collector-count label on this entity.

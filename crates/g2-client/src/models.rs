@@ -741,6 +741,45 @@ fn track(parts: &mut Vec<Part>, x: f32, l: f32, y0: f32, skirt: Slot) {
     parts.push(block(skirt, x + x.signum() * 0.45, 0.0, y0 + 0.35, 0.18, 0.75, l * 0.95));
 }
 
+/// Helicopter: cockpit glazing, fuselage, tail boom with a fin and a tail rotor, stub wings
+/// with weapon pods, and a spinning main rotor. Built around its own origin (the unit is
+/// lifted to flight height), skids hanging below. EU: hazard-striped, twin pods; APA: a chin
+/// gun; GLA: a scrap patch and a single pod.
+fn helicopter(p: &mut Vec<Part>, faction: Faction, r: f32) {
+    let l = r * 2.0;
+    p.push(block(Slot::Hull, 0.0, 0.0, -0.6, r * 0.75, 1.3, l * 0.55));
+    p.push(block(Slot::Glow, 0.0, l * 0.28, -0.4, r * 0.6, 0.9, l * 0.18));
+    p.push(block(Slot::Panel, 0.0, -l * 0.36, -0.15, 0.45, 0.45, l * 0.5));
+    p.push(block(Slot::Team, 0.0, -l * 0.6, 0.2, 0.12, 1.0, 0.7));
+    p.push(bx(Slot::Dark, Vec3::new(0.3, 0.55, -l * 0.6), Vec3::new(0.06, 1.0, 0.18)));
+    p.push(cyl(Slot::Dark, Vec3::new(0.0, 0.85, 0.0), Vec3::new(0.4, 0.3, 0.4)));
+    let mut rotor = bx(Slot::Dark, Vec3::new(0.0, 1.05, 0.0), Vec3::new(l * 1.1, 0.06, 0.3));
+    rotor.spin = true;
+    p.push(rotor);
+    for x in [-1.0, 1.0] {
+        p.push(block(Slot::Dark, x * r * 0.6, 0.1, -1.55, 0.12, 0.12, l * 0.5));
+    }
+    match faction {
+        Faction::Eu => {
+            for x in [-1.0, 1.0] {
+                p.push(block(Slot::Panel, x * r * 0.62, 0.0, -0.4, r * 0.45, 0.18, 0.5));
+                p.push(cyl(Slot::Dark, Vec3::new(x * r * 0.85, -0.5, 0.1), Vec3::new(0.45, 0.6, 0.45)));
+            }
+            p.push(block(Slot::Hazard, 0.0, 0.0, 0.1, r * 0.76, 0.12, l * 0.2));
+        }
+        Faction::Apa => {
+            p.push(block(Slot::Dark, 0.0, l * 0.36, -1.05, 0.3, 0.3, 0.7));
+            for x in [-1.0, 1.0] {
+                p.push(block(Slot::Panel, x * r * 0.62, 0.0, -0.45, r * 0.4, 0.15, 0.45));
+            }
+        }
+        Faction::Gla => {
+            p.push(block(Slot::Crate(2), r * 0.2, -l * 0.05, 0.05, r * 0.35, 0.12, l * 0.2));
+            p.push(cyl(Slot::Dark, Vec3::new(r * 0.7, -0.5, 0.05), Vec3::new(0.4, 0.55, 0.4)));
+        }
+    }
+}
+
 /// Infantry squads (several small figures) and tanks (hull, tracks, turret, barrel). Our own
 /// silhouettes: helmets and a roof band carry the team colour so sides read at game zoom; EU
 /// tanks are long and flat, APA tanks twin-barrelled, GLA tanks small and boxy.
@@ -762,6 +801,10 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
                 p.push(block(Slot::Dark, x + 0.25, z + 0.3, 0.75, 0.12, 0.12, 0.8));
             }
         }
+        return;
+    }
+    if def.flies() {
+        helicopter(p, faction, r);
         return;
     }
     if weapon.is_some_and(|w| w.shell.is_some()) || def.deploy.is_some() {

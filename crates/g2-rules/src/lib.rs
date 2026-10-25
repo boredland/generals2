@@ -5,7 +5,7 @@
 //! Everything else is a placeholder chosen for playability and will be tuned.
 use g2_sim::defs::{
     Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, General, Modifier, Power,
-    PowerKind, Rules, Shell, Upgrade, UpgradeId, Veterancy, Weapon,
+    PowerKind, Rules, Shell, Targets, Upgrade, UpgradeId, Veterancy, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -54,6 +54,11 @@ pub mod ids {
     pub const EU_TECH_LAB: DefId = DefId(39);
     pub const EU_ADVANCED_LAB: DefId = DefId(40);
     pub const GLA_SALVAGE_BAY: DefId = DefId(41);
+    pub const EU_AIRFIELD: DefId = DefId(42);
+    pub const APA_AIRFIELD: DefId = DefId(43);
+    pub const EU_VALKYRIE: DefId = DefId(44);
+    pub const APA_MANTIS: DefId = DefId(45);
+    pub const GLA_TOXIN_CHOPPER: DefId = DefId(46);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -150,7 +155,7 @@ const fn unit(
     Def {
         name,
         faction: Some(faction),
-        class: Class::Unit { speed: per_sec(speed), constructor, collector, weapon: None },
+        class: Class::Unit { speed: per_sec(speed), constructor, collector, weapon: None, flies: false },
         hp,
         armour: if matches!(faction, Faction::Gla) { Armour::Infantry } else { Armour::Light },
         cost,
@@ -187,7 +192,13 @@ const fn soldier(
     Def {
         name,
         faction: Some(faction),
-        class: Class::Unit { speed: per_sec(speed), constructor: false, collector: None, weapon: Some(weapon) },
+        class: Class::Unit {
+            speed: per_sec(speed),
+            constructor: false,
+            collector: None,
+            weapon: Some(weapon),
+            flies: false,
+        },
         hp,
         armour,
         cost,
@@ -212,8 +223,16 @@ const fn ranked(mut d: Def, health: i32, cooldown_percent: u32) -> Def {
     d
 }
 
+/// `d` flies: over everything, out of reach of ground-only weapons.
+const fn flying(mut d: Def) -> Def {
+    if let Class::Unit { speed, constructor, collector, weapon, .. } = d.class {
+        d.class = Class::Unit { speed, constructor, collector, weapon, flies: true };
+    }
+    d
+}
+
 /// `damage` plus `[infantry, light, heavy, structure]` bonuses, `range` in world units and
-/// `cooldown` in tenths of a second, as the archived cards give them.
+/// `cooldown` in tenths of a second, as the archived cards give them. Ground targets only.
 const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) -> Weapon {
     Weapon {
         damage,
@@ -221,7 +240,17 @@ const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) 
         range: Fx::from_int(range),
         cooldown_ticks: cooldown_tenths * g2_sim::TICKS_PER_SECOND / 10,
         shell: None,
+        targets: Targets::Ground,
+        air_range: None,
     }
+}
+
+/// `w` also fires at aircraft, reaching `air_range` against them (the alpha's anti-air
+/// weapon spec on the same unit).
+const fn anti_air(mut w: Weapon, air_range: i64) -> Weapon {
+    w.targets = Targets::Both;
+    w.air_range = Some(Fx::from_int(air_range));
+    w
 }
 
 /// `w` firing artillery shells: blast `radius`, flight `speed` in world units per second,
@@ -270,7 +299,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 42] = [
+static DEFS: [Def; 47] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -327,7 +356,7 @@ static DEFS: [Def; 42] = [
             14,
             true,
             None,
-            &[EU_SUPPLY, EU_POWER, EU_DERRICK, EU_BARRACKS, EU_FACTORY, EU_TECH_LAB, EU_ADVANCED_LAB],
+            &[EU_SUPPLY, EU_POWER, EU_DERRICK, EU_BARRACKS, EU_FACTORY, EU_TECH_LAB, EU_ADVANCED_LAB, EU_AIRFIELD],
         ),
         Armour::Heavy,
     ),
@@ -369,7 +398,7 @@ static DEFS: [Def; 42] = [
         13,
         true,
         None,
-        &[APA_SUPPLY, APA_POWER, APA_DERRICK, APA_BARRACKS, APA_FACTORY],
+        &[APA_SUPPLY, APA_POWER, APA_DERRICK, APA_BARRACKS, APA_FACTORY, APA_AIRFIELD],
     ),
     // src: Supply center collector cap APA 5.
     building(
@@ -502,7 +531,7 @@ static DEFS: [Def; 42] = [
         credits(900),
         25,
         9,
-        &[GLA_TANK, GLA_TOXIN_ARTILLERY, GLA_TECHNICAL],
+        &[GLA_TANK, GLA_TOXIN_ARTILLERY, GLA_TECHNICAL, GLA_TOXIN_CHOPPER],
     ),
     // src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
     ranked(
@@ -579,9 +608,20 @@ static DEFS: [Def; 42] = [
     ranked(soldier("EU Howitzer", Faction::Eu, 550, Armour::Heavy, credits(950), secs(24), 7, 3, EU_SHELL), 39, 93),
     // ---- Anti-armour infantry and fast vehicles ----------------------------------------------
     // src: Rocket Squad hp 180, $300, 16.29 s, EU barracks, anti-armour. Weapon and speed:
-    // `ROCKETS`, a placeholder.
+    // `ROCKETS`, a placeholder. The alpha's squad also fires up at aircraft, reaching 40 there
+    // (its "Anti-air Attack" spec) against 30 on the ground.
     ranked(
-        soldier("EU Rocket Squad", Faction::Eu, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+        soldier(
+            "EU Rocket Squad",
+            Faction::Eu,
+            180,
+            Armour::Infantry,
+            credits(300),
+            centis(1629),
+            8,
+            2,
+            anti_air(ROCKETS, 40),
+        ),
         18,
         93,
     ),
@@ -593,7 +633,8 @@ static DEFS: [Def; 42] = [
         91,
     ),
     // Placeholder throughout: no GLA anti-armour infantry is archived. A Rabble-priced squad
-    // with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks.
+    // with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks. The
+    // alpha's RPG targets ground and air alike (`TargetType` 0), at the same reach.
     ranked(
         soldier(
             "GLA RPG Squad",
@@ -604,7 +645,7 @@ static DEFS: [Def; 42] = [
             secs(14),
             9,
             2,
-            weapon(40, [0, 0, 60, 0], 26, 20),
+            anti_air(weapon(40, [0, 0, 60, 0], 26, 20), 26),
         ),
         14,
         93,
@@ -639,7 +680,8 @@ static DEFS: [Def; 42] = [
             centis(2330),
             12,
             3,
-            weapon(10, [12, 0, 0, 0], 32, 4),
+            // The alpha's Gatling tank turns a second gun skywards, reaching 50 there.
+            anti_air(weapon(10, [12, 0, 0, 0], 32, 4), 50),
         ),
         60,
         90,
@@ -676,6 +718,65 @@ static DEFS: [Def; 42] = [
     researching(
         building("GLA Salvage Bay", Faction::Gla, BuildingRole::Lab, 0, 750, credits(800), 20, 6, NONE),
         &[SCRAP_REPAIR],
+    ),
+    // ---- Aircraft ----------------------------------------------------------------------------
+    // src: the alpha's airfields (es_airfield, as_airfield): hp 750, $1200, 34 s, 30 power. The
+    // GLA has none; its helicopter comes from its war factory (card: Toxin Chopper "produced:
+    // GLA war factory").
+    building("EU Airfield", Faction::Eu, FACTORY, -30, 750, credits(1200), 34, 9, &[EU_VALKYRIE]),
+    building("APA Airfield", Faction::Apa, FACTORY, -30, 750, credits(1200), 34, 9, &[APA_MANTIS]),
+    // src: the alpha's helicopters, `RtsMovementComponentData` and weapon specs. EU heavy rocket
+    // helo (the Valkyrie; card hp 621, $1250, 32.58 s): speed 12, rockets 120 every 6 s at 60,
+    // ground only. APA light gun helo (the Mantis; card hp 322): speed 16, machine gun 42 (+28
+    // anti-armour) every 1.125 s at 35, ground only, $950, 24 s. GLA light chemical helo (the
+    // Toxin Chopper): speed 19, toxin missiles 26 (+12 vs infantry) every 1.125 s at 30, ground
+    // and air, hp 220, $750, 24 s. A card's number where it gives one, else the alpha's. No
+    // source gives an armour class: Light. Ranks: rank-1 health +90 / +39 / +27 and a rank-3
+    // interval of 93% (the alpha's -0.4 / -0.075 / -0.075 s).
+    ranked(
+        flying(soldier(
+            "EU Valkyrie",
+            Faction::Eu,
+            621,
+            Armour::Light,
+            credits(1250),
+            centis(3258),
+            12,
+            3,
+            weapon(120, [0, 0, 0, 0], 60, 60),
+        )),
+        90,
+        93,
+    ),
+    ranked(
+        flying(soldier(
+            "APA Mantis",
+            Faction::Apa,
+            322,
+            Armour::Light,
+            credits(950),
+            secs(24),
+            16,
+            3,
+            weapon(42, [0, 0, 28, 0], 35, 11),
+        )),
+        39,
+        93,
+    ),
+    ranked(
+        flying(soldier(
+            "GLA Toxin Chopper",
+            Faction::Gla,
+            220,
+            Armour::Light,
+            credits(750),
+            secs(24),
+            19,
+            3,
+            anti_air(weapon(26, [12, 0, 0, 0], 30, 11), 30),
+        )),
+        27,
+        93,
     ),
 ];
 
@@ -932,6 +1033,14 @@ mod tests {
             (EU_APC, "EU APC"),
             (APA_GATLING, "APA Gatling Tank"),
             (GLA_TECHNICAL, "GLA Technical"),
+            (EU_TECH_LAB, "EU Tech Lab"),
+            (EU_ADVANCED_LAB, "EU Advanced Tech Lab"),
+            (GLA_SALVAGE_BAY, "GLA Salvage Bay"),
+            (EU_AIRFIELD, "EU Airfield"),
+            (APA_AIRFIELD, "APA Airfield"),
+            (EU_VALKYRIE, "EU Valkyrie"),
+            (APA_MANTIS, "APA Mantis"),
+            (GLA_TOXIN_CHOPPER, "GLA Toxin Chopper"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);
@@ -979,7 +1088,8 @@ mod tests {
 
     /// Every faction's barracks has a rifle squad and an anti-armour squad, and the rockets
     /// beat the rifles against tanks per credit spent (damage per second against `Heavy`); the
-    /// war factory has a fast vehicle that outruns every tank and artillery piece of its side.
+    /// war factory has a fast vehicle that outruns every tank and artillery piece of its side
+    /// (aircraft aside).
     #[test]
     fn each_faction_has_anti_armour_infantry_and_a_fast_vehicle() {
         let r = rules();
@@ -1006,8 +1116,32 @@ mod tests {
                 "{} vs infantry",
                 r.def(rifles).name
             );
-            for &other in r.def(factory).produces.iter().filter(|&&d| d != fast) {
+            for &other in r.def(factory).produces.iter().filter(|&&d| d != fast && !r.def(d).flies()) {
                 assert!(r.def(fast).speed() > r.def(other).speed(), "{} vs {}", r.def(fast).name, r.def(other).name);
+            }
+        }
+    }
+
+    /// Every faction can build an aircraft and has a trainable unit that fires at aircraft, so
+    /// no helicopter is out of every enemy's reach; shells never hit aircraft.
+    #[test]
+    fn every_faction_has_aircraft_and_anti_air() {
+        let r = rules();
+        let trainable = |f: Faction| {
+            r.defs
+                .iter()
+                .filter(move |d| d.faction == Some(f) && d.is_building())
+                .flat_map(|b| b.produces.iter().map(|&u| r.def(u)))
+        };
+        for f in Faction::ALL {
+            assert!(trainable(f).any(|d| d.flies()), "{f:?} has no aircraft");
+            let aa: Vec<_> = trainable(f)
+                .filter(|d| d.weapon().is_some_and(|w| w.range_vs(true).is_some()))
+                .map(|d| d.name)
+                .collect();
+            assert!(!aa.is_empty(), "{f:?} has nothing that fires at aircraft");
+            for d in trainable(f).filter_map(|d| d.weapon().or(d.deploy.map(|x| x.weapon))) {
+                assert!(d.shell.is_none() || d.range_vs(true).is_none(), "a shell weapon targets the air");
             }
         }
     }

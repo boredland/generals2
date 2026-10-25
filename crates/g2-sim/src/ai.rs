@@ -87,6 +87,14 @@ impl Ai {
         (s > 0).then_some([Armour::Infantry, Armour::Light, Armour::Heavy][i])
     }
 
+    /// Whether any visible enemy unit flies.
+    fn enemy_air(&self, world: &World) -> bool {
+        let vision = world.vision(self.player);
+        world.entities().any(|e| {
+            e.owner.is_some_and(|o| o != self.player) && world.rules.def(e.def).flies() && vision.is_visible(e.pos)
+        })
+    }
+
     /// Where to use the general's power now, if it is ready and worth it: a barrage on the
     /// visible enemy army's strongest spot; a repair on the spot where our own units and
     /// buildings have lost the most hit points (at least 600); an ambush beside the nearest
@@ -228,17 +236,25 @@ impl Ai {
                 |pred: fn(&crate::defs::Def) -> bool| builder_def.builds.iter().copied().find(|&b| pred(rules.def(b)));
             let derrick = find(|d| matches!(d.role(), Some(BuildingRole::OilDerrick { .. })));
             let derricks = count(|r| matches!(r, BuildingRole::OilDerrick { .. }));
-            // Barracks first: the faction's factory producing the cheaper unit.
+            // Barracks first: the faction's factory producing the cheaper unit. Factories that
+            // train only aircraft (airfields) aren't part of the core base.
+            let air_only = |b: crate::defs::DefId| {
+                let p = rules.def(b).produces;
+                !p.is_empty() && p.iter().all(|&u| rules.def(u).flies())
+            };
             let factories: Vec<_> = {
                 let mut f: Vec<_> = builder_def
                     .builds
                     .iter()
                     .copied()
-                    .filter(|&b| rules.def(b).role() == Some(BuildingRole::Factory))
+                    .filter(|&b| rules.def(b).role() == Some(BuildingRole::Factory) && !air_only(b))
                     .collect();
                 f.sort_by_key(|&b| rules.def(b).produces.first().map_or(0, |&u| rules.def(u).cost.credits));
                 f
             };
+            // Normal: one airfield, once credits pile up with the core factories standing.
+            let airfield =
+                builder_def.builds.iter().copied().filter(|&b| air_only(b)).find(|&b| !mine.iter().any(|e| e.def == b));
             let missing_factory = factories.iter().copied().find(|&f| !mine.iter().any(|e| e.def == f));
             let depots: Vec<&&Entity> = mine
                 .iter()
@@ -294,6 +310,8 @@ impl Ai {
                 factories.last().copied()
             } else if smart && lab.is_some() && world.player(me).credits >= 3_000 {
                 lab
+            } else if smart && airfield.is_some() && world.player(me).credits >= 3_000 {
+                airfield
             } else {
                 derrick
             };
@@ -338,16 +356,22 @@ impl Ai {
         // 3b. Keep every factory training (one at a time, so collectors come first). A factory
         // trains the unit this AI owns fewest of, its first (the line unit) weighted double, so
         // a barracks trains two rifle squads per rocket squad and a war factory two tanks per
-        // artillery piece and per light vehicle. `Normal` then counters what it has seen: a unit
-        // whose weapon is strongest against the armour most of the visible enemy army wears
-        // counts as owned only half as much.
+        // artillery piece and per light vehicle. `Normal` then counters what it has seen: while
+        // an enemy aircraft is in sight, a unit that fires at aircraft counts as owned only half
+        // as much and wins ties; otherwise so does a unit whose weapon is strongest against the
+        // armour most of the visible enemy army wears.
         let owned = |def| {
             mine.iter().filter(|e| e.def == def).count()
                 + mine.iter().flat_map(|e| &e.queue).filter(|p| p.unit() == Some(def)).count()
         };
-        let counter = (self.level != AiLevel::Easy).then(|| self.enemy_armour(world)).flatten();
-        let counters =
-            |u: DefId| counter.is_some_and(|a| rules.def(u).weapon().is_some_and(|w| best_against(w) == a as usize));
+        let smart = self.level != AiLevel::Easy;
+        let air = smart && self.enemy_air(world);
+        let counter = (smart && !air).then(|| self.enemy_armour(world)).flatten();
+        let counters = |u: DefId| {
+            rules.def(u).weapon().is_some_and(|w| {
+                if air { w.targets.hits(true) } else { counter.is_some_and(|a| best_against(w) == a as usize) }
+            })
+        };
         for f in mine.iter().filter(|e| !saving && e.is_complete() && e.queue.is_empty()) {
             if rules.def(f.def).role() != Some(BuildingRole::Factory) {
                 continue;
@@ -358,8 +382,9 @@ impl Ai {
                 .enumerate()
                 .min_by_key(|&(i, &u)| {
                     let weight = if i == 0 { 2 } else { 4 };
-                    let weight = if counters(u) { weight / 2 } else { weight };
-                    (owned(u) * weight, i)
+                    let counter = counters(u);
+                    let weight = if counter { weight / 2 } else { weight };
+                    (owned(u) * weight, !counter, i)
                 })
                 .map(|(_, &u)| u);
             if let Some(unit) = pick

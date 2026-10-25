@@ -49,6 +49,9 @@ pub enum Class {
         constructor: bool,
         collector: Option<CollectorSpec>,
         weapon: Option<Weapon>,
+        /// Aircraft fly straight over everything, push apart only from other aircraft, and
+        /// can be hit only by weapons that target the air.
+        flies: bool,
     },
     Building {
         /// Positive: power source with this capacity. Negative: consumer drawing this much.
@@ -72,11 +75,30 @@ pub enum Armour {
     Structure,
 }
 
+/// What a weapon can fire at: the alpha's `TargetType` (0 both, 1 ground, 2 air).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Targets {
+    Ground,
+    Air,
+    Both,
+}
+
+impl Targets {
+    pub fn hits(self, flying: bool) -> bool {
+        match self {
+            Targets::Ground => !flying,
+            Targets::Air => flying,
+            Targets::Both => true,
+        }
+    }
+}
+
 /// A weapon: every `cooldown_ticks` it fires at one target whose edge is within `range` of the
 /// shooter's centre (and, for a shell, at least `min_range` away). Without a `shell` the hit is
 /// instant and deals `damage_vs(armour)` to that target. With one it lobs a shell at the spot
 /// the target stood on when it fired; the shell lands after its flight time and damages every
-/// enemy within `radius` of that spot, so a unit that moved away is missed.
+/// ground enemy within `radius` of that spot, so a unit that moved away is missed. `air_range`,
+/// when set, is the range against aircraft (the alpha's rocket squads reach further up).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Weapon {
     pub damage: i32,
@@ -85,12 +107,19 @@ pub struct Weapon {
     pub range: Fx,
     pub cooldown_ticks: u32,
     pub shell: Option<Shell>,
+    pub targets: Targets,
+    pub air_range: Option<Fx>,
 }
 
 impl Weapon {
     /// At least 1, so every hit counts.
     pub fn damage_vs(&self, armour: Armour) -> i32 {
         (self.damage + self.bonus[armour as usize]).max(1)
+    }
+
+    /// Its reach against a target that flies or not; `None` if it can't fire at one.
+    pub fn range_vs(&self, flying: bool) -> Option<Fx> {
+        self.targets.hits(flying).then(|| if flying { self.air_range.unwrap_or(self.range) } else { self.range })
     }
 }
 
@@ -207,6 +236,10 @@ impl Def {
             Class::Unit { speed, .. } => speed,
             _ => Fx::ZERO,
         }
+    }
+
+    pub fn flies(&self) -> bool {
+        matches!(self.class, Class::Unit { flies: true, .. })
     }
 
     pub fn role(&self) -> Option<BuildingRole> {
