@@ -127,6 +127,8 @@ pub enum BuildingRole {
     },
     /// Trains combat units (barracks, war factory).
     Factory,
+    /// Researches upgrades only (tech labs).
+    Lab,
 }
 
 #[derive(Clone, Debug)]
@@ -145,6 +147,8 @@ pub struct Def {
     pub builds: &'static [DefId],
     /// Deployable units only: the set-up time and the deployed weapon.
     pub deploy: Option<Deploy>,
+    /// Upgrades this building researches, after the units it trains in its build grid.
+    pub researches: &'static [UpgradeId],
 }
 
 impl Def {
@@ -243,9 +247,42 @@ pub enum Modifier {
     BuildTime { def: DefId, percent: u32 },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct UpgradeId(pub u16);
+
+/// A one-time research: once done, `effects` apply to every current and future entity of each
+/// listed def the player owns. Researched in a building's production queue, like Zero Hour's
+/// player upgrades; the buildings that offer it list it in `Def::researches`.
+#[derive(Clone, Debug)]
+pub struct Upgrade {
+    pub name: &'static str,
+    pub cost: Cost,
+    pub research_ticks: u32,
+    pub effects: &'static [(DefId, Effect)],
+}
+
+/// What an upgrade changes for one def. Percentages of the same kind add up rather than
+/// multiply (two +25% damage upgrades make +50%), the way Zero Hour stacks weapon bonuses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Effect {
+    /// Weapon damage, in percent of normal: against `against` only, or every armour class.
+    Damage { percent: i32, against: Option<Armour> },
+    /// Artillery shell damage only, in percent of normal; a direct-fire gun is unchanged.
+    ShellDamage { percent: i32 },
+    /// Time between shots, in percent of normal.
+    Cooldown { percent: u32 },
+    /// Damage taken, in percent of normal.
+    Toughness { percent: i32 },
+    /// More maximum hit points; existing entities gain the same amount of current ones.
+    Health { add: i32 },
+    /// Regains `hp` every second once `calm_ticks` have passed without being hit.
+    Repair { hp: i32, calm_ticks: u32 },
+}
+
 pub struct Rules {
     pub defs: &'static [Def],
     pub generals: &'static [General],
+    pub upgrades: &'static [Upgrade],
 }
 
 impl Rules {
@@ -259,6 +296,10 @@ impl Rules {
 
     pub fn general(&self, id: GeneralId) -> &General {
         &self.generals[id.0 as usize]
+    }
+
+    pub fn upgrade(&self, id: UpgradeId) -> &Upgrade {
+        &self.upgrades[id.0 as usize]
     }
 
     pub fn find_general(&self, name: &str) -> Option<GeneralId> {

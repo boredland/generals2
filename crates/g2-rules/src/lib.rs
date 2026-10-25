@@ -3,10 +3,9 @@
 //! Values marked `// src:` come from archived reference material, documented in notes kept
 //! outside this repository.
 //! Everything else is a placeholder chosen for playability and will be tuned.
-
 use g2_sim::defs::{
-    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Faction, General, Modifier, Power, PowerKind,
-    Rules, Shell, Weapon,
+    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, General, Modifier, Power,
+    PowerKind, Rules, Shell, Upgrade, UpgradeId, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -52,6 +51,23 @@ pub mod ids {
     pub const EU_APC: DefId = DefId(36);
     pub const APA_GATLING: DefId = DefId(37);
     pub const GLA_TECHNICAL: DefId = DefId(38);
+    pub const EU_TECH_LAB: DefId = DefId(39);
+    pub const EU_ADVANCED_LAB: DefId = DefId(40);
+    pub const GLA_SALVAGE_BAY: DefId = DefId(41);
+}
+
+/// Stable ids into `RULES.upgrades`.
+pub mod upgrades {
+    use g2_sim::defs::UpgradeId;
+    pub const HIGHTECH_ALLOYS: UpgradeId = UpgradeId(0);
+    pub const IMPROVED_BALLISTICS: UpgradeId = UpgradeId(1);
+    pub const SENIOR_WARFIGHTER: UpgradeId = UpgradeId(2);
+    pub const HIGH_EXPLOSIVES: UpgradeId = UpgradeId(3);
+    pub const HOLLOW_POINT: UpgradeId = UpgradeId(4);
+    pub const POPULATION_CONTROL: UpgradeId = UpgradeId(5);
+    pub const SHORTENED_FUSES: UpgradeId = UpgradeId(6);
+    pub const SCRAP_REPAIR: UpgradeId = UpgradeId(7);
+    pub const FIRESTORM_SHELLS: UpgradeId = UpgradeId(8);
 }
 
 /// Stable ids into `RULES.generals`.
@@ -62,6 +78,7 @@ pub mod generals {
     pub const JUNKYARD: GeneralId = GeneralId(2);
 }
 use ids::*;
+use upgrades::*;
 
 const fn secs(s: u32) -> u32 {
     s * g2_sim::TICKS_PER_SECOND
@@ -77,6 +94,7 @@ const fn credits(c: i64) -> Cost {
 }
 
 const NONE: &[DefId] = &[];
+const NO_RESEARCH: &[UpgradeId] = &[];
 
 /// Positional on purpose: each table row then reads as a single line of stats.
 #[allow(clippy::too_many_arguments)]
@@ -103,7 +121,14 @@ const fn building(
         produces,
         builds: NONE,
         deploy: None,
+        researches: NO_RESEARCH,
     }
+}
+
+/// `d` researches `upgrades`, shown after the units it trains.
+const fn researching(mut d: Def, upgrades: &'static [UpgradeId]) -> Def {
+    d.researches = upgrades;
+    d
 }
 
 /// An unarmed unit: constructor or collector. Without a sourced armour class, vehicles are
@@ -132,6 +157,7 @@ const fn unit(
         produces: NONE,
         builds,
         deploy: None,
+        researches: NO_RESEARCH,
     }
 }
 
@@ -166,6 +192,7 @@ const fn soldier(
         produces: NONE,
         builds: NONE,
         deploy: None,
+        researches: NO_RESEARCH,
     }
 }
 
@@ -227,7 +254,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 39] = [
+static DEFS: [Def; 42] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -240,6 +267,7 @@ static DEFS: [Def; 39] = [
         produces: NONE,
         builds: NONE,
         deploy: None,
+        researches: NO_RESEARCH,
     },
     Def {
         name: "Oil Well",
@@ -253,6 +281,7 @@ static DEFS: [Def; 39] = [
         produces: NONE,
         builds: NONE,
         deploy: None,
+        researches: NO_RESEARCH,
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
@@ -278,7 +307,7 @@ static DEFS: [Def; 39] = [
             14,
             true,
             None,
-            &[EU_SUPPLY, EU_POWER, EU_DERRICK, EU_BARRACKS, EU_FACTORY],
+            &[EU_SUPPLY, EU_POWER, EU_DERRICK, EU_BARRACKS, EU_FACTORY, EU_TECH_LAB, EU_ADVANCED_LAB],
         ),
         Armour::Heavy,
     ),
@@ -361,7 +390,7 @@ static DEFS: [Def; 39] = [
         16,
         true,
         Some(HARVEST_WORKER),
-        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY],
+        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY, GLA_SALVAGE_BAY],
     ),
     // src: Supply center collector cap GLA 8.
     building(
@@ -378,29 +407,53 @@ static DEFS: [Def; 39] = [
     building("GLA Oil Derrick", Faction::Gla, DERRICK, 0, 500, credits(400), 12, 5, NONE),
     // ---- Combat ----------------------------------------------------------------------------
     // Barracks numbers are placeholders. War factories copy the GLA war factory card.
-    building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 7, &[EU_RECON, EU_ROCKETS]),
+    // Researches: where the alpha's production data offers each upgrade.
+    researching(
+        building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 7, &[EU_RECON, EU_ROCKETS]),
+        &[HOLLOW_POINT],
+    ),
     building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS, EU_ARTILLERY, EU_APC]),
     // src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
     soldier("EU Recon Squad", Faction::Eu, 200, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
     // src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
     soldier("EU Aegis Tank", Faction::Eu, 660, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
-    building("APA Barracks", Faction::Apa, FACTORY, -10, 800, credits(500), 15, 7, &[APA_RED_GUARD, APA_TANK_HUNTER]),
-    building(
-        "APA War Factory",
-        Faction::Apa,
-        FACTORY,
-        -20,
-        1000,
-        credits(900),
-        25,
-        9,
-        &[APA_WARLORD, APA_THUNDERFIST, APA_GATLING],
+    researching(
+        building(
+            "APA Barracks",
+            Faction::Apa,
+            FACTORY,
+            -10,
+            800,
+            credits(500),
+            15,
+            7,
+            &[APA_RED_GUARD, APA_TANK_HUNTER],
+        ),
+        &[POPULATION_CONTROL],
+    ),
+    // The alpha researches Firestorm Shells at the advanced war factory, which isn't modelled.
+    researching(
+        building(
+            "APA War Factory",
+            Faction::Apa,
+            FACTORY,
+            -20,
+            1000,
+            credits(900),
+            25,
+            9,
+            &[APA_WARLORD, APA_THUNDERFIST, APA_GATLING],
+        ),
+        &[FIRESTORM_SHELLS],
     ),
     // src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
     soldier("APA Red Guard", Faction::Apa, 180, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
     // src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
     soldier("APA Warlord Tank", Faction::Apa, 610, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
-    building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE, GLA_RPG]),
+    researching(
+        building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE, GLA_RPG]),
+        &[SHORTENED_FUSES],
+    ),
     // src: GLA war factory hp 1000, $900, 25 s.
     building(
         "GLA War Factory",
@@ -520,12 +573,139 @@ static DEFS: [Def; 39] = [
         3,
         weapon(14, [6, 0, 0, 0], 30, 6),
     ),
+    // ---- Tech buildings ----------------------------------------------------------------------
+    // src: the alpha's blueprints: EU tech lab (es_techstructurea) hp 750, $750, 20 s, 30 power;
+    // advanced tech lab (es_techstructureb) hp 750, $1000, 25 s, 30 power; GLA salvage bay
+    // (gs_techstructureb) hp 750, $800, 20 s.
+    researching(
+        building("EU Tech Lab", Faction::Eu, BuildingRole::Lab, -30, 750, credits(750), 20, 6, NONE),
+        &[HIGHTECH_ALLOYS, IMPROVED_BALLISTICS, SENIOR_WARFIGHTER],
+    ),
+    researching(
+        building("EU Advanced Tech Lab", Faction::Eu, BuildingRole::Lab, -30, 750, credits(1000), 25, 6, NONE),
+        &[HIGH_EXPLOSIVES],
+    ),
+    researching(
+        building("GLA Salvage Bay", Faction::Gla, BuildingRole::Lab, 0, 750, credits(800), 20, 6, NONE),
+        &[SCRAP_REPAIR],
+    ),
 ];
 
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
 const HARVEST_WORKER: CollectorSpec = CollectorSpec { capacity: 40, load_ticks: secs(2), unload_ticks: secs(1) };
 
-pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS };
+pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS, upgrades: &UPGRADES };
+
+/// Zero Hour's player weapon upgrades are all +25% damage (96 of 97 `PLAYER_UPGRADE` bonuses in
+/// its `Weapon.ini`, e.g. AP Bullets, Uranium Shells).
+const ZH_DAMAGE: i32 = 125;
+
+const fn upgrade(name: &'static str, cost: i64, research_secs: u32, effects: &'static [(DefId, Effect)]) -> Upgrade {
+    Upgrade { name, cost: credits(cost), research_ticks: secs(research_secs), effects }
+}
+
+/// Every upgrade's research site, cost and time come from the alpha's production data
+/// (`RtsProductionComponentData.ResearchableUpgrades`) and which units it touches from the
+/// units' `RtsUpgradeableData`. What it does comes from the archived cards; how much, where
+/// neither says, from Zero Hour 1.04's INI data for the matching upgrade.
+static UPGRADES: [Upgrade; 9] = [
+    // src: alpha eu_structarmor, tech lab, $750, 25 s; card: "improves the armor of EU
+    // buildings". Zero Hour's Fortified Structure: structures take 75% damage
+    // (`GLAUpgradedStructureArmor`, DEFAULT 75% vs 100%).
+    upgrade(
+        "Hightech Alloys",
+        750,
+        25,
+        &[
+            (EU_CC, Effect::Toughness { percent: 75 }),
+            (EU_SUPPLY, Effect::Toughness { percent: 75 }),
+            (EU_POWER, Effect::Toughness { percent: 75 }),
+            (EU_DERRICK, Effect::Toughness { percent: 75 }),
+            (EU_BARRACKS, Effect::Toughness { percent: 75 }),
+            (EU_FACTORY, Effect::Toughness { percent: 75 }),
+            (EU_TECH_LAB, Effect::Toughness { percent: 75 }),
+            (EU_ADVANCED_LAB, Effect::Toughness { percent: 75 }),
+        ],
+    ),
+    // src: alpha eu_infattack, tech lab, $1000, 25 s, on rifle and rocket squads; card: "increases
+    // the attack damage". Zero Hour: +25%.
+    upgrade(
+        "Improved Ballistics",
+        1000,
+        25,
+        &[
+            (EU_RECON, Effect::Damage { percent: ZH_DAMAGE, against: None }),
+            (EU_ROCKETS, Effect::Damage { percent: ZH_DAMAGE, against: None }),
+        ],
+    ),
+    // src: alpha eu_infarmor, tech lab, $1000, 25 s, on rifle and rocket squads; card: "improves
+    // the armor". Zero Hour's general armour upgrade (Fortified Structure, as Hightech Alloys):
+    // 75% damage taken. Its infantry armour upgrades only resist poison, which isn't modelled.
+    upgrade(
+        "Senior Warfighter",
+        1000,
+        25,
+        &[(EU_RECON, Effect::Toughness { percent: 75 }), (EU_ROCKETS, Effect::Toughness { percent: 75 })],
+    ),
+    // src: alpha eu_vehdmg ("Advanced Ordinance"), advanced tech lab, $1250, 25 s, on the
+    // tank, rocket vehicle and APC; card "High Explosives": "increases damage of all vehicles".
+    // Zero Hour: +25%. The EU Howitzer stands in for the rocket vehicle.
+    upgrade(
+        "High Explosives",
+        1250,
+        25,
+        &[
+            (EU_AEGIS, Effect::Damage { percent: ZH_DAMAGE, against: None }),
+            (EU_ARTILLERY, Effect::Damage { percent: ZH_DAMAGE, against: None }),
+            (EU_APC, Effect::Damage { percent: ZH_DAMAGE, against: None }),
+        ],
+    ),
+    // src: alpha eu_rifleammo, EU barracks, $750, 22 s, on the rifle squad; card: "increases the
+    // attack damage dealt to enemy infantry". Zero Hour: +25%, against infantry only.
+    upgrade(
+        "Hollow Point Ammo",
+        750,
+        22,
+        &[(EU_RECON, Effect::Damage { percent: ZH_DAMAGE, against: Some(Armour::Infantry) })],
+    ),
+    // src: alpha apa_populationcontrolupgrade, APA barracks, $750, 15 s, on rifle and rocket
+    // squads; card: "adds an additional infantryman to all squads". Red Guard squads are 3,
+    // Tank Hunters 2 (cards): one squad entity gains a man's share of hit points and fire,
+    // 4/3 and 3/2.
+    upgrade(
+        "Population Control",
+        750,
+        15,
+        &[
+            (APA_RED_GUARD, Effect::Health { add: 60 }),
+            (APA_RED_GUARD, Effect::Damage { percent: 133, against: None }),
+            (APA_TANK_HUNTER, Effect::Health { add: 90 }),
+            (APA_TANK_HUNTER, Effect::Damage { percent: 150, against: None }),
+        ],
+    ),
+    // src: alpha gla_shortenedfusesupgrade, GLA barracks, $750, 20 s, on the rocket squad; card
+    // (Insurgent): "make ... fire faster". Zero Hour's fire-rate bonuses are +25% (Nationalism,
+    // `RATE_OF_FIRE 125%`): 80% of the time between shots.
+    upgrade("Shortened Fuses", 750, 20, &[(GLA_RPG, Effect::Cooldown { percent: 80 })]),
+    // src: alpha gla_scraprepair, salvage bay, $1000, 22 s, on the Scorpion, Toxin Artillery and
+    // Technical; card: "allows GLA vehicles to self-repair when not in combat". Zero Hour's Junk
+    // Repair: 2 hp a second (`AutoHealBehavior`), here after 3 s without a hit (`BaseRegenDelay`).
+    upgrade(
+        "Scrap Repair",
+        1000,
+        22,
+        &[
+            (GLA_TANK, Effect::Repair { hp: 2, calm_ticks: secs(3) }),
+            (GLA_TOXIN_ARTILLERY, Effect::Repair { hp: 2, calm_ticks: secs(3) }),
+            (GLA_TECHNICAL, Effect::Repair { hp: 2, calm_ticks: secs(3) }),
+        ],
+    ),
+    // src: alpha apa_firestormshells, $750, 45 s, on the Thunderfist; card: "equips the Thunderfist
+    // with firestorm artillery shells". The fire left behind isn't modelled; Zero Hour's Black
+    // Napalm (the Inferno cannon's upgrade) raises its fire field's damage by half (5 to 7.5),
+    // so the howitzer's shells do 150%.
+    upgrade("Firestorm Shells", 750, 45, &[(APA_THUNDERFIST, Effect::ShellDamage { percent: 150 })]),
+];
 
 /// One general per faction for now, to exercise generals-as-data. The names are documented G2
 /// generals; what each changed is not, so these economy modifiers are

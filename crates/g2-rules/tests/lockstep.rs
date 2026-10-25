@@ -225,9 +225,17 @@ fn the_build_id_follows_the_rules() {
     use g2_sim::net::build_id;
     let base = rules();
     assert_eq!(build_id(base), build_id(base));
+    let leak = |defs: Vec<g2_sim::Def>, upgrades: Vec<g2_sim::defs::Upgrade>| -> &'static g2_sim::Rules {
+        Box::leak(Box::new(g2_sim::Rules {
+            defs: Box::leak(defs.into_boxed_slice()),
+            generals: base.generals,
+            upgrades: Box::leak(upgrades.into_boxed_slice()),
+        }))
+    };
     let mut defs = base.defs.to_vec();
     defs[0].hp += 1;
-    let changed =
-        Box::leak(Box::new(g2_sim::Rules { defs: Box::leak(defs.into_boxed_slice()), generals: base.generals }));
-    assert_ne!(build_id(base), build_id(changed));
+    assert_ne!(build_id(base), build_id(leak(defs, base.upgrades.to_vec())));
+    let mut upgrades = base.upgrades.to_vec();
+    upgrades[0].cost.credits += 1;
+    assert_ne!(build_id(base), build_id(leak(base.defs.to_vec(), upgrades)), "an upgrade's price is part of the id");
 }

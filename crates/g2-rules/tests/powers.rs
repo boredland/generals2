@@ -192,15 +192,18 @@ fn matches_with_powers_replay_exactly() {
     }
 }
 
-/// A `Normal` AI with a general uses its power during the match (each faction's against an
-/// AI without a general), an `Easy` one never does, and those matches replay exactly: the
-/// AI's power commands are re-derived on replay like all its other commands.
+/// A `Normal` AI with a general uses its power during the match (in a mirror match, so the
+/// fight lasts long enough for a target worth it), an `Easy` one never does, and those matches
+/// replay exactly: the AI's power commands are re-derived on replay like all its other
+/// commands.
 #[test]
 fn the_ai_uses_its_generals_power() {
     for (f, g) in [(Faction::Eu, BULLDOG), (Faction::Apa, TASKMASTER), (Faction::Gla, JUNKYARD)] {
         let mut s = setup(f, g);
         for p in &mut s.players {
             p.ai = Some(g2_sim::AiLevel::Normal);
+            p.faction = f;
+            p.general = Some(g);
         }
         let mut used = 0;
         let mut w = World::new(&s, rules());
@@ -214,7 +217,8 @@ fn the_ai_uses_its_generals_power() {
         let mut e = World::new(&easy, rules());
         while e.winner().is_none() && e.tick() < 30 * 60 * 15 {
             e.step();
-            assert!(!e.events().iter().any(|e| matches!(e, Event::PowerUsed { .. })), "{g:?}: Easy used a power");
+            let easy_used = e.events().iter().any(|e| matches!(e, Event::PowerUsed { player: P0, .. }));
+            assert!(!easy_used, "{g:?}: Easy used a power");
         }
         let (end, replay) = record(World::new(&s, rules()), &s, w.tick(), |_| {});
         assert_eq!(end.state_hash(), w.state_hash());

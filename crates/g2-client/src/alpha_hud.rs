@@ -142,6 +142,31 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
         "GLA Technical" => {
             ("BuildButtons/Active/GLA/GU_LightReconVehicle", "UnitPortraits/GLA/Vehicles/GU_LightReconVehicle_Portrait")
         }
+        "EU Tech Lab" => {
+            ("BuildButtons/Active/EU/ES_TechStructureA", "UnitPortraits/EU/Structures/ES_TechStructureA_Portrait")
+        }
+        "EU Advanced Tech Lab" => {
+            ("BuildButtons/Active/EU/ES_TechStructureB", "UnitPortraits/EU/Structures/ES_TechStructureB_Portrait")
+        }
+        "GLA Salvage Bay" => {
+            ("BuildButtons/Active/GLA/GS_TechStructureB", "UnitPortraits/GLA/Structures/GS_TechStructureB_Portrait")
+        }
+        _ => return None,
+    })
+}
+
+/// The alpha's research button for each of our upgrades (its `ButtonIcon`), under `ui/images/`.
+pub fn upgrade_icon(upgrade: &str) -> Option<&'static str> {
+    Some(match upgrade {
+        "Hightech Alloys" => "AbilitiesUpgrades/AdvancedAlloys",
+        "Improved Ballistics" => "AbilitiesUpgrades/AdvancedBallistics",
+        "Senior Warfighter" => "AbilitiesUpgrades/AdvancedWarfighter",
+        "High Explosives" => "AbilitiesUpgrades/AdvancedOrdinance",
+        "Hollow Point Ammo" => "AbilitiesUpgrades/HollowPoint",
+        "Population Control" => "AbilitiesUpgrades/PopulationControl",
+        "Shortened Fuses" => "AbilitiesUpgrades/shortenedFuses",
+        "Scrap Repair" => "AbilitiesUpgrades/ScrapRepair",
+        "Firestorm Shells" => "AbilitiesUpgrades/FirestormShells",
         _ => return None,
     })
 }
@@ -358,6 +383,9 @@ mod tests {
         for def in g2_rules::rules().defs.iter().filter(|d| d.faction.is_some()) {
             assert!(icon_for(def.name).is_some(), "{} has no alpha icon", def.name);
         }
+        for u in g2_rules::rules().upgrades {
+            assert!(upgrade_icon(u.name).is_some(), "{} has no alpha icon", u.name);
+        }
     }
 
     /// Against a real import (`G2_ALPHA_CACHE`; skipped when unset): the layout parses, has
@@ -376,6 +404,10 @@ mod tests {
             let (icon, portrait) = icon_for(def.name).unwrap();
             assert!(exists(icon), "{}: {icon}", def.name);
             assert!(exists(portrait), "{}: {portrait}", def.name);
+        }
+        for u in g2_rules::rules().upgrades {
+            let icon = upgrade_icon(u.name).unwrap();
+            assert!(exists(icon), "{}: {icon}", u.name);
         }
         for f in [Faction::Eu, Faction::Apa, Faction::Gla] {
             assert!(exists(general_portrait(f)), "{f:?}");

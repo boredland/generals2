@@ -1,4 +1,4 @@
-use crate::defs::DefId;
+use crate::defs::{DefId, UpgradeId};
 use crate::entity::{EntityId, PlayerId};
 use crate::fixed::Vec2;
 
@@ -36,8 +36,14 @@ pub enum CommandKind {
         producer: EntityId,
         def: DefId,
     },
+    /// Cancels the last item in the producer's queue (unit or research) for a full refund.
     CancelTrain {
         producer: EntityId,
+    },
+    /// Queue the research of `upgrade` at a building that offers it.
+    Research {
+        producer: EntityId,
+        upgrade: UpgradeId,
     },
     Stop {
         units: Vec<EntityId>,
@@ -88,4 +94,6 @@ pub enum Reject {
     PowerNotReady,
     /// The point is unexplored or (for an ambush) not open ground.
     InvalidTarget,
+    /// The upgrade is already researched, or queued somewhere.
+    AlreadyResearched,
 }

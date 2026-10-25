@@ -482,7 +482,7 @@ pub(crate) fn alpha_grid(g: &mut ChildSpawnerCommands, w: f32, h: f32) {
     }
 }
 
-/// Shows each alpha build button that has something to build, with that def's icon.
+/// Shows each alpha build button that has something to build, with that slot's icon.
 fn grid_icons(
     mut commands: Commands,
     sim: Res<Sim>,
@@ -491,11 +491,9 @@ fn grid_icons(
     mut cells: Query<(Entity, &GridIcon, &mut Visibility, Option<&ImageNode>)>,
 ) {
     let Some(server) = server else { return };
-    let world = &sim.world;
     let menu = build_menu(&sim, &sel);
     for (e, cell, mut vis, img) in &mut cells {
-        let want =
-            menu.get(cell.0).and_then(|&d| crate::alpha_hud::icon_for(world.rules.def(d).name)).map(|(icon, _)| icon);
+        let want = menu.get(cell.0).and_then(|slot| slot.icon(sim.world.rules));
         match want {
             Some(icon) => {
                 let handle = crate::alpha_hud::image(&server, icon);
@@ -530,8 +528,33 @@ fn selection_portrait(
     }
 }
 
-/// What the selection can build or train right now, in grid order.
-fn build_menu(sim: &Sim, sel: &Selection) -> Vec<g2_sim::DefId> {
+/// One entry of the build grid: a building to place, a unit to train, an upgrade to research.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Slot {
+    Def(g2_sim::DefId),
+    Upgrade(g2_sim::defs::UpgradeId),
+}
+
+impl Slot {
+    pub(crate) fn name(self, rules: &g2_sim::Rules) -> &'static str {
+        match self {
+            Slot::Def(d) => rules.def(d).name,
+            Slot::Upgrade(u) => rules.upgrade(u).name,
+        }
+    }
+
+    /// The alpha's icon for the slot, under `ui/images/`.
+    fn icon(self, rules: &g2_sim::Rules) -> Option<&'static str> {
+        match self {
+            Slot::Def(d) => crate::alpha_hud::icon_for(rules.def(d).name).map(|(icon, _)| icon),
+            Slot::Upgrade(u) => crate::alpha_hud::upgrade_icon(rules.upgrade(u).name),
+        }
+    }
+}
+
+/// What the selection can build, train or research right now, in grid order: a building's
+/// units first, then its upgrades not yet researched or queued anywhere.
+pub(crate) fn build_menu(sim: &Sim, sel: &Selection) -> Vec<Slot> {
     let world = &sim.world;
     let focus = sel.0.first().and_then(|&id| world.entity(id));
     focus.map_or_else(Vec::new, |e| {
@@ -539,11 +562,20 @@ fn build_menu(sim: &Sim, sel: &Selection) -> Vec<g2_sim::DefId> {
         if !e.is_complete() {
             Vec::new()
         } else if d.is_constructor() {
-            d.builds.to_vec()
+            d.builds.iter().map(|&b| Slot::Def(b)).collect()
         } else {
-            d.produces.to_vec()
+            let research = d.researches.iter().filter(|&&u| !world.researched_or_queued(sim.local, u));
+            d.produces.iter().map(|&u| Slot::Def(u)).chain(research.map(|&u| Slot::Upgrade(u))).collect()
         }
     })
+}
+
+/// What a slot costs the local player.
+fn slot_cost(sim: &Sim, slot: Slot) -> i64 {
+    match slot {
+        Slot::Def(d) => sim.world.cost_for(sim.local, d).credits,
+        Slot::Upgrade(u) => sim.world.rules.upgrade(u).cost.credits,
+    }
 }
 
 pub(crate) fn clock(ticks: u32) -> String {
@@ -585,16 +617,7 @@ fn update_fields(
         let training = focus.is_some_and(|e| !e.queue.is_empty());
         row.display = if training { Display::Flex } else { Display::None };
     }
-    let menu: &[g2_sim::DefId] = focus.map_or(&[], |e| {
-        let d = rules.def(e.def);
-        if !e.is_complete() {
-            &[]
-        } else if d.is_constructor() {
-            d.builds
-        } else {
-            d.produces
-        }
-    });
+    let menu = build_menu(&sim, &sel);
     for (field, mut t, node) in &mut fields {
         match field {
             Field::Clock => t.0 = clock(world.tick()),
@@ -673,31 +696,36 @@ fn update_fields(
             }
             Field::Queue => {
                 t.0 = focus.and_then(|e| e.queue.first()).map_or(String::new(), |p| {
-                    format!("Training {} ({})", rules.def(p.def).name, focus.unwrap().queue.len())
+                    let n = focus.unwrap().queue.len();
+                    match p.item {
+                        g2_sim::entity::Product::Unit(d) => format!("Training {} ({n})", rules.def(d).name),
+                        g2_sim::entity::Product::Upgrade(u) => format!("Researching {} ({n})", rules.upgrade(u).name),
+                    }
                 })
             }
             Field::QueueBar => {
                 if let Some(mut n) = node {
                     let pct = focus.and_then(|e| e.queue.first().zip(e.owner)).map_or(0.0, |(p, owner)| {
-                        p.progress_halves as f32 / (world.build_ticks_for(owner, p.def) * 2) as f32 * 100.0
+                        p.progress_halves as f32 / (world.item_ticks(owner, p.item) * 2) as f32 * 100.0
                     });
                     n.width = percent(pct);
                 }
             }
             Field::GridCell(i) => {
                 t.0 = match menu.get(*i) {
-                    Some(&def) => {
-                        let d = rules.def(def);
-                        let short = d.name.split_once(' ').map_or(d.name, |(_, rest)| rest);
-                        format!("{} {}  ${}", i + 1, short, world.cost_for(sim.local, def).credits)
+                    Some(&slot) => {
+                        let name = slot.name(rules);
+                        let short = match slot {
+                            Slot::Def(_) => name.split_once(' ').map_or(name, |(_, rest)| rest),
+                            Slot::Upgrade(_) => name,
+                        };
+                        format!("{} {}  ${}", i + 1, short, slot_cost(&sim, slot))
                     }
                     None => format!("{}", i + 1),
                 }
             }
             Field::GridTag(i) => {
-                t.0 = menu
-                    .get(*i)
-                    .map_or(String::new(), |&def| format!("{} ${}", i + 1, world.cost_for(sim.local, def).credits))
+                t.0 = menu.get(*i).map_or(String::new(), |&slot| format!("{} ${}", i + 1, slot_cost(&sim, slot)))
             }
         }
     }

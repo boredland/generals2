@@ -109,6 +109,9 @@ fn model_for(def: &str) -> Option<&'static str> {
         "GLA Scorpion Tank" => "_gla/gu_mediumcannontank/gu_mediumcannontank_skn_mesh",
         "GLA Toxin Artillery" => "_gla/gu_heavytoxinartillery/gu_heavytoxinartillery_skn_mesh",
         "GLA Technical" => "_gla/gu_lightreconvehicle/gu_lightreconvehicle_skn_mesh",
+        "EU Tech Lab" => "_eur/es_techstructurea/es_techstructurea_mesh",
+        "EU Advanced Tech Lab" => "_eur/es_techstructureb/es_techstructureb_mesh",
+        "GLA Salvage Bay" => "_gla/gs_techstructureb/gs_techstructureb_mesh",
         _ => return None,
     })
 }

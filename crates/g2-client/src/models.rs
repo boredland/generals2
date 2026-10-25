@@ -333,6 +333,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
         (Faction::Gla, BuildingRole::CommandCenter) => fortress(&mut p, w),
         (Faction::Gla, BuildingRole::Factory) if r < 8.0 => camp(&mut p, w),
         (Faction::Gla, BuildingRole::Factory) => workshop(&mut p, w),
+        (Faction::Gla, BuildingRole::Lab) => salvage_bay(&mut p, w),
         (Faction::Gla, _) => {
             let top = tier(&mut p, 0.0, 0.0, 0.0, w * 0.8, w * 0.8, 3.6, Slot::Hull);
             sandbags(&mut p, -w * 0.4, w * 0.42, w * 0.4, w * 0.42, 0.0, 6);
@@ -346,6 +347,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
         (_, BuildingRole::PowerPlant) => plant(&mut p, faction, w),
         (_, BuildingRole::Factory) if r < 8.0 => barracks(&mut p, faction, w),
         (_, BuildingRole::Factory) => war_factory(&mut p, faction, w),
+        (_, BuildingRole::Lab) => lab(&mut p, faction, w),
     }
     p
 }
@@ -498,6 +500,29 @@ fn war_factory(p: &mut Vec<Part>, faction: Faction, w: f32) {
     p.push(block(accent, w * 0.48, 0.0, 3.5, 0.28, 2.2, w * 0.36));
 }
 
+/// Tech lab: a compact research block under a dome, with a lit window band, sensor mast and
+/// dish, and a cooling unit at the back.
+fn lab(p: &mut Vec<Part>, faction: Faction, w: f32) {
+    let accent = if faction == Faction::Eu { Slot::Hazard } else { Slot::Team };
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.02, 0.5, w * 1.02));
+    p.push(block(Slot::Hull, 0.0, 0.0, 0.5, w * 0.8, 3.4, w * 0.7));
+    corner_trim(p, 0.0, 0.0, w * 0.8, w * 0.7, 0.5, 3.4, accent);
+    wall_ribs(p, 0.0, w * 0.355, 0.5, 3.9, w * 0.74, 5, true);
+    p.push(block(Slot::Glow, 0.0, w * 0.36, 2.4, w * 0.66, 0.5, 0.12));
+    p.push(block(Slot::Dark, 0.0, w * 0.36, 0.5, w * 0.2, 1.8, 0.28));
+    p.push(block(accent, 0.0, w * 0.36, 2.0, w * 0.28, 0.3, 0.3));
+    p.push(cyl(Slot::Panel, Vec3::new(0.0, 4.3, -w * 0.05), Vec3::new(w * 0.5, 0.8, w * 0.5)));
+    p.push(part(Prim::Sphere, Slot::Panel, Vec3::new(0.0, 4.7, -w * 0.05), Vec3::new(w * 0.46, w * 0.3, w * 0.46)));
+    p.push(cyl(accent, Vec3::new(0.0, 4.75, -w * 0.05), Vec3::new(w * 0.52, 0.2, w * 0.52)));
+    mast(p, w * 0.3, w * 0.2, 3.9);
+    dish(p, -w * 0.28, w * 0.18, 3.9);
+    p.push(block(Slot::Dark, w * 0.2, -w * 0.42, 0.5, w * 0.3, 1.4, w * 0.14));
+    p.push(block(Slot::Panel, -w * 0.2, -w * 0.42, 0.5, w * 0.26, 1.0, w * 0.14));
+    hazard_trim(p, w * 0.8, w * 0.7, 3.9);
+    roof_rail(p, w * 0.8, w * 0.7, 3.9, 0.8, 0b1011);
+    greebles(p, -w * 0.25, -w * 0.25, w * 0.16, w * 0.14, 3.9, 57, 3);
+}
+
 /// GLA supply stash: a wooden platform of mixed crates with a lookout post and sandbagged edges.
 fn stash(p: &mut Vec<Part>, w: f32) {
     p.push(block(Slot::Wood, 0.0, 0.0, 0.0, w * 1.02, 0.7, w * 1.02));
@@ -592,6 +617,22 @@ fn camp(p: &mut Vec<Part>, w: f32) {
     mast(p, -w * 0.24, -w * 0.22, top);
     scrap(p, w * 0.28, -w * 0.05, top, w * 0.22, w * 0.18, 53);
     greebles(p, 0.0, -w * 0.1, w * 0.24, w * 0.16, top, 27, 4);
+}
+
+/// GLA salvage bay: a scrap shed beside two heaps of salvage, a crane arm over them.
+fn salvage_bay(p: &mut Vec<Part>, w: f32) {
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.02, 0.4, w * 1.02));
+    p.push(block(Slot::Hull, -w * 0.15, -w * 0.1, 0.4, w * 0.6, 3.0, w * 0.6));
+    wall_seams(p, -w * 0.15, w * 0.2, 0.8, w * 0.56, 3, true);
+    p.push(block(Slot::Dark, -w * 0.15, w * 0.2, 0.4, w * 0.34, 2.2, 0.26));
+    p.push(block(Slot::Team, -w * 0.15, w * 0.21, 2.7, w * 0.4, 0.35, 0.12));
+    let top = tier(p, -w * 0.15, -w * 0.1, 3.4, w * 0.5, w * 0.5, 0.6, Slot::Panel);
+    scrap(p, w * 0.3, w * 0.22, 0.4, w * 0.3, w * 0.34, 41);
+    scrap(p, w * 0.32, -w * 0.25, 0.4, w * 0.26, w * 0.26, 43);
+    p.push(block(Slot::Dark, w * 0.15, -w * 0.02, 0.4, 0.5, 5.0, 0.5));
+    p.push(block(Slot::Hazard, w * 0.28, -w * 0.02, 5.0, w * 0.3, 0.35, 0.35));
+    sandbags(p, -w * 0.45, w * 0.44, w * 0.05, w * 0.44, 0.4, 5);
+    mast(p, -w * 0.32, -w * 0.3, top);
 }
 
 fn derrick(p: &mut Vec<Part>, faction: Faction, r: f32) {

@@ -1,7 +1,9 @@
 use crate::ai::Ai;
 use crate::command::{Command, CommandKind, Reject};
-use crate::defs::{BuildingRole, Class, DefId, Faction, PowerKind, Rules};
-use crate::entity::{DeployState, Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Production, Route};
+use crate::defs::{BuildingRole, Class, DefId, Effect, Faction, PowerKind, Rules, UpgradeId};
+use crate::entity::{
+    DeployState, Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Product, Production, Route,
+};
 use crate::fixed::{Fx, Vec2};
 use crate::map::{AiLevel, MapDef, MatchSetup};
 use crate::rng::Pcg32;
@@ -33,6 +35,8 @@ pub struct Player {
     pub defeated: bool,
     /// First tick the general's power can be used again; `None` without a power.
     pub power_ready: Option<u32>,
+    /// Researched upgrades, in ascending id order.
+    pub upgrades: Vec<UpgradeId>,
 }
 
 /// Running totals for the end-of-match screen. Output only: nothing in the simulation reads
@@ -107,6 +111,12 @@ pub enum Event {
     /// `player` used their general's power at `at`. Output only.
     PowerUsed {
         player: PlayerId,
+        at: Vec2,
+    },
+    /// `player` finished researching `upgrade` at the building standing at `at`. Output only.
+    Researched {
+        player: PlayerId,
+        upgrade: UpgradeId,
         at: Vec2,
     },
 }
@@ -208,6 +218,7 @@ impl World {
                 power_drain: 0,
                 defeated: false,
                 power_ready: p.general.and_then(|g| rules.general(g).power).map(|pw| pw.first_ticks),
+                upgrades: Vec::new(),
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
             // The onslaught has no base: its waves are all there is of it.
@@ -246,6 +257,7 @@ impl World {
             income_ticks: 0,
             cooldown: 0,
             deploy: DeployState::Packed,
+            last_hit: None,
             route: Route::default(),
         }
     }
@@ -255,8 +267,9 @@ impl World {
         self.entities.spawn(|id| Entity { resource, ..Self::blank_entity(id, def, hp, pos) })
     }
 
+    /// At full health, including any health upgrades the owner already researched.
     fn spawn_owned(&mut self, def: DefId, owner: PlayerId, pos: Vec2) -> EntityId {
-        let hp = self.rules.def(def).hp;
+        let hp = self.max_hp_of(Some(owner), def);
         self.entities.spawn(|id| Entity { owner: Some(owner), ..Self::blank_entity(id, def, hp, pos) })
     }
 
@@ -336,11 +349,72 @@ impl World {
     /// Collectors bound to `center` plus collectors queued there.
     pub fn depot_load(&self, center: EntityId) -> u32 {
         let bound = self.entities.iter().filter(|e| e.home == Some(center)).count();
-        let queued = self
-            .entities
-            .get(center)
-            .map_or(0, |c| c.queue.iter().filter(|p| self.rules.def(p.def).collector().is_some()).count());
+        let queued = self.entities.get(center).map_or(0, |c| {
+            c.queue.iter().filter_map(|p| p.unit()).filter(|&d| self.rules.def(d).collector().is_some()).count()
+        });
         (bound + queued) as u32
+    }
+
+    /// Whether `player` has researched `upgrade` or has it in any production queue.
+    pub fn researched_or_queued(&self, player: PlayerId, upgrade: UpgradeId) -> bool {
+        self.player(player).upgrades.contains(&upgrade)
+            || self
+                .entities
+                .iter()
+                .any(|e| e.owner == Some(player) && e.queue.iter().any(|p| p.item == Product::Upgrade(upgrade)))
+    }
+
+    /// Every upgrade effect `player` has researched for `def`.
+    pub fn effects(&self, player: PlayerId, def: DefId) -> impl Iterator<Item = Effect> + '_ {
+        self.player(player)
+            .upgrades
+            .iter()
+            .flat_map(|&u| self.rules.upgrade(u).effects.iter())
+            .filter(move |&&(d, _)| d == def)
+            .map(|&(_, e)| e)
+    }
+
+    /// Maximum hit points: the def's, plus any health upgrades its owner researched.
+    pub fn max_hp(&self, e: &Entity) -> i32 {
+        self.max_hp_of(e.owner, e.def)
+    }
+
+    fn max_hp_of(&self, owner: Option<PlayerId>, def: DefId) -> i32 {
+        let extra = owner.map_or(0, |o| {
+            self.effects(o, def)
+                .map(|x| match x {
+                    Effect::Health { add } => add,
+                    _ => 0,
+                })
+                .sum()
+        });
+        self.rules.def(def).hp + extra
+    }
+
+    /// `w` as `owner`'s upgrades leave it for a `def`: damage and fire rate. Percentages of a
+    /// kind add up, so the result does not depend on research order.
+    fn upgraded_weapon(&self, owner: PlayerId, def: DefId, mut w: crate::defs::Weapon) -> crate::defs::Weapon {
+        let (mut all, mut vs, mut cooldown, mut any) = (0, [0; 4], 0, false);
+        for x in self.effects(owner, def) {
+            match x {
+                Effect::Damage { percent, against: None } => all += percent - 100,
+                Effect::Damage { percent, against: Some(a) } => vs[a as usize] += percent - 100,
+                Effect::ShellDamage { percent } if w.shell.is_some() => all += percent - 100,
+                Effect::Cooldown { percent } => cooldown += percent as i32 - 100,
+                _ => continue,
+            }
+            any = true;
+        }
+        if !any {
+            return w;
+        }
+        let damage = w.damage * (100 + all) / 100;
+        for (a, bonus) in w.bonus.iter_mut().enumerate() {
+            *bonus = (w.damage + *bonus) * (100 + all + vs[a]) / 100 - damage;
+        }
+        w.damage = damage;
+        w.cooldown_ticks = (w.cooldown_ticks as i32 * (100 + cooldown) / 100).max(1) as u32;
+        w
     }
 
     pub fn nearest_pile(&self, from: Vec2) -> Option<EntityId> {
@@ -441,6 +515,8 @@ impl World {
         // damage joins the same simultaneous resolution.
         self.land_shells();
         self.resolve_shots();
+        // After the shots, so a unit hit this tick has its quiet spell restart before it heals.
+        self.update_repairs();
         self.separate_units();
         self.update_derricks();
         // Defeat first, so an eliminated player's remaining units go in the same tick.
@@ -511,20 +587,35 @@ impl World {
         self.rules.build_ticks(self.player(player).general, def)
     }
 
-    fn afford(&self, player: PlayerId, def: DefId) -> Result<(), Reject> {
-        let cost = self.cost_for(player, def);
-        let p = self.player(player);
-        if p.credits < cost.credits {
+    /// What a queue item costs `player`: a unit after their general's modifiers, a research
+    /// at its listed price.
+    pub fn item_cost(&self, player: PlayerId, item: Product) -> i64 {
+        match item {
+            Product::Unit(d) => self.cost_for(player, d).credits,
+            Product::Upgrade(u) => self.rules.upgrade(u).cost.credits,
+        }
+    }
+
+    /// Full-speed ticks a queue item takes for `player`.
+    pub fn item_ticks(&self, player: PlayerId, item: Product) -> u32 {
+        match item {
+            Product::Unit(d) => self.build_ticks_for(player, d),
+            Product::Upgrade(u) => self.rules.upgrade(u).research_ticks.max(1),
+        }
+    }
+
+    fn afford(&self, player: PlayerId, item: Product) -> Result<(), Reject> {
+        if self.player(player).credits < self.item_cost(player, item) {
             return Err(Reject::InsufficientFunds);
         }
         Ok(())
     }
 
-    fn pay(&mut self, player: PlayerId, def: DefId, sign: i64) {
-        let cost = self.cost_for(player, def);
+    fn pay(&mut self, player: PlayerId, item: Product, sign: i64) {
+        let cost = self.item_cost(player, item);
         let p = &mut self.players[player.0 as usize];
-        p.credits -= sign * cost.credits;
-        self.stats[player.0 as usize].spent += sign * cost.credits;
+        p.credits -= sign * cost;
+        self.stats[player.0 as usize].spent += sign * cost;
     }
 
     fn apply(&mut self, cmd: &Command) -> Result<(), Reject> {
@@ -572,8 +663,8 @@ impl World {
                     return Err(Reject::CannotBuild);
                 }
                 let (pos, well) = self.check_placement(*def, *pos)?;
-                self.afford(player, *def)?;
-                self.pay(player, *def, 1);
+                self.afford(player, Product::Unit(*def))?;
+                self.pay(player, Product::Unit(*def), 1);
                 let site = self.spawn_owned(*def, player, pos);
                 let s = self.entities.get_mut(site).unwrap();
                 s.construction = Some(0);
@@ -610,15 +701,33 @@ impl World {
                 {
                     return Err(Reject::DepotFull);
                 }
-                self.afford(player, *def)?;
-                self.pay(player, *def, 1);
-                self.entities.get_mut(*producer).unwrap().queue.push(Production { def: *def, progress_halves: 0 });
+                let item = Product::Unit(*def);
+                self.afford(player, item)?;
+                self.pay(player, item, 1);
+                self.entities.get_mut(*producer).unwrap().queue.push(Production { item, progress_halves: 0 });
+                Ok(())
+            }
+            CommandKind::Research { producer, upgrade } => {
+                let p = self.owned(player, *producer)?;
+                if !p.is_complete() || !self.rules.def(p.def).researches.contains(upgrade) {
+                    return Err(Reject::CannotProduce);
+                }
+                if p.queue.len() >= MAX_QUEUE {
+                    return Err(Reject::QueueFull);
+                }
+                if self.researched_or_queued(player, *upgrade) {
+                    return Err(Reject::AlreadyResearched);
+                }
+                let item = Product::Upgrade(*upgrade);
+                self.afford(player, item)?;
+                self.pay(player, item, 1);
+                self.entities.get_mut(*producer).unwrap().queue.push(Production { item, progress_halves: 0 });
                 Ok(())
             }
             CommandKind::CancelTrain { producer } => {
                 self.owned(player, *producer)?;
                 let item = self.entities.get_mut(*producer).unwrap().queue.pop().ok_or(Reject::CannotProduce)?;
-                self.pay(player, item.def, -1);
+                self.pay(player, item.item, -1);
                 Ok(())
             }
             CommandKind::Stop { units } => {
@@ -820,18 +929,27 @@ impl World {
             if !e.is_complete() || e.queue.is_empty() {
                 continue;
             }
-            let need = self.build_ticks_for(e.owner.unwrap(), e.queue[0].def) * 2;
+            let owner = e.owner.unwrap();
+            let need = self.item_ticks(owner, e.queue[0].item) * 2;
             let e = self.entities.get_mut(id).unwrap();
             let step = if e.powered { 2 } else { 1 };
             let front = &mut e.queue[0];
             front.progress_halves += step;
-            let def = front.def;
+            let item = front.item;
             if front.progress_halves < need {
                 continue;
             }
             e.queue.remove(0);
-            let (owner, pos, radius) = (e.owner.unwrap(), e.pos, self.rules.def(e.def).radius);
-            let is_depot = matches!(self.rules.def(e.def).role(), Some(BuildingRole::SupplyCenter { .. }));
+            let (pos, radius, building) = (e.pos, self.rules.def(e.def).radius, e.def);
+            let def = match item {
+                Product::Unit(def) => def,
+                Product::Upgrade(upgrade) => {
+                    self.finish_research(owner, upgrade);
+                    self.events.push(Event::Researched { player: owner, upgrade, at: pos });
+                    continue;
+                }
+            };
+            let is_depot = matches!(self.rules.def(building).role(), Some(BuildingRole::SupplyCenter { .. }));
             let ud = self.rules.def(def);
             // On the side facing the map centre, so mirrored starts produce mirrored units.
             let side = self.toward_centre(pos);
@@ -846,6 +964,48 @@ impl World {
                 let u = self.entities.get_mut(unit).unwrap();
                 u.home = Some(id);
                 u.order = Order::Gather { pile, phase: GatherPhase::ToPile };
+            }
+        }
+    }
+
+    /// Records the upgrade and gives entities the player already has the extra hit points of
+    /// any health effect (Zero Hour's `ADD_CURRENT_HEALTH_TOO`: 400/500 becomes 500/600).
+    fn finish_research(&mut self, player: PlayerId, upgrade: UpgradeId) {
+        let p = &mut self.players[player.0 as usize];
+        let at = p.upgrades.binary_search(&upgrade).unwrap_or_else(|i| i);
+        p.upgrades.insert(at, upgrade);
+        for &(def, effect) in self.rules.upgrade(upgrade).effects {
+            let Effect::Health { add } = effect else { continue };
+            for id in self.entities.ids() {
+                let e = self.entities.get_mut(id).unwrap();
+                if e.owner == Some(player) && e.def == def && e.hp > 0 {
+                    e.hp += add;
+                }
+            }
+        }
+    }
+
+    /// Repair upgrades: every second, an entity that hasn't been hit for its effect's quiet
+    /// spell regains hit points, up to its maximum. Buildings under construction are left alone.
+    fn update_repairs(&mut self) {
+        if !self.tick.is_multiple_of(TICKS_PER_SECOND) {
+            return;
+        }
+        for id in self.entities.ids() {
+            let e = self.entities.get(id).unwrap();
+            let (Some(owner), true, true) = (e.owner, e.hp > 0, e.is_complete()) else { continue };
+            let calm = |t: u32| e.last_hit.is_none_or(|h| self.tick >= h + t);
+            let heal: i32 = self
+                .effects(owner, e.def)
+                .map(|x| match x {
+                    Effect::Repair { hp, calm_ticks } if calm(calm_ticks) => hp,
+                    _ => 0,
+                })
+                .sum();
+            let max = self.max_hp(e);
+            if heal > 0 && e.hp < max {
+                let e = self.entities.get_mut(id).unwrap();
+                e.hp = (e.hp + heal).min(max);
             }
         }
     }
@@ -994,7 +1154,11 @@ impl World {
         let e = self.entities.get(id).unwrap();
         let d = self.rules.def(e.def);
         let (pos, speed, radius, owner, order) = (e.pos, d.speed(), d.radius, e.owner.unwrap(), e.order);
-        let deploy = d.deploy;
+        let def = e.def;
+        let deploy = d.deploy.map(|mut dep| {
+            dep.weapon = self.upgraded_weapon(owner, def, dep.weapon);
+            dep
+        });
         let state = e.deploy;
         if d.weapon().is_some() {
             let e = self.entities.get_mut(id).unwrap();
@@ -1022,7 +1186,7 @@ impl World {
             DeployState::Packed | DeployState::Deployed => {}
         }
         let deployed = state == DeployState::Deployed;
-        let weapon = d.weapon_for(deployed);
+        let weapon = d.weapon_for(deployed).map(|w| self.upgraded_weapon(owner, def, w));
         // A deployed unit given anything that moves it packs up first; the order waits. On an
         // attack-move it stays set up while its howitzer has a target, and moves on after.
         let moves = match order {
@@ -1296,9 +1460,10 @@ impl World {
             }
             PowerKind::Repair { radius, hp } => {
                 for id in self.entities.ids() {
-                    let e = self.entities.get_mut(id).unwrap();
-                    let max = self.rules.def(e.def).hp;
+                    let e = self.entities.get(id).unwrap();
                     if e.owner == Some(player) && e.hp > 0 && e.pos.distance(at) <= radius {
+                        let max = self.max_hp(e);
+                        let e = self.entities.get_mut(id).unwrap();
                         e.hp = (e.hp + hp).min(max);
                     }
                 }
@@ -1328,11 +1493,24 @@ impl World {
     /// Applies this tick's shots together, so every unit alive at the start of the tick fires
     /// and the outcome does not depend on entity order: two units that shoot each other both
     /// land their hit. `killed` is reported once, by the shot that took the target to zero.
+    /// The target's toughness upgrades scale each hit (at least 1 damage still lands).
     fn resolve_shots(&mut self) {
         for (shooter, by, target, damage, splash) in core::mem::take(&mut self.shots) {
-            let Some(t) = self.entities.get_mut(target) else { continue };
+            let Some(t) = self.entities.get(target) else { continue };
+            let toughness: i32 = t.owner.map_or(0, |o| {
+                self.effects(o, t.def)
+                    .map(|x| match x {
+                        Effect::Toughness { percent } => percent - 100,
+                        _ => 0,
+                    })
+                    .sum()
+            });
+            let damage = if toughness == 0 { damage } else { (damage * (100 + toughness) / 100).max(1) };
+            let tick = self.tick;
+            let t = self.entities.get_mut(target).unwrap();
             let was_alive = t.hp > 0;
             t.hp -= damage;
+            t.last_hit = Some(tick);
             let killed = was_alive && t.hp <= 0;
             let at = t.pos;
             let (victim, def) = (t.owner, t.def);

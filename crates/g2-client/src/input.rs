@@ -233,17 +233,16 @@ fn hud_click(
 }
 
 /// What a build-grid slot does for the selection: a constructor's slot starts placing that
-/// building, a building's queues that unit. Shared by the 1-9 keys and the grid buttons.
+/// building, a building's trains that unit or researches that upgrade. Shared by the 1-9 keys
+/// and the grid buttons, and read from the same menu the grid shows.
 fn press_slot(sim: &mut Sim, sel: &Selection, placing: &mut Placement, i: usize) {
-    let rules = sim.world.rules;
-    if let Some(builder) = selected_constructor(sim, sel) {
-        if let Some(&def) = rules.def(sim.world.entity(builder).unwrap().def).builds.get(i) {
-            placing.0 = Some(def);
-        }
-    } else if let Some(producer) = selected_building(sim, sel)
-        && let Some(&def) = rules.def(sim.world.entity(producer).unwrap().def).produces.get(i)
-    {
-        sim.order(CommandKind::Train { producer, def });
+    use crate::hud::Slot;
+    let Some(&slot) = crate::hud::build_menu(sim, sel).get(i) else { return };
+    match (slot, selected_constructor(sim, sel), selected_building(sim, sel)) {
+        (Slot::Def(def), Some(_), _) => placing.0 = Some(def),
+        (Slot::Def(def), None, Some(producer)) => sim.order(CommandKind::Train { producer, def }),
+        (Slot::Upgrade(upgrade), None, Some(producer)) => sim.order(CommandKind::Research { producer, upgrade }),
+        _ => {}
     }
 }
 

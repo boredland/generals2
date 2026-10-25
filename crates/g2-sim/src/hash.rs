@@ -68,6 +68,10 @@ impl World {
             if let Some(t) = p.power_ready {
                 h.u64(0x7077_0000_0000 | t as u64);
             }
+            // Only once something is researched, so matches without upgrades hash as before.
+            for u in &p.upgrades {
+                h.u64(0x7570_0000 | u.0 as u64);
+            }
         }
         for v in &self.visions {
             v.hash_into(|x| h.u64(x));
@@ -90,7 +94,10 @@ impl World {
             h.u64(e.construction.map_or(u64::MAX, u64::from));
             h.u64(e.queue.len() as u64);
             for q in &e.queue {
-                h.u64(q.def.0 as u64);
+                match q.item {
+                    crate::entity::Product::Unit(d) => h.u64(d.0 as u64),
+                    crate::entity::Product::Upgrade(u) => h.u64(0x7570_0000 | u.0 as u64),
+                }
                 h.u64(q.progress_halves as u64);
             }
             h.i64(e.resource);
@@ -99,6 +106,11 @@ impl World {
             h.u64(e.powered as u64);
             h.u64(e.income_ticks as u64);
             h.u64(e.cooldown as u64);
+            // Only repair upgrades read it, so only owners with upgrades hash it; matches
+            // without upgrades hash as before.
+            if e.owner.is_some_and(|o| !self.players[o.0 as usize].upgrades.is_empty()) {
+                h.u64(e.last_hit.map_or(u64::MAX, u64::from));
+            }
             h.u64(match e.deploy {
                 crate::entity::DeployState::Packed => 0,
                 crate::entity::DeployState::Deploying(t) => 1 << 32 | t as u64,

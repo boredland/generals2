@@ -137,7 +137,7 @@ impl Ai {
                 let weight = |p: Vec2| {
                     mine.iter()
                         .filter(|e| e.pos.distance(p) <= radius)
-                        .map(|e| (world.rules.def(e.def).hp - e.hp).max(0) as i64)
+                        .map(|e| (world.max_hp(e) - e.hp).max(0) as i64)
                         .sum()
                 };
                 best(&points, &weight).filter(|&(w, _)| w >= 600).map(|(_, p)| p)
@@ -193,7 +193,11 @@ impl Ai {
         // 0. Never be left without a constructor: one lost (or never built) is retrained, and
         //    until it is queued the army waits, so its credits can't keep the rebuild away.
         let constructors = mine.iter().filter(|e| rules.def(e.def).is_constructor()).count()
-            + mine.iter().flat_map(|e| &e.queue).filter(|p| rules.def(p.def).is_constructor()).count();
+            + mine
+                .iter()
+                .flat_map(|e| &e.queue)
+                .filter(|p| p.unit().is_some_and(|d| rules.def(d).is_constructor()))
+                .count();
         let rebuild = mine.iter().filter(|e| e.is_complete()).find_map(|e| {
             rules.def(e.def).produces.iter().find(|&&u| rules.def(u).is_constructor()).map(|&u| (e.id, u))
         });
@@ -262,6 +266,18 @@ impl Ai {
             let expand_to = if smart && depots.len() < 3 { expansion() } else { None };
             let rich = world.player(me).credits >= 3_000
                 && mine.iter().filter(|e| rules.def(e.def).role() == Some(BuildingRole::Factory)).count() < 4;
+            // Normal: each tech building once, cheapest first, once credits pile up with every
+            // factory it wants already standing (its army comes first).
+            let lab = {
+                let mut labs: Vec<_> = builder_def
+                    .builds
+                    .iter()
+                    .copied()
+                    .filter(|&b| rules.def(b).role() == Some(BuildingRole::Lab))
+                    .collect();
+                labs.sort_by_key(|&b| rules.def(b).cost.credits);
+                labs.into_iter().find(|&l| !mine.iter().any(|e| e.def == l))
+            };
             let want = if depots.is_empty() {
                 supply
             } else if world.player(me).faction.uses_power() && count(|r| r == BuildingRole::PowerPlant) == 0 {
@@ -274,6 +290,8 @@ impl Ai {
                 supply
             } else if smart && rich {
                 factories.last().copied()
+            } else if smart && lab.is_some() && world.player(me).credits >= 3_000 {
+                lab
             } else {
                 derrick
             };
@@ -323,7 +341,7 @@ impl Ai {
         // counts as owned only half as much.
         let owned = |def| {
             mine.iter().filter(|e| e.def == def).count()
-                + mine.iter().flat_map(|e| &e.queue).filter(|p| p.def == def).count()
+                + mine.iter().flat_map(|e| &e.queue).filter(|p| p.unit() == Some(def)).count()
         };
         let counter = (self.level != AiLevel::Easy).then(|| self.enemy_armour(world)).flatten();
         let counters =
@@ -346,6 +364,22 @@ impl Ai {
                 && world.player(me).credits >= rules.def(unit).cost.credits
             {
                 out.push(CommandKind::Train { producer: f.id, def: unit });
+            }
+        }
+
+        // 3c. Normal: research what its buildings offer, in table order, one at a time and only
+        // from credits beyond a reserve, so the army it trains above keeps coming.
+        if self.level == AiLevel::Normal && !saving {
+            let busy = mine.iter().any(|e| e.queue.iter().any(|p| p.unit().is_none()));
+            let offer = mine.iter().filter(|e| e.is_complete()).find_map(|b| {
+                let u = rules.def(b.def).researches.iter().copied().find(|&u| !world.researched_or_queued(me, u))?;
+                Some((b.id, u))
+            });
+            if let Some((producer, upgrade)) = offer
+                && !busy
+                && world.player(me).credits >= rules.upgrade(upgrade).cost.credits + 2_000
+            {
+                out.push(CommandKind::Research { producer, upgrade });
             }
         }
 

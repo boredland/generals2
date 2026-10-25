@@ -1,4 +1,4 @@
-use crate::defs::DefId;
+use crate::defs::{DefId, UpgradeId};
 use crate::fixed::{Fx, Vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -52,11 +52,28 @@ pub enum GatherPhase {
     Unloading { depot: EntityId, ticks_left: u32 },
 }
 
+/// What a production queue makes: a unit, or the research of an upgrade.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Product {
+    Unit(DefId),
+    Upgrade(UpgradeId),
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Production {
-    pub def: DefId,
+    pub item: Product,
     /// Progress in "full-speed ticks"; unpowered buildings add half a tick per tick.
     pub progress_halves: u32,
+}
+
+impl Production {
+    /// The unit being trained, if this is not a research.
+    pub fn unit(&self) -> Option<DefId> {
+        match self.item {
+            Product::Unit(d) => Some(d),
+            Product::Upgrade(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -85,6 +102,8 @@ pub struct Entity {
     pub cooldown: u32,
     /// Deployable units (`Def::deploy`): set up for the main gun, or between modes.
     pub deploy: DeployState,
+    /// Tick this entity last took damage; repair upgrades wait for a quiet spell after it.
+    pub last_hit: Option<u32>,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -233,6 +252,7 @@ mod tests {
             income_ticks: 0,
             cooldown: 0,
             deploy: DeployState::Packed,
+            last_hit: None,
             route: Route::default(),
         }
     }

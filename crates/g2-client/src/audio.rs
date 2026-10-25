@@ -52,7 +52,7 @@ pub enum Cue {
     Blast,
     /// A unit or building destroyed.
     Kill { building: bool },
-    /// One of our units rolled out.
+    /// One of our units rolled out, or one of our researches finished.
     Ready,
     /// One of our buildings finished.
     Built,
@@ -455,7 +455,9 @@ pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
             }
             Event::Fired { from, .. } if seen(from) => out.push((Cue::Launch, Some(from))),
             Event::Landed { at, .. } if seen(at) => out.push((Cue::Blast, Some(at))),
-            Event::Produced { player, .. } if player == me => out.push((Cue::Ready, None)),
+            Event::Produced { player, .. } | Event::Researched { player, .. } if player == me => {
+                out.push((Cue::Ready, None))
+            }
             Event::Completed { player, .. } if player == me => out.push((Cue::Built, None)),
             // Ours always, the enemy's where it lands in sight: a power is a big moment.
             Event::PowerUsed { player, at } if player == me || seen(at) => out.push((Cue::Launch, Some(at))),
