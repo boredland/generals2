@@ -6,8 +6,8 @@
 //! left empty.
 //!
 //! Each window in the layout becomes an absolutely placed UI node, sized by the alpha's own
-//! scaling rule (`utfwin::place`) for the window's size at spawn; a resize keeps that
-//! placement until the next match.
+//! scaling rule (`utfwin::place`) for the window's size; `hud.rs` rebuilds the HUD when the
+//! window is resized.
 
 use bevy::prelude::*;
 use g2_sim::Faction;
@@ -268,7 +268,12 @@ impl Ctx<'_, '_, '_> {
             node.align_items = AlignItems::Center;
             node.justify_content = JustifyContent::Center;
         }
-        let mut e = self.commands.spawn((crate::menu::MatchEntity, node));
+        let mut e = self.commands.spawn((crate::menu::MatchEntity, crate::hud::HudRoot, node));
+        // Anything the alpha draws (art, a fill, a slot we fill) owns the screen under it;
+        // pure group windows, often spanning the whole screen, do not.
+        if slot.is_some() || w.image.is_some() || w.fill.is_some() {
+            e.insert(crate::hud::HudPanel);
+        }
         if let Some(fill) = w.fill {
             let [a, r, g, b] = fill.to_be_bytes();
             e.insert(BackgroundColor(Color::srgba_u8(r, g, b, a)));

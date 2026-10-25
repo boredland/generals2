@@ -5,6 +5,8 @@
 //! construct, ground → move). Ctrl + right click on the ground attack-moves.
 //! With a constructor selected: B opens build mode, 1-9 pick a building, left click places, Esc cancels.
 //! With a building selected: 1-9 queue production, Backspace cancels the last item.
+//! Clicking a build-grid button is pressing its key; clicking the minimap moves the camera
+//! there. A click on any HUD panel stays with the HUD: it never selects or orders in the world.
 //! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
 //! collector and centres the camera on it. G arms the general's power: the next left click
 //! aims it (right click or Esc disarms). Esc is handled by `menu` alone, so it cancels a
@@ -182,30 +184,88 @@ pub(crate) fn keyboard(
             sim.order(CommandKind::Deploy { units: deployable, deployed: !all_set_up });
         }
     }
-    if let Some(builder) = selected_constructor(&sim, &sel) {
-        let builds = rules.def(sim.world.entity(builder).unwrap().def).builds;
-        for (i, key) in DIGITS.iter().enumerate() {
-            if keys.just_pressed(*key)
-                && let Some(&def) = builds.get(i)
-            {
-                placing.0 = Some(def);
-            }
-        }
-        return;
-    }
-    if let Some(producer) = selected_building(&sim, &sel) {
-        let produces = rules.def(sim.world.entity(producer).unwrap().def).produces;
-        for (i, key) in DIGITS.iter().enumerate() {
-            if keys.just_pressed(*key)
-                && let Some(&def) = produces.get(i)
-            {
-                sim.order(CommandKind::Train { producer, def });
-            }
-        }
-        if keys.just_pressed(KeyCode::Backspace) {
-            sim.order(CommandKind::CancelTrain { producer });
+    for (i, key) in DIGITS.iter().enumerate() {
+        if keys.just_pressed(*key) {
+            press_slot(&mut sim, &sel, &mut placing, i);
         }
     }
+    if selected_constructor(&sim, &sel).is_none()
+        && let Some(producer) = selected_building(&sim, &sel)
+        && keys.just_pressed(KeyCode::Backspace)
+    {
+        sim.order(CommandKind::CancelTrain { producer });
+    }
+}
+
+/// A left click on the HUD: a build-grid cell presses its hotkey, the minimap moves the
+/// camera there. Returns whether the HUD took the click.
+fn hud_click(
+    point: Vec2,
+    sim: &mut Sim,
+    sel: &Selection,
+    placing: &mut Placement,
+    hud: &HudQueries,
+    cam: &mut RtsCamera,
+) -> bool {
+    let inside = |node: &ComputedNode, tf: &bevy::ui::UiGlobalTransform, vis: &InheritedVisibility| {
+        vis.get() && node.contains_point(*tf, point / node.inverse_scale_factor())
+    };
+    if let Some(cell) = hud.buttons.iter().find(|(_, n, tf, v)| inside(n, tf, v)).map(|(b, ..)| b.0) {
+        press_slot(sim, sel, placing, cell);
+        return true;
+    }
+    if let Some((n, tf, v, node)) = hud.minimap.iter().next()
+        && inside(n, tf, v)
+        && let Some(local) = n.normalize_point(*tf, point / n.inverse_scale_factor())
+    {
+        // `local` runs -0.5..0.5 over the node; the map fills a `side` square from its corner.
+        let size = n.size() * n.inverse_scale_factor();
+        let side = crate::hud::minimap_side(n, node);
+        let at = (local + 0.5) * size / side;
+        if at.x <= 1.0 && at.y <= 1.0 {
+            let map = &sim.world.map;
+            let (x, z) = (at.x * map.width.to_f32(), at.y * map.height.to_f32());
+            cam.pivot = Vec3::new(x, sim.ground_y(x, z), z);
+        }
+        return true;
+    }
+    crate::hud::over_hud(&hud.panels, point)
+}
+
+/// What a build-grid slot does for the selection: a constructor's slot starts placing that
+/// building, a building's queues that unit. Shared by the 1-9 keys and the grid buttons.
+fn press_slot(sim: &mut Sim, sel: &Selection, placing: &mut Placement, i: usize) {
+    let rules = sim.world.rules;
+    if let Some(builder) = selected_constructor(sim, sel) {
+        if let Some(&def) = rules.def(sim.world.entity(builder).unwrap().def).builds.get(i) {
+            placing.0 = Some(def);
+        }
+    } else if let Some(producer) = selected_building(sim, sel)
+        && let Some(&def) = rules.def(sim.world.entity(producer).unwrap().def).produces.get(i)
+    {
+        sim.order(CommandKind::Train { producer, def });
+    }
+}
+
+#[derive(bevy::ecs::system::SystemParam)]
+struct HudQueries<'w, 's> {
+    panels: crate::hud::Panels<'w, 's>,
+    buttons: Query<
+        'w,
+        's,
+        (
+            &'static crate::hud::GridButton,
+            &'static ComputedNode,
+            &'static bevy::ui::UiGlobalTransform,
+            &'static InheritedVisibility,
+        ),
+    >,
+    minimap: Query<
+        'w,
+        's,
+        (&'static ComputedNode, &'static bevy::ui::UiGlobalTransform, &'static InheritedVisibility, &'static Node),
+        With<crate::hud::MinimapView>,
+    >,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -213,14 +273,26 @@ fn mouse(
     buttons: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     window: Query<&Window, With<PrimaryWindow>>,
-    cam: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
+    mut cam: Query<(&Camera, &GlobalTransform, &mut RtsCamera)>,
     mut sim: ResMut<Sim>,
     mut sel: ResMut<Selection>,
     mut placing: ResMut<Placement>,
     mut aim: ResMut<PowerAim>,
     mut drag: ResMut<Drag>,
+    hud: HudQueries,
 ) {
-    let (Ok(window), Ok(cam)) = (window.single(), cam.single()) else { return };
+    let (Ok(window), Ok((camera, cam_tf, mut rts))) = (window.single(), cam.single_mut()) else { return };
+    let Some(cursor) = window.cursor_position() else { return };
+    // A press on the HUD is the HUD's: it never selects, orders or places in the world. A
+    // drag that started in the world still ends normally over the HUD.
+    let pressed = buttons.get_just_pressed().next().is_some();
+    if pressed && crate::hud::over_hud(&hud.panels, cursor) {
+        if buttons.just_pressed(MouseButton::Left) && !aim.0 {
+            hud_click(cursor, &mut sim, &sel, &mut placing, &hud, &mut rts);
+        }
+        return;
+    }
+    let cam = (camera, cam_tf);
     let Some(ground) = cursor_ground(&sim, window, cam) else { return };
     let here = to_sim(ground);
 
@@ -443,5 +515,82 @@ mod tests {
         assert!(!armed(Some(bulldog), ready - 30), "still charging");
         assert!(armed(Some(bulldog), ready), "ready");
         assert!(!armed(None, ready), "no general, no power");
+    }
+
+    /// A click on the HUD is the HUD's: on a build-grid button it trains that slot's unit as
+    /// the hotkey would, on bare panel art it issues nothing, and the same click off the HUD
+    /// reaches the world (a click on open ground drops the selection).
+    #[test]
+    fn hud_clicks_never_reach_the_world() {
+        use bevy::ecs::system::RunSystemOnce;
+        use bevy::ui::UiGlobalTransform;
+        let click = |at: Vec2| {
+            let mut sim = Sim::new(
+                g2_rules::crater_ridge(),
+                None,
+                1,
+                Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false),
+            );
+            let rules = sim.world.rules;
+            let factory = sim
+                .world
+                .entities()
+                .find(|e| e.owner == Some(sim.local) && !rules.def(e.def).produces.is_empty() && e.is_complete())
+                .map(|e| e.id)
+                .expect("a finished producer at the start");
+            let pivot = sim.to_world(sim.world.entity(factory).unwrap().pos);
+            sim.world.step();
+            let mut world = World::new();
+            let mut window = Window::default();
+            window.resolution.set(1280.0, 720.0);
+            window.set_cursor_position(Some(at));
+            world.spawn((window, PrimaryWindow));
+            let cam = RtsCamera {
+                pivot,
+                distance: crate::camera::DEFAULT_DISTANCE,
+                yaw: crate::look::YAW,
+                pitch: crate::look::PITCH,
+            };
+            let mut camera = Camera::default();
+            camera.computed.target_info =
+                Some(bevy::camera::RenderTargetInfo { physical_size: UVec2::new(1280, 720), scale_factor: 1.0 });
+            let mut projection = PerspectiveProjection::default();
+            bevy::camera::CameraProjection::update(&mut projection, 1280.0, 720.0);
+            camera.computed.clip_from_view = bevy::camera::CameraProjection::get_clip_from_view(&projection);
+            world.spawn((camera, GlobalTransform::from(cam.transform()), cam));
+            // A panel 0..400 x 500..720 holding one grid button at 10..60 x 510..560.
+            let node = |size: Vec2| ComputedNode { size, ..ComputedNode::DEFAULT };
+            world.spawn((
+                crate::hud::HudPanel,
+                node(Vec2::new(400.0, 220.0)),
+                UiGlobalTransform::from_xy(200.0, 610.0),
+                InheritedVisibility::VISIBLE,
+            ));
+            world.spawn((
+                crate::hud::GridButton(0),
+                node(Vec2::new(50.0, 50.0)),
+                UiGlobalTransform::from_xy(35.0, 535.0),
+                InheritedVisibility::VISIBLE,
+            ));
+            let mut buttons = ButtonInput::<MouseButton>::default();
+            buttons.press(MouseButton::Left);
+            world.insert_resource(buttons);
+            world.init_resource::<ButtonInput<KeyCode>>();
+            world.insert_resource(sim);
+            world.insert_resource(Selection(vec![factory]));
+            world.init_resource::<Placement>();
+            world.init_resource::<PowerAim>();
+            world.init_resource::<Drag>();
+            world.run_system_once(mouse).unwrap();
+            // A world click completes on release: release on the same spot.
+            world.resource_mut::<ButtonInput<MouseButton>>().clear();
+            world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+            world.run_system_once(mouse).unwrap();
+            let sim = world.resource::<Sim>();
+            (sim.unheard_orders, world.resource::<Selection>().0.len())
+        };
+        assert_eq!(click(Vec2::new(35.0, 535.0)), (1, 1), "grid button: one Train order, selection kept");
+        assert_eq!(click(Vec2::new(300.0, 650.0)), (0, 1), "bare panel: no order, selection kept");
+        assert_eq!(click(Vec2::new(640.0, 200.0)).1, 0, "open ground: the world takes the click");
     }
 }

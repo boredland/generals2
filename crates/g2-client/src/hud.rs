@@ -88,11 +88,61 @@ pub struct HudPlugin;
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_alpha_layout)
-            .add_systems(Update, spawn.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
+            .add_systems(
+                Update,
+                spawn.run_if(crate::menu::scene_start.or_eager(resized_in_match)).after(crate::menu::MenuSet),
+            )
             .add_systems(
                 Update,
                 (update_fields, tags, minimap, overlays, popups, grid_icons, selection_portrait).after(spawn),
             );
+    }
+}
+
+/// The window changed size while a match HUD exists: rebuild it for the new size.
+fn resized_in_match(mut resized: MessageReader<bevy::window::WindowResized>, hud: Query<(), With<HudRoot>>) -> bool {
+    resized.read().count() > 0 && !hud.is_empty()
+}
+
+/// Every node the HUD spawns at the root, so a resize can rebuild the HUD (the alpha's is
+/// placed for the window size it was spawned at).
+#[derive(Component)]
+pub(crate) struct HudRoot;
+
+fn root() -> (crate::menu::MatchEntity, HudRoot) {
+    (crate::menu::MatchEntity, HudRoot)
+}
+
+/// A HUD area that owns the screen under it: clicks there are the HUD's, and world labels
+/// anchored there are not drawn.
+#[derive(Component)]
+pub(crate) struct HudPanel;
+
+/// A build-grid cell in either HUD: clicking it is pressing its hotkey.
+#[derive(Component)]
+pub(crate) struct GridButton(pub usize);
+
+pub(crate) type Panels<'w, 's> = Query<
+    'w,
+    's,
+    (&'static ComputedNode, &'static bevy::ui::UiGlobalTransform, &'static InheritedVisibility),
+    With<HudPanel>,
+>;
+
+/// Whether `point` (logical window pixels) is over a visible HUD panel.
+pub(crate) fn over_hud(panels: &Panels, point: Vec2) -> bool {
+    panels.iter().any(|(node, tf, vis)| vis.get() && node.contains_point(*tf, point / node.inverse_scale_factor()))
+}
+
+/// The side of the square the minimap draws the map in. Our panel is MINIMAP square; the
+/// alpha's slot is whatever its layout says, so the map fills its smaller laid-out side
+/// (before the first layout pass, the node's own width).
+pub(crate) fn minimap_side(computed: &ComputedNode, node: &Node) -> f32 {
+    let laid_out = computed.size() * computed.inverse_scale_factor();
+    match (laid_out.min_element(), node.width) {
+        (s, _) if s > 0.0 => s,
+        (_, Val::Px(w)) => w,
+        _ => MINIMAP,
     }
 }
 
@@ -180,7 +230,11 @@ fn spawn(
     server: Option<Res<AssetServer>>,
     window: Query<&Window>,
     headless: Option<Res<HeadlessScreen>>,
+    old: Query<Entity, With<HudRoot>>,
 ) {
+    for e in &old {
+        commands.entity(e).despawn();
+    }
     let world = &sim.world;
     let screen = match (window.iter().next(), headless) {
         (Some(w), _) => w.size(),
@@ -196,14 +250,14 @@ fn spawn(
     }
 
     // Top left: the in-match menu key; top right: neutral project label (no EA trademarks).
-    commands.spawn((crate::menu::MatchEntity, abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, DIM)));
-    commands.spawn((crate::menu::MatchEntity, abs(auto(), px(14), px(8), auto()), text("OPEN RTS", 12.0, DIM)));
+    commands.spawn((root(), abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, DIM)));
+    commands.spawn((root(), abs(auto(), px(14), px(8), auto()), text("OPEN RTS", 12.0, DIM)));
 
     // Top centre: one compact match bar: own tag, clock, then every opponent's tag in its
     // team colour (struck out once defeated); a general shows after its faction.
     commands
         .spawn((
-            crate::menu::MatchEntity,
+            root(),
             Node {
                 position_type: PositionType::Absolute,
                 top: px(6),
@@ -219,6 +273,7 @@ fn spawn(
             },
             BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
             BorderColor::all(TEAL),
+            HudPanel,
         ))
         .with_children(|t| {
             let label = |p: &g2_sim::Player| match p.general {
@@ -237,7 +292,7 @@ fn spawn(
     // Bottom left: power/money strip above the minimap.
     let mut corner = abs(px(0), auto(), auto(), px(0));
     corner.flex_direction = FlexDirection::Column;
-    commands.spawn((crate::menu::MatchEntity, panel_node(corner))).with_children(|p| {
+    commands.spawn((root(), panel_node(corner), HudPanel)).with_children(|p| {
         p.spawn(Node {
             width: px(MINIMAP),
             justify_content: JustifyContent::SpaceBetween,
@@ -267,7 +322,7 @@ fn spawn(
     // Bottom right: selection panel with queue and the production grid.
     commands
         .spawn((
-            crate::menu::MatchEntity,
+            root(),
             panel_node(Node {
                 position_type: PositionType::Absolute,
                 right: px(0),
@@ -277,6 +332,7 @@ fn spawn(
                 row_gap: px(4),
                 ..default()
             }),
+            HudPanel,
         ))
         .with_children(|p| {
             p.spawn((text("", 14.0, TEXT), Field::SelName));
@@ -319,6 +375,7 @@ fn spawn(
                         },
                         BackgroundColor(SLOT),
                         BorderColor::all(PANEL_EDGE),
+                        GridButton(i),
                     ))
                     .with_children(|c| {
                         c.spawn((text(&format!("{}", i + 1), 11.0, DIM), Field::GridCell(i)));
@@ -330,7 +387,7 @@ fn spawn(
     // Status line (pause/speed/victory), centred above the bottom panels.
     commands
         .spawn((
-            crate::menu::MatchEntity,
+            root(),
             Node {
                 position_type: PositionType::Absolute,
                 top: px(58),
@@ -352,15 +409,10 @@ fn spawn(
 /// bottom-right panel's unit area.
 fn spawn_alpha_extras(commands: &mut Commands) {
     let shadow = || TextShadow { offset: Vec2::splat(1.0), ..default() };
-    commands.spawn((
-        crate::menu::MatchEntity,
-        abs(px(14), auto(), px(8), auto()),
-        text("ESC  MENU", 14.0, TEXT),
-        shadow(),
-    ));
+    commands.spawn((root(), abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, TEXT), shadow()));
     let mut corner = abs(px(8), auto(), auto(), percent(36));
     corner.flex_direction = FlexDirection::Column;
-    commands.spawn((crate::menu::MatchEntity, corner)).with_children(|p| {
+    commands.spawn((root(), corner)).with_children(|p| {
         p.spawn((text("", 13.0, TEXT), shadow(), Field::GeneralPower));
         p.spawn((text("", 13.0, XP), shadow(), Field::Waves));
     });
@@ -368,7 +420,7 @@ fn spawn_alpha_extras(commands: &mut Commands) {
     status.margin = UiRect::left(px(-200));
     status.width = px(400);
     status.justify_content = JustifyContent::Center;
-    commands.spawn((crate::menu::MatchEntity, status)).with_children(|s| {
+    commands.spawn((root(), status)).with_children(|s| {
         s.spawn((text("", 14.0, XP), shadow(), Field::Status));
     });
     // The selection's text sits over the bottom-right panel's unit area (the alpha drew its
@@ -377,7 +429,7 @@ fn spawn_alpha_extras(commands: &mut Commands) {
     sel.flex_direction = FlexDirection::Column;
     sel.width = percent(13);
     sel.row_gap = px(2);
-    commands.spawn((crate::menu::MatchEntity, sel)).with_children(|p| {
+    commands.spawn((root(), sel)).with_children(|p| {
         p.spawn((text("", 13.0, TEXT), shadow(), Field::SelName));
         p.spawn((text("", 11.0, DIM), shadow(), Field::SelInfo));
         p.spawn((
@@ -421,6 +473,7 @@ pub(crate) fn alpha_grid(g: &mut ChildSpawnerCommands, w: f32, h: f32) {
                 ..default()
             },
             GridIcon(i),
+            GridButton(i),
             Visibility::Hidden,
         ))
         .with_children(|c| {
@@ -663,14 +716,7 @@ fn minimap(
     mut images: ResMut<Assets<Image>>,
 ) {
     let Ok((map_node, computed, node)) = view.single() else { return };
-    // Our panel is MINIMAP square; the alpha's slot is whatever its layout says, so the
-    // map fills its smaller side (before the first layout pass, the node's own width).
-    let laid_out = computed.size() * computed.inverse_scale_factor();
-    let side = match (laid_out.min_element(), node.width) {
-        (s, _) if s > 0.0 => s,
-        (_, Val::Px(w)) => w,
-        _ => MINIMAP,
-    };
+    let side = minimap_side(computed, node);
     for d in &dots {
         commands.entity(d).despawn();
     }
@@ -761,6 +807,7 @@ fn overlays(
     cam: Query<(&Camera, &GlobalTransform), With<RtsCamera>>,
     labels: Query<Entity, With<WorldLabel>>,
     bars: Query<Entity, With<Overlay>>,
+    panels: Panels,
 ) {
     for e in labels.iter().chain(bars.iter()) {
         commands.entity(e).despawn();
@@ -788,12 +835,8 @@ fn overlays(
             Ok(p) if p.x >= 8.0 && p.x <= view.x - 8.0 && p.y >= 8.0 && p.y <= view.y - 8.0 => p,
             _ => continue,
         };
-        // The HUD owns the corners: the top strip (menu, clock, project label), the minimap
-        // bottom-left and the selection panel bottom-right. Nothing anchored there is drawn.
-        let under_hud = raw.y < 40.0
-            || (raw.x < 225.0 && raw.y > view.y - 235.0)
-            || (raw.x > view.x - 375.0 && raw.y > view.y - 175.0);
-        if under_hud {
+        // The HUD's panels own the screen under them: nothing anchored there is drawn.
+        if over_hud(&panels, raw) {
             continue;
         }
         let Some(screen) = place(raw, 52.0) else { continue };
