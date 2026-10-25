@@ -17,6 +17,7 @@ pub mod material;
 pub mod media;
 pub mod mesh;
 pub mod movie;
+pub mod skeleton;
 pub mod texture;
 
 use std::collections::{BTreeMap, HashMap};

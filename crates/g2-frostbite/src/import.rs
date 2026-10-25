@@ -19,6 +19,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::ebx::Value;
+use crate::skeleton::Skeleton;
 use crate::{Alpha, Error, material, media, mesh, movie, res_type, texture};
 
 /// Per-kind counts and failures.
@@ -286,7 +287,18 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
             // In the glTF's space: X negated, as `to_glb` writes it.
             let (lo, hi) = m.bounds;
             let _ = writeln!(bounds, "{name} {} {} {} {} {} {}", -hi[0], lo[1], lo[2], -lo[0], hi[1], hi[2]);
-            mesh::to_glb(&m, &textures)
+            let skeleton = m.subsets.iter().any(|s| s.skin.is_some()).then(|| skeleton_for(alpha, name, &m)).flatten();
+            match skeleton {
+                Some(Ok(sk)) => {
+                    report.ok("skinned models");
+                    mesh::to_glb(&m, &textures, Some(&sk))
+                }
+                Some(Err(why)) => {
+                    report.fail(&format!("{name} skeleton"), why);
+                    mesh::to_glb(&m, &textures, None)
+                }
+                None => mesh::to_glb(&m, &textures, None),
+            }
         });
         match result.and_then(|glb| write(&out.join("models").join(format!("{name}.glb")), &glb)) {
             Ok(()) => report.ok("models"),
@@ -294,6 +306,22 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
         }
     }
     write(&out.join("models/bounds.txt"), bounds.as_bytes())
+}
+
+/// The skeleton a skinned mesh's bone palettes index: the one beside it in its folder, and
+/// only if every bone the mesh weights exists in it. `None` when the folder has none (a
+/// static model is written then, as before skinning).
+fn skeleton_for(alpha: &Alpha, mesh_name: &str, m: &mesh::MeshSet) -> Option<Result<Skeleton, String>> {
+    let name = Skeleton::for_mesh(alpha, mesh_name)?;
+    Some(Skeleton::read(alpha, name).map_err(|e| e.to_string()).and_then(|sk| {
+        let used = m.subsets.iter().filter_map(|s| s.skin.as_ref()).flatten();
+        match used.flat_map(|(b, w)| (0..4).filter(|&j| w[j] > 0.0).map(move |j| b[j])).max() {
+            Some(b) if usize::from(b) >= sk.names.len() => {
+                Err(format!("bone {b} past the {} bones of {name}", sk.names.len()))
+            }
+            _ => Ok(sk),
+        }
+    }))
 }
 
 /// The URI from `models/<model>.glb` to `textures/<texture>.png`: up out of the model's

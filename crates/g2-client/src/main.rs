@@ -36,6 +36,7 @@ mod menu;
 mod models;
 mod movie;
 mod net;
+mod rig;
 mod sim;
 mod terrain;
 mod utfwin;
@@ -326,6 +327,7 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
         hud::HudPlugin,
         audio::SoundPlugin,
         movie::MoviePlugin,
+        rig::RigPlugin,
     ))
     .add_systems(Startup, spawn_camera);
     if let Some(path) = record {
@@ -441,6 +443,7 @@ mod headless {
             crate::terrain::TerrainPlugin,
             crate::view::ViewPlugin,
             crate::hud::HudPlugin,
+            crate::rig::RigPlugin,
         ))
         .insert_resource(hits)
         // Warm-up frames run on wall time; frozen effects survive until the capture.

@@ -8,7 +8,14 @@
 //! are half-float, texture coordinates half2. Subsets are grouped into four categories by
 //! index lists in the LOD; category 3 holds the shadow-depth proxy, which the importer
 //! leaves out. Indices are 16-bit triangle lists.
+//!
+//! Skinned meshes add blend indices (4 x u8) and weights (4 x u8, summing to 255) per
+//! vertex. An index is local to its subset: the subset header holds a bone palette (count
+//! at +39, u16 skeleton bone indices at the header offset at +40) that maps it to a bone
+//! of the unit's skeleton. Checked over all 172 skinned meshes: every weight sums to 255
+//! and no weighted index falls outside its palette.
 
+use crate::skeleton::Skeleton;
 use crate::{Alpha, Entry, Error, unblock};
 
 pub struct MeshSet {
@@ -24,6 +31,8 @@ pub struct Subset {
     pub positions: Vec<[f32; 3]>,
     pub normals: Option<Vec<[f32; 3]>>,
     pub uvs: Option<Vec<[f32; 2]>>,
+    /// Skinned meshes: per vertex, four skeleton bone indices and their weights (sum 1).
+    pub skin: Option<Vec<([u16; 4], [f32; 4])>>,
     pub indices: Vec<u32>,
     /// Shadow-depth proxies (category 3); not drawn.
     pub shadow_only: bool,
@@ -32,6 +41,10 @@ pub struct Subset {
 const USAGE_POS: u8 = 1;
 const USAGE_NORMAL: u8 = 6;
 const USAGE_UV0: u8 = 0x21;
+const USAGE_BLEND_INDICES: u8 = 2;
+const USAGE_BLEND_WEIGHTS: u8 = 4;
+const FORMAT_UBYTE4: u8 = 12;
+const FORMAT_UBYTE4N: u8 = 13;
 const FORMAT_HALF3: u8 = 7;
 const FORMAT_HALF4: u8 = 8;
 const FORMAT_HALF2: u8 = 6;
@@ -108,6 +121,40 @@ pub fn read(alpha: &Alpha, e: &Entry) -> Result<MeshSet, Error> {
         let positions = halves::<3>(verts, stride, pos, &[FORMAT_HALF3, FORMAT_HALF4])?;
         let normals = normal.map(|n| halves::<3>(verts, stride, n, &[FORMAT_HALF4, FORMAT_HALF3])).transpose()?;
         let uvs = uv.map(|u| halves::<2>(verts, stride, u, &[FORMAT_HALF2])).transpose()?;
+        let skin = match (element(USAGE_BLEND_INDICES)?, element(USAGE_BLEND_WEIGHTS)?) {
+            (Some((FORMAT_UBYTE4, io)), Some((FORMAT_UBYTE4N, wo))) if io + 4 <= stride && wo + 4 <= stride => {
+                let count = usize::from(r.u8(at + 39)?);
+                let palette_at = r.u32(at + 40)? as usize;
+                let palette: Vec<u16> = hdr
+                    .get(palette_at..palette_at + 2 * count)
+                    .ok_or(Error::Truncated)?
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|b| u16::from_le_bytes(*b))
+                    .collect();
+                let skin = verts
+                    .chunks_exact(stride)
+                    .map(|v| {
+                        let mut bones = [0u16; 4];
+                        let mut weights = [0f32; 4];
+                        for j in 0..4 {
+                            let w = v[wo + j];
+                            if w > 0 {
+                                bones[j] = *palette
+                                    .get(usize::from(v[io + j]))
+                                    .ok_or(Error::Bad("blend index past its palette"))?;
+                                weights[j] = f32::from(w) / 255.0;
+                            }
+                        }
+                        Ok((bones, weights))
+                    })
+                    .collect::<Result<Vec<_>, Error>>()?;
+                Some(skin)
+            }
+            // Rigid meshes carry one bone element or other formats: drawn unskinned.
+            _ => None,
+        };
         let indices: Vec<u32> = index_data
             .get(start * 2..(start + primitives * 3) * 2)
             .ok_or(Error::Bad("subset indices past the index data"))?
@@ -125,6 +172,7 @@ pub fn read(alpha: &Alpha, e: &Entry) -> Result<MeshSet, Error> {
             positions,
             normals,
             uvs,
+            skin,
             indices,
             shadow_only: shadow.contains(&(k as u8)),
         });
@@ -192,7 +240,12 @@ impl Le<'_> {
 /// import writes each texture once and every model that uses it points there). Frostbite
 /// is left-handed and models face +Z (a tank's barrel points there), as the client's do;
 /// glTF is right-handed, so X is negated (keeping +Z forward) and the winding flipped.
-pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>]) -> Vec<u8> {
+///
+/// With a `skeleton` (and skin data on the subsets), the mesh is skinned: one joint node
+/// per bone, named as the bone, in its bind pose, so the model looks as unskinned until a
+/// joint is moved. Bone transforms are mirrored the same way (X negated on both sides).
+pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>], skeleton: Option<&Skeleton>) -> Vec<u8> {
+    let skeleton = skeleton.filter(|_| mesh.subsets.iter().any(|s| !s.shadow_only && s.skin.is_some()));
     let mut bin: Vec<u8> = Vec::new();
     let mut views = Vec::new();
     let mut accessors = Vec::new();
@@ -246,6 +299,34 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>]) -> Vec<u8> {
             accessors.push(format!(r#"{{"bufferView":{v},"componentType":5126,"count":{},"type":"VEC2"}}"#, uv.len()));
             attributes += &format!(r#","TEXCOORD_0":{}"#, accessors.len() - 1);
         }
+        // Every primitive of a skinned mesh needs joints; a subset without skin data rides
+        // the root bone.
+        if let Some(sk) = skeleton {
+            let n = s.positions.len();
+            let skin: Vec<([u16; 4], [f32; 4])> =
+                s.skin.clone().unwrap_or_else(|| vec![([0; 4], [1.0, 0.0, 0.0, 0.0]); n]);
+            let bones = sk.names.len() as u16;
+            let joints: Vec<u8> = skin
+                .iter()
+                .flat_map(|(b, w)| {
+                    std::array::from_fn::<u16, 4, _>(|j| if w[j] > 0.0 && b[j] < bones { b[j] } else { 0 })
+                })
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            let v = view(&mut bin, &joints, Some(34962));
+            accessors.push(format!(r#"{{"bufferView":{v},"componentType":5123,"count":{n},"type":"VEC4"}}"#));
+            attributes += &format!(r#","JOINTS_0":{}"#, accessors.len() - 1);
+            let weights: Vec<f32> = skin
+                .iter()
+                .flat_map(|(_, w)| {
+                    let sum: f32 = w.iter().sum();
+                    w.map(|x| if sum > 0.0 { x / sum } else { 0.0 })
+                })
+                .collect();
+            let v = view(&mut bin, &f32_bytes(weights.iter()), Some(34962));
+            accessors.push(format!(r#"{{"bufferView":{v},"componentType":5126,"count":{n},"type":"VEC4"}}"#));
+            attributes += &format!(r#","WEIGHTS_0":{}"#, accessors.len() - 1);
+        }
         let flipped: Vec<u8> =
             s.indices.as_chunks::<3>().0.iter().flat_map(|t| [t[0], t[2], t[1]]).flat_map(u32::to_le_bytes).collect();
         let v = view(&mut bin, &flipped, Some(34963));
@@ -267,11 +348,45 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>]) -> Vec<u8> {
         prims.push(format!(r#"{{"attributes":{{{attributes}}},"indices":{indices},"material":{material}}}"#));
     }
     let textures_json: Vec<String> = (0..images.len()).map(|i| format!(r#"{{"source":{i}}}"#)).collect();
+    // Node 0 holds the mesh (and skin); joints are nodes 1.., bone i at node i + 1, each
+    // child of its parent bone; the root bones are scene roots beside node 0.
+    let mut nodes = vec![match skeleton {
+        Some(_) => format!(r#"{{"mesh":0,"skin":0,"name":{}}}"#, json_str(&mesh.name)),
+        None => format!(r#"{{"mesh":0,"name":{}}}"#, json_str(&mesh.name)),
+    }];
+    let mut scene_roots = vec![0];
+    let mut skin_json = String::new();
+    if let Some(sk) = skeleton {
+        let model: Vec<[f32; 16]> = sk.model_pose.iter().map(mirror_x).collect();
+        for (i, name) in sk.names.iter().enumerate() {
+            let local = match sk.parents[i] {
+                Some(p) => mul(&invert_rigid(&model[p]), &model[i]),
+                None => model[i],
+            };
+            let children: Vec<String> =
+                (0..sk.names.len()).filter(|&c| sk.parents[c] == Some(i)).map(|c| (c + 1).to_string()).collect();
+            let children =
+                if children.is_empty() { String::new() } else { format!(r#","children":[{}]"#, children.join(",")) };
+            nodes.push(format!(r#"{{"name":{},"matrix":[{}]{children}}}"#, json_str(name), floats(&local)));
+            if sk.parents[i].is_none() {
+                scene_roots.push(i + 1);
+            }
+        }
+        let inverse: Vec<f32> = model.iter().flat_map(invert_rigid).collect();
+        let v = view(&mut bin, &f32_bytes(inverse.iter()), None);
+        accessors.push(format!(r#"{{"bufferView":{v},"componentType":5126,"count":{},"type":"MAT4"}}"#, model.len()));
+        let joints: Vec<String> = (1..=sk.names.len()).map(|n| n.to_string()).collect();
+        skin_json =
+            format!(r#","skins":[{{"inverseBindMatrices":{},"joints":[{}]}}]"#, accessors.len() - 1, joints.join(","));
+    }
     while !bin.len().is_multiple_of(4) {
         bin.push(0);
     }
+    let scene_roots: Vec<String> = scene_roots.iter().map(usize::to_string).collect();
     let mut json = format!(
-        r#"{{"asset":{{"version":"2.0","generator":"g2-frostbite"}},"scene":0,"scenes":[{{"nodes":[0]}}],"nodes":[{{"mesh":0,"name":{name}}}],"meshes":[{{"name":{name},"primitives":[{}]}}],"materials":[{}],"accessors":[{}],"bufferViews":[{}],"buffers":[{{"byteLength":{}}}]"#,
+        r#"{{"asset":{{"version":"2.0","generator":"g2-frostbite"}},"scene":0,"scenes":[{{"nodes":[{}]}}],"nodes":[{}],"meshes":[{{"name":{name},"primitives":[{}]}}],"materials":[{}],"accessors":[{}],"bufferViews":[{}],"buffers":[{{"byteLength":{}}}]{skin_json}"#,
+        scene_roots.join(","),
+        nodes.join(","),
         prims.join(","),
         materials.join(","),
         accessors.join(","),
@@ -297,6 +412,47 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>]) -> Vec<u8> {
     glb.extend(b"BIN\0");
     glb.extend(bin);
     glb
+}
+
+/// `S·m·S` with S = diag(-1, 1, 1, 1): a transform in Frostbite's handedness as glTF's.
+fn mirror_x(m: &[f32; 16]) -> [f32; 16] {
+    let mut out = *m;
+    for col in 0..4 {
+        for row in 0..4 {
+            if (row == 0) != (col == 0) {
+                out[col * 4 + row] = -m[col * 4 + row];
+            }
+        }
+    }
+    out
+}
+
+/// Column-major 4x4 product `a·b`.
+fn mul(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+    std::array::from_fn(|i| {
+        let (col, row) = (i / 4, i % 4);
+        (0..4).map(|k| a[k * 4 + row] * b[col * 4 + k]).sum()
+    })
+}
+
+/// Inverse of a rotation-plus-translation (the bind poses are orthonormal): transpose the
+/// rotation, rotate the translation back.
+fn invert_rigid(m: &[f32; 16]) -> [f32; 16] {
+    let mut out = [0.0; 16];
+    for col in 0..3 {
+        for row in 0..3 {
+            out[col * 4 + row] = m[row * 4 + col];
+        }
+    }
+    for row in 0..3 {
+        out[12 + row] = -(0..3).map(|k| out[k * 4 + row] * m[12 + k]).sum::<f32>();
+    }
+    out[15] = 1.0;
+    out
+}
+
+fn floats(m: &[f32; 16]) -> String {
+    m.iter().map(f32::to_string).collect::<Vec<_>>().join(",")
 }
 
 fn f32_bytes<'a>(v: impl Iterator<Item = &'a f32>) -> Vec<u8> {
@@ -338,6 +494,7 @@ mod tests {
             positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 2.0]],
             normals: Some(vec![[0.0, 0.0, -2.0]; 3]),
             uvs: Some(vec![[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]),
+            skin: None,
             indices: vec![0, 1, 2],
             shadow_only,
         }
@@ -350,7 +507,7 @@ mod tests {
             bounds: ([0.0; 3], [1.0; 3]),
             subsets: vec![triangle(false), triangle(true)],
         };
-        let glb = to_glb(&mesh, &[Some("../../textures/a b%.png".into())]);
+        let glb = to_glb(&mesh, &[Some("../../textures/a b%.png".into())], None);
         assert_eq!(&glb[..4], b"glTF");
         assert_eq!(u32::from_le_bytes(glb[8..12].try_into().unwrap()) as usize, glb.len());
         let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
@@ -374,5 +531,44 @@ mod tests {
         let nx = f32::from_le_bytes(bin[36..40].try_into().unwrap());
         let nz = f32::from_le_bytes(bin[44..48].try_into().unwrap());
         assert_eq!((nx, nz), (0.0, -1.0), "normal normalised, z kept");
+    }
+
+    /// Skinned export: each joint node's local matrix times its parents' gives the bone's
+    /// mirrored model pose, and inverse bind times that pose is identity, so at rest every
+    /// vertex stays where the static export puts it. Bone 1 here is rotated and offset.
+    #[test]
+    fn skinned_bind_pose_leaves_vertices_in_place() {
+        let rot = |a: f32| -> [f32; 16] {
+            let (s, c) = a.sin_cos();
+            [c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0]
+        };
+        let mut b1 = rot(0.7);
+        b1[12..15].copy_from_slice(&[0.5, 2.0, -1.0]);
+        let mut b2 = mul(&b1, &rot(-0.3));
+        b2[12..15].copy_from_slice(&[1.0, 2.5, 0.0]);
+        let sk = Skeleton {
+            names: vec!["Reference".into(), "Turret".into(), "Pitch".into()],
+            parents: vec![None, Some(0), Some(1)],
+            model_pose: vec![rot(0.0), b1, b2],
+        };
+        let mut tri = triangle(false);
+        tri.skin = Some(vec![([2, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]); 3]);
+        let mesh = MeshSet { name: "t".into(), bounds: ([0.0; 3], [1.0; 3]), subsets: vec![tri] };
+        let glb = to_glb(&mesh, &[], Some(&sk));
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let json = std::str::from_utf8(&glb[20..20 + json_len]).unwrap();
+        assert!(json.contains(r#""skins":[{"inverseBindMatrices":"#) && json.contains(r#""JOINTS_0""#));
+        assert!(json.contains(r#""name":"Turret""#) && json.contains(r#""children":[3]"#), "Pitch under Turret");
+        // Rebuild Pitch's world matrix from the node chain and check it is the mirrored pose.
+        let model: Vec<[f32; 16]> = sk.model_pose.iter().map(mirror_x).collect();
+        let local = |i: usize| match sk.parents[i] {
+            Some(p) => mul(&invert_rigid(&model[p]), &model[i]),
+            None => model[i],
+        };
+        let world = mul(&mul(&local(0), &local(1)), &local(2));
+        let skinning = mul(&world, &invert_rigid(&model[2]));
+        let identity: [f32; 16] = std::array::from_fn(|i| if i % 5 == 0 { 1.0 } else { 0.0 });
+        assert!(skinning.iter().zip(identity).all(|(a, b)| (a - b).abs() < 1e-5), "{skinning:?}");
+        assert!(world.iter().zip(model[2]).all(|(a, b)| (a - b).abs() < 1e-5));
     }
 }
