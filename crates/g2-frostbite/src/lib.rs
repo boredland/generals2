@@ -221,6 +221,12 @@ impl Alpha {
         self.chunks.len()
     }
 
+    /// The game folder: the parent of `Data/` (loose files such as `UTFWinAssets/` live
+    /// there).
+    pub fn root(&self) -> &Path {
+        self.data.parent().unwrap_or(&self.data)
+    }
+
     /// The stored bytes of a CAS blob, as they are on disk (possibly block-compressed).
     pub fn cas_blob(&self, sha1: &[u8; 20]) -> Result<Vec<u8>, Error> {
         let r = self.cas.get(sha1).ok_or_else(|| Error::Missing(format!("CAS blob {}", hex(sha1))))?;

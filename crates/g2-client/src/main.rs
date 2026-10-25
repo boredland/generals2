@@ -4,7 +4,7 @@
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [match flags as above]      two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [...]
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--select DEF] [...]
 //!             headless: simulate N ticks, render one frame
 //!
 //! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
@@ -26,6 +26,7 @@
 //! voices and menu music (`alpha.rs`); the match itself is the same either way.
 
 mod alpha;
+mod alpha_hud;
 mod audio;
 mod camera;
 mod hud;
@@ -36,6 +37,7 @@ mod models;
 mod net;
 mod sim;
 mod terrain;
+mod utfwin;
 mod view;
 
 use bevy::prelude::*;
@@ -58,6 +60,8 @@ struct Args {
     menu: Option<menu::Screen>,
     /// Headless only: freeze on the pause menu.
     paused: bool,
+    /// Headless only: select the local player's first entity of this def.
+    select: Option<String>,
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
@@ -81,6 +85,7 @@ fn parse_args() -> Result<Args, String> {
         reveal: false,
         menu: None,
         paused: false,
+        select: None,
         screenshot: None,
         record: None,
         ticks: 900,
@@ -155,6 +160,7 @@ fn parse_args() -> Result<Args, String> {
                     other => return Err(format!("--view expects base|map|battle|at:X,Z, got {other:?}")),
                 }
             }
+            "--select" => a.select = Some(it.next().ok_or("--select needs a def name")?),
             "--size" => {
                 let v = it.next().ok_or("--size needs WxH")?;
                 let (w, h) = v.split_once('x').ok_or("--size needs WxH")?;
@@ -197,7 +203,7 @@ fn main() -> AppExit {
     match args.screenshot {
         Some(path) => {
             let ui = menu::Ui { screen: args.menu.unwrap_or(menu::Screen::Match), paused: args.paused, ..default() };
-            headless::run(sim, ui, args.ticks, path, args.view, args.size)
+            headless::run(sim, ui, args.ticks, path, args.view, args.size, args.select)
         }
         None => windowed(sim, args.record, args.direct),
     }
@@ -346,7 +352,15 @@ mod headless {
         At(f32, f32),
     }
 
-    pub fn run(mut sim: Sim, ui: crate::menu::Ui, ticks: u32, path: String, view: View, size: (u32, u32)) -> AppExit {
+    pub fn run(
+        mut sim: Sim,
+        ui: crate::menu::Ui,
+        ticks: u32,
+        path: String,
+        view: View,
+        size: (u32, u32),
+        select: Option<String>,
+    ) -> AppExit {
         sim.speed = 0;
         // The capture is awaited by polling for the file, so an old one at `path` would be
         // taken for the new frame and nothing would be written.
@@ -410,8 +424,18 @@ mod headless {
         .insert_resource(hits)
         // Warm-up frames run on wall time; frozen effects survive until the capture.
         .insert_resource(crate::view::FreezeEffects)
-        .init_resource::<crate::input::Selection>()
+        .insert_resource(crate::hud::HeadlessScreen(Vec2::new(size.0 as f32, size.1 as f32)))
         .init_resource::<crate::input::Placement>();
+        let selected = select.as_deref().and_then(|name| {
+            let world = &app.world().resource::<Sim>().world;
+            let me = app.world().resource::<Sim>().local;
+            world.entities().find(|e| e.owner == Some(me) && world.rules.def(e.def).name == name).map(|e| e.id)
+        });
+        if let (Some(name), None) = (&select, selected) {
+            eprintln!("--select: no entity of the local player is a {name}");
+            return AppExit::error();
+        }
+        app.insert_resource(crate::input::Selection(selected.into_iter().collect()));
         app.finish();
         app.cleanup();
         let mut apps: SubApps = std::mem::take(app.sub_apps_mut());

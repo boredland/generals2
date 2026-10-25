@@ -30,7 +30,7 @@ pub(crate) const DIM: Color = Color::srgb(0.55, 0.58, 0.60);
 const MINIMAP: f32 = 196.0;
 
 #[derive(Component)]
-enum Field {
+pub(crate) enum Field {
     Clock,
     /// A player's tag in the match bar, dimmed once that player is defeated.
     Tag(g2_sim::PlayerId),
@@ -46,13 +46,19 @@ enum Field {
     Queue,
     QueueBar,
     GridCell(usize),
+    /// An alpha build button's corner text: hotkey and price (the icon names the def).
+    GridTag(usize),
 }
 
 #[derive(Component)]
 struct MinimapDot;
 
 #[derive(Component)]
-struct MinimapView;
+pub(crate) struct MinimapView;
+
+/// A build-grid button's icon in the alpha HUD, shown when its cell has something to build.
+#[derive(Component)]
+struct GridIcon(usize);
 
 #[derive(Component)]
 struct QueueRow;
@@ -79,8 +85,19 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, spawn.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
-            .add_systems(Update, (update_fields, tags, minimap, overlays, popups).after(spawn));
+        app.add_systems(Startup, load_alpha_layout)
+            .add_systems(Update, spawn.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
+            .add_systems(
+                Update,
+                (update_fields, tags, minimap, overlays, popups, grid_icons, selection_portrait).after(spawn),
+            );
+    }
+}
+
+/// With an imported alpha, reads its HUD layout once; `spawn` then builds the alpha's HUD.
+fn load_alpha_layout(mut commands: Commands, cache: Option<Res<crate::alpha::Cache>>) {
+    if let Some(layout) = cache.and_then(|c| crate::alpha_hud::Layout::load(&c)) {
+        commands.insert_resource(layout);
     }
 }
 
@@ -149,8 +166,32 @@ fn faction_initial(f: Faction) -> &'static str {
     }
 }
 
-fn spawn(mut commands: Commands, sim: Res<Sim>) {
+/// The render target's size where there is no window (`--screenshot`), so the alpha HUD is
+/// laid out for the frame it will be drawn in.
+#[derive(Resource)]
+pub struct HeadlessScreen(pub Vec2);
+
+fn spawn(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    layout: Option<Res<crate::alpha_hud::Layout>>,
+    server: Option<Res<AssetServer>>,
+    window: Query<&Window>,
+    headless: Option<Res<HeadlessScreen>>,
+) {
     let world = &sim.world;
+    let screen = match (window.iter().next(), headless) {
+        (Some(w), _) => w.size(),
+        (None, Some(h)) => h.0,
+        (None, None) => Vec2::new(1280.0, 720.0),
+    };
+    if let (Some(layout), Some(server)) = (layout, server) {
+        let faction = world.player(sim.local).faction;
+        if crate::alpha_hud::spawn(&mut commands, &layout, &server, faction, screen) {
+            spawn_alpha_extras(&mut commands);
+            return;
+        }
+    }
 
     // Top left: the in-match menu key; top right: neutral project label (no EA trademarks).
     commands.spawn((crate::menu::MatchEntity, abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, DIM)));
@@ -303,6 +344,153 @@ fn spawn(mut commands: Commands, sim: Res<Sim>) {
         });
 }
 
+/// What the alpha bar has no slot for, placed where its own debug and message windows sat:
+/// the menu key top-left, the general's power and Onslaught waves above the minimap, the
+/// status line top-centre, and the selection's name, state and training queue in the
+/// bottom-right panel's unit area.
+fn spawn_alpha_extras(commands: &mut Commands) {
+    let shadow = || TextShadow { offset: Vec2::splat(1.0), ..default() };
+    commands.spawn((
+        crate::menu::MatchEntity,
+        abs(px(14), auto(), px(8), auto()),
+        text("ESC  MENU", 14.0, TEXT),
+        shadow(),
+    ));
+    let mut corner = abs(px(8), auto(), auto(), percent(36));
+    corner.flex_direction = FlexDirection::Column;
+    commands.spawn((crate::menu::MatchEntity, corner)).with_children(|p| {
+        p.spawn((text("", 13.0, TEXT), shadow(), Field::GeneralPower));
+        p.spawn((text("", 13.0, XP), shadow(), Field::Waves));
+    });
+    let mut status = abs(percent(50), auto(), px(58), auto());
+    status.margin = UiRect::left(px(-200));
+    status.width = px(400);
+    status.justify_content = JustifyContent::Center;
+    commands.spawn((crate::menu::MatchEntity, status)).with_children(|s| {
+        s.spawn((text("", 14.0, XP), shadow(), Field::Status));
+    });
+    // The selection's text sits over the bottom-right panel's unit area (the alpha drew its
+    // own unit card there, which this game doesn't have).
+    let mut sel = abs(auto(), percent(23), auto(), percent(2));
+    sel.flex_direction = FlexDirection::Column;
+    sel.width = percent(13);
+    sel.row_gap = px(2);
+    commands.spawn((crate::menu::MatchEntity, sel)).with_children(|p| {
+        p.spawn((text("", 13.0, TEXT), shadow(), Field::SelName));
+        p.spawn((text("", 11.0, DIM), shadow(), Field::SelInfo));
+        p.spawn((
+            Node { align_items: AlignItems::Center, column_gap: px(6), display: Display::None, ..default() },
+            QueueRow,
+        ))
+        .with_children(|q| {
+            q.spawn((text("", 11.0, TEXT), Field::Queue));
+            q.spawn((
+                Node { width: px(60), height: px(6), ..default() },
+                BackgroundColor(Color::srgb(0.05, 0.05, 0.05)),
+            ))
+            .with_children(|bar| {
+                bar.spawn((
+                    Node { width: percent(0), height: percent(100), ..default() },
+                    BackgroundColor(Color::srgb(0.98, 0.89, 0.02)),
+                    Field::QueueBar,
+                ));
+            });
+        });
+    });
+}
+
+/// The alpha's 6×3 ability grid, filled with this game's first nine build slots: the top
+/// row and the first three of the second, as the alpha's own buttons were numbered. Each
+/// button is the alpha's build icon for that def, with the hotkey and price in its corner.
+pub(crate) fn alpha_grid(g: &mut ChildSpawnerCommands, w: f32, h: f32) {
+    let (cw, ch) = (w / 6.0, h / 3.0);
+    for i in 0..9 {
+        let (col, row) = (i % 6, i / 6);
+        g.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                left: px(col as f32 * cw + 1.0),
+                top: px(row as f32 * ch + 1.0),
+                width: px(cw - 2.0),
+                height: px(ch - 2.0),
+                align_items: AlignItems::FlexEnd,
+                justify_content: JustifyContent::FlexStart,
+                padding: UiRect::all(px(2)),
+                ..default()
+            },
+            GridIcon(i),
+            Visibility::Hidden,
+        ))
+        .with_children(|c| {
+            c.spawn((text("", 10.0, TEXT), TextShadow { offset: Vec2::splat(1.0), ..default() }, Field::GridTag(i)));
+        });
+    }
+}
+
+/// Shows each alpha build button that has something to build, with that def's icon.
+fn grid_icons(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    sel: Res<Selection>,
+    server: Option<Res<AssetServer>>,
+    mut cells: Query<(Entity, &GridIcon, &mut Visibility, Option<&ImageNode>)>,
+) {
+    let Some(server) = server else { return };
+    let world = &sim.world;
+    let menu = build_menu(&sim, &sel);
+    for (e, cell, mut vis, img) in &mut cells {
+        let want =
+            menu.get(cell.0).and_then(|&d| crate::alpha_hud::icon_for(world.rules.def(d).name)).map(|(icon, _)| icon);
+        match want {
+            Some(icon) => {
+                let handle = crate::alpha_hud::image(&server, icon);
+                if img.is_none_or(|i| i.image != handle) {
+                    commands.entity(e).insert(ImageNode::new(handle));
+                }
+                vis.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
+}
+
+/// The bottom bar's portrait: the selected unit's or building's own portrait, else the
+/// faction's general.
+fn selection_portrait(
+    sim: Res<Sim>,
+    sel: Res<Selection>,
+    server: Option<Res<AssetServer>>,
+    mut slot: Query<(&crate::alpha_hud::PortraitSlot, &mut ImageNode)>,
+) {
+    let (Some(server), Ok((general, mut img))) = (server, slot.single_mut()) else { return };
+    let world = &sim.world;
+    let focus = sel.0.first().and_then(|&id| world.entity(id));
+    let want = focus
+        .and_then(|e| crate::alpha_hud::icon_for(world.rules.def(e.def).name))
+        .map_or_else(|| general.0.clone(), |(_, portrait)| crate::alpha_hud::image(&server, portrait));
+    if img.image != want {
+        img.image = want;
+    }
+}
+
+/// What the selection can build or train right now, in grid order.
+fn build_menu(sim: &Sim, sel: &Selection) -> Vec<g2_sim::DefId> {
+    let world = &sim.world;
+    let focus = sel.0.first().and_then(|&id| world.entity(id));
+    focus.map_or_else(Vec::new, |e| {
+        let d = world.rules.def(e.def);
+        if !e.is_complete() {
+            Vec::new()
+        } else if d.is_constructor() {
+            d.builds.to_vec()
+        } else {
+            d.produces.to_vec()
+        }
+    })
+}
+
 pub(crate) fn clock(ticks: u32) -> String {
     let s = ticks / TICKS_PER_SECOND;
     format!("{}:{:02}:{:02}", s / 3600, (s / 60) % 60, s % 60)
@@ -447,6 +635,11 @@ fn update_fields(
                     None => format!("{}", i + 1),
                 }
             }
+            Field::GridTag(i) => {
+                t.0 = menu
+                    .get(*i)
+                    .map_or(String::new(), |&def| format!("{} ${}", i + 1, world.cost_for(sim.local, def).credits))
+            }
         }
     }
 }
@@ -457,13 +650,21 @@ fn update_fields(
 fn minimap(
     mut commands: Commands,
     sim: Res<Sim>,
-    view: Query<Entity, With<MinimapView>>,
+    view: Query<(Entity, &ComputedNode, &Node), With<MinimapView>>,
     dots: Query<Entity, With<MinimapDot>>,
     mut fog_image: Local<Option<Handle<Image>>>,
     mut states: Local<Vec<u8>>,
     mut images: ResMut<Assets<Image>>,
 ) {
-    let Ok(map_node) = view.single() else { return };
+    let Ok((map_node, computed, node)) = view.single() else { return };
+    // Our panel is MINIMAP square; the alpha's slot is whatever its layout says, so the
+    // map fills its smaller side (before the first layout pass, the node's own width).
+    let laid_out = computed.size() * computed.inverse_scale_factor();
+    let side = match (laid_out.min_element(), node.width) {
+        (s, _) if s > 0.0 => s,
+        (_, Val::Px(w)) => w,
+        _ => MINIMAP,
+    };
     for d in &dots {
         commands.entity(d).despawn();
     }
@@ -493,7 +694,7 @@ fn minimap(
     }
     // The fog grid overshoots the map by part of a cell; scale it so cell edges line up.
     let cell = g2_sim::fog::CELL as f32;
-    let (fw, fh) = (v.w as f32 * cell / w * MINIMAP, v.h as f32 * cell / h * MINIMAP);
+    let (fw, fh) = (v.w as f32 * cell / w * side, v.h as f32 * cell / h * side);
     commands.entity(map_node).with_children(|m| {
         m.spawn((
             Node {
@@ -528,7 +729,7 @@ fn minimap(
                 }
                 _ => continue,
             };
-            let (x, y) = (pos.x.to_f32() / w * MINIMAP, pos.y.to_f32() / h * MINIMAP);
+            let (x, y) = (pos.x.to_f32() / w * side, pos.y.to_f32() / h * side);
             m.spawn((
                 Node {
                     position_type: PositionType::Absolute,

@@ -11,6 +11,7 @@ g2-rules.workspace = true
 g2-maps.workspace = true
 g2-frostbite.workspace = true
 bevy.workspace = true
+roxmltree = "0.21"
 
 [lints]
 workspace = true

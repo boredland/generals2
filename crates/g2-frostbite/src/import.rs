@@ -6,6 +6,7 @@
 //! <out>/models/<asset path>.glb                 every mesh, diffuse map embedded
 //! <out>/models/bounds.txt                       each model's bounding box (name, min xyz, max xyz)
 //! <out>/textures/<asset path>.png               every flat texture
+//! <out>/ui/                                     the HUD's images, layouts, fonts, as installed
 //! <out>/manifest.txt                            counts and every failure, one per line
 //! ```
 //!
@@ -55,11 +56,12 @@ pub struct Parts {
     pub movies: bool,
     pub textures: bool,
     pub models: bool,
+    pub ui: bool,
 }
 
 impl Default for Parts {
     fn default() -> Self {
-        Parts { sounds: true, movies: true, textures: true, models: true }
+        Parts { sounds: true, movies: true, textures: true, models: true, ui: true }
     }
 }
 
@@ -88,6 +90,10 @@ pub fn import(alpha: &Alpha, out: &Path, parts: Parts, progress: &mut dyn FnMut(
         progress("models");
         models(alpha, out, &mut report)?;
     }
+    if parts.ui {
+        progress("ui");
+        ui(alpha, out, &mut report)?;
+    }
     write(&out.join("manifest.txt"), report.summary().as_bytes())?;
     Ok(report)
 }
@@ -112,6 +118,37 @@ fn sounds(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
             match media::decode_variation(alpha, v).and_then(|pcm| write(&out.join(file), &pcm.to_wav())) {
                 Ok(()) => report.ok("sounds"),
                 Err(e) => report.fail(&format!("{name} {i}"), e),
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The HUD's art and layouts: `UTFWinAssets/` (images, layouts, fonts, text styles) is
+/// loose next to `Data/`, and is copied as it is to `<out>/ui/`.
+fn ui(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
+    let src = alpha.root().join("UTFWinAssets");
+    if !src.is_dir() {
+        report.fail("UTFWinAssets", "not found next to Data/");
+        return Ok(());
+    }
+    let dst = out.join("ui");
+    let mut stack = vec![src.clone()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).map_err(|e| Error::Io(dir.clone(), e))? {
+            let path = e.map_err(|e| Error::Io(dir.clone(), e))?.path();
+            let ext = path.extension().and_then(|x| x.to_str()).map(str::to_ascii_lowercase);
+            if path.is_dir() {
+                stack.push(path);
+            } else if matches!(ext.as_deref(), Some("png" | "layout" | "ttf" | "otf" | "css")) {
+                let rel = path.strip_prefix(&src).unwrap();
+                match std::fs::read(&path)
+                    .map_err(|e| Error::Io(path.clone(), e))
+                    .and_then(|b| write(&dst.join(rel), &b))
+                {
+                    Ok(()) => report.ok("ui files"),
+                    Err(err) => report.fail(&rel.to_string_lossy(), err),
+                }
             }
         }
     }
