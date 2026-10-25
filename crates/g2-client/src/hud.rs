@@ -929,4 +929,41 @@ mod tests {
         assert_eq!(pips, [0, 1, 1, 2, 5, 5, 5]);
         assert_eq!(super::cargo_pips(40, 40), 5, "a GLA worker's full 40-credit load");
     }
+
+    /// A window resize rebuilds the HUD in place: after the first build and after each
+    /// resize there is exactly one HUD (the same root count), and frames without a resize
+    /// leave it alone.
+    #[test]
+    fn a_resize_rebuilds_the_hud_once() {
+        use bevy::prelude::*;
+        use bevy::window::WindowResized;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .add_message::<WindowResized>()
+            .init_asset::<Image>()
+            .insert_resource(crate::sim::Sim::new(
+                g2_rules::crater_ridge(),
+                None,
+                1,
+                crate::sim::Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false),
+            ))
+            .init_resource::<crate::input::Selection>()
+            .init_resource::<crate::input::Placement>()
+            .init_resource::<crate::sim::Deliveries>()
+            .add_plugins(super::HudPlugin);
+        let roots = |app: &mut App| {
+            app.world_mut().query_filtered::<Entity, With<super::HudRoot>>().iter(app.world()).collect::<Vec<_>>()
+        };
+        app.update();
+        let first = roots(&mut app);
+        assert!(!first.is_empty(), "the HUD spawns at the start");
+        app.update();
+        assert_eq!(roots(&mut app), first, "no resize: the same HUD");
+        let window = app.world_mut().spawn_empty().id();
+        app.world_mut().write_message(WindowResized { window, width: 1920.0, height: 1080.0 });
+        app.update();
+        let rebuilt = roots(&mut app);
+        assert_eq!(rebuilt.len(), first.len(), "rebuilt, not stacked");
+        assert!(rebuilt.iter().all(|e| !first.contains(e)), "every old root is gone");
+    }
 }

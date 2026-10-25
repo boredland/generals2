@@ -518,13 +518,15 @@ mod tests {
     }
 
     /// A click on the HUD is the HUD's: on a build-grid button it trains that slot's unit as
-    /// the hotkey would, on bare panel art it issues nothing, and the same click off the HUD
-    /// reaches the world (a click on open ground drops the selection).
+    /// the hotkey would, on bare panel art it issues nothing, on the minimap it moves the
+    /// camera there, and the same click off the HUD reaches the world (a click on open
+    /// ground drops the selection). The nodes are laid out at scale 2 (sizes and centres in
+    /// physical pixels), the cursor in logical pixels, as on a HiDPI window.
     #[test]
     fn hud_clicks_never_reach_the_world() {
         use bevy::ecs::system::RunSystemOnce;
         use bevy::ui::UiGlobalTransform;
-        let click = |at: Vec2| {
+        let click = |at: Vec2| -> (u32, usize, Vec3) {
             let mut sim = Sim::new(
                 g2_rules::crater_ridge(),
                 None,
@@ -558,19 +560,21 @@ mod tests {
             bevy::camera::CameraProjection::update(&mut projection, 1280.0, 720.0);
             camera.computed.clip_from_view = bevy::camera::CameraProjection::get_clip_from_view(&projection);
             world.spawn((camera, GlobalTransform::from(cam.transform()), cam));
-            // A panel 0..400 x 500..720 holding one grid button at 10..60 x 510..560.
-            let node = |size: Vec2| ComputedNode { size, ..ComputedNode::DEFAULT };
+            // At scale 2, in logical pixels: a panel 0..400 x 500..720 holding a grid button at
+            // 10..60 x 510..560 and a 200 x 200 minimap at 180..380 x 510..710.
+            let node = |size: Vec2, centre: Vec2| {
+                (
+                    ComputedNode { size: size * 2.0, inverse_scale_factor: 0.5, ..ComputedNode::DEFAULT },
+                    UiGlobalTransform::from_translation(centre * 2.0),
+                    InheritedVisibility::VISIBLE,
+                )
+            };
+            world.spawn((crate::hud::HudPanel, node(Vec2::new(400.0, 220.0), Vec2::new(200.0, 610.0))));
+            world.spawn((crate::hud::GridButton(0), node(Vec2::new(50.0, 50.0), Vec2::new(35.0, 535.0))));
             world.spawn((
-                crate::hud::HudPanel,
-                node(Vec2::new(400.0, 220.0)),
-                UiGlobalTransform::from_xy(200.0, 610.0),
-                InheritedVisibility::VISIBLE,
-            ));
-            world.spawn((
-                crate::hud::GridButton(0),
-                node(Vec2::new(50.0, 50.0)),
-                UiGlobalTransform::from_xy(35.0, 535.0),
-                InheritedVisibility::VISIBLE,
+                crate::hud::MinimapView,
+                Node { width: px(200), height: px(200), ..default() },
+                node(Vec2::new(200.0, 200.0), Vec2::new(280.0, 610.0)),
             ));
             let mut buttons = ButtonInput::<MouseButton>::default();
             buttons.press(MouseButton::Left);
@@ -586,11 +590,23 @@ mod tests {
             world.resource_mut::<ButtonInput<MouseButton>>().clear();
             world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
             world.run_system_once(mouse).unwrap();
-            let sim = world.resource::<Sim>();
-            (sim.unheard_orders, world.resource::<Selection>().0.len())
+            let pivot = world.query::<&RtsCamera>().single(&world).unwrap().pivot;
+            (world.resource::<Sim>().unheard_orders, world.resource::<Selection>().0.len(), pivot)
         };
-        assert_eq!(click(Vec2::new(35.0, 535.0)), (1, 1), "grid button: one Train order, selection kept");
-        assert_eq!(click(Vec2::new(300.0, 650.0)), (0, 1), "bare panel: no order, selection kept");
+        let (orders, selected, home) = click(Vec2::new(35.0, 535.0));
+        assert_eq!((orders, selected), (1, 1), "grid button: one Train order, selection kept");
+        let (orders, selected, pivot) = click(Vec2::new(130.0, 650.0));
+        assert_eq!((orders, selected), (0, 1), "bare panel: no order, selection kept");
+        assert_eq!(pivot, home, "bare panel: camera stays");
+        // The minimap's centre is the map's centre.
+        let (orders, selected, pivot) = click(Vec2::new(280.0, 610.0));
+        assert_eq!((orders, selected), (0, 1), "minimap: no order, selection kept");
+        let map = g2_rules::crater_ridge();
+        let centre = Vec2::new(map.width.to_f32(), map.height.to_f32()) / 2.0;
+        assert!(
+            Vec2::new(pivot.x, pivot.z).distance(centre) < 1.0,
+            "minimap centre moves the camera to {centre}, got {pivot}"
+        );
         assert_eq!(click(Vec2::new(640.0, 200.0)).1, 0, "open ground: the world takes the click");
     }
 }
