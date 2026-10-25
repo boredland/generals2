@@ -19,8 +19,8 @@ fn world(f0: Faction, f1: Faction) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None },
-            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None },
+            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new() },
         ],
     };
     World::new(&setup, rules())
@@ -104,8 +104,14 @@ fn aircraft_fly_straight_over_impassable_terrain() {
         map: walled(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Eu, starting_credits: 100_000, ai: None, general: None },
-            PlayerSetup { faction: Faction::Gla, starting_credits: 100_000, ai: None, general: None },
+            PlayerSetup { faction: Faction::Eu, starting_credits: 100_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup {
+                faction: Faction::Gla,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+            },
         ],
     };
     let mut w = World::new(&setup, rules());
@@ -210,8 +216,20 @@ fn matches_with_aircraft_replay_exactly() {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Gla, starting_credits: 5_000, ai: Some(AiLevel::Easy), general: None },
-            PlayerSetup { faction: Faction::Apa, starting_credits: 5_000, ai: Some(AiLevel::Normal), general: None },
+            PlayerSetup {
+                faction: Faction::Gla,
+                starting_credits: 5_000,
+                ai: Some(AiLevel::Easy),
+                general: None,
+                perks: Vec::new(),
+            },
+            PlayerSetup {
+                faction: Faction::Apa,
+                starting_credits: 5_000,
+                ai: Some(AiLevel::Normal),
+                general: None,
+                perks: Vec::new(),
+            },
         ],
     };
     let mut w = World::new(&s, rules());

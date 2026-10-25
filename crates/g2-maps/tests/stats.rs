@@ -24,6 +24,7 @@ fn stats_agree_with_the_match() {
                     starting_credits: 5_000,
                     ai: Some(if i == 0 { AiLevel::Normal } else { AiLevel::Easy }),
                     general: None,
+                    perks: Vec::new(),
                 })
                 .collect(),
         };

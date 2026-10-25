@@ -17,6 +17,7 @@ fn setup(seed: u64, ai: [bool; 2], factions: [Faction; 2]) -> MatchSetup {
                 starting_credits: 5_000,
                 ai: ai.then_some(g2_sim::AiLevel::Easy),
                 general: None,
+                perks: Vec::new(),
             })
             .collect(),
     }

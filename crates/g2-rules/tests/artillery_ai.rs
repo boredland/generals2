@@ -26,8 +26,20 @@ fn normal_artillery_stands_behind_its_line() {
             for seat in 0..2u8 {
                 let me = PlayerId(seat);
                 let mut players = vec![
-                    PlayerSetup { faction: fa, starting_credits: 5_000, ai: Some(AiLevel::Normal), general: None },
-                    PlayerSetup { faction: fb, starting_credits: 5_000, ai: Some(AiLevel::Easy), general: None },
+                    PlayerSetup {
+                        faction: fa,
+                        starting_credits: 5_000,
+                        ai: Some(AiLevel::Normal),
+                        general: None,
+                        perks: Vec::new(),
+                    },
+                    PlayerSetup {
+                        faction: fb,
+                        starting_credits: 5_000,
+                        ai: Some(AiLevel::Easy),
+                        general: None,
+                        perks: Vec::new(),
+                    },
                 ];
                 if seat == 1 {
                     players.swap(0, 1);

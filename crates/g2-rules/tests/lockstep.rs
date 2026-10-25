@@ -10,7 +10,7 @@ const JOINER: PlayerId = PlayerId(1);
 
 fn setup() -> MatchSetup {
     let players = [Faction::Eu, Faction::Gla]
-        .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None })
+        .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None, perks: Vec::new() })
         .to_vec();
     MatchSetup { map: crater_ridge(), seed: 7, players }
 }
@@ -230,6 +230,7 @@ fn the_build_id_follows_the_rules() {
             defs: Box::leak(defs.into_boxed_slice()),
             generals: base.generals,
             upgrades: Box::leak(upgrades.into_boxed_slice()),
+            perks: base.perks,
         }))
     };
     let mut defs = base.defs.to_vec();

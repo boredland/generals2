@@ -5,7 +5,7 @@
 //! Everything else is a placeholder chosen for playability and will be tuned.
 use g2_sim::defs::{
     Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, Garrison, General, Modifier,
-    Power, PowerKind, Rules, Shell, Targets, Upgrade, UpgradeId, Veterancy, Weapon,
+    Perk, PerkId, Power, PowerKind, PowerTuning, Rules, Shell, Targets, Upgrade, UpgradeId, Veterancy, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -88,7 +88,40 @@ pub mod generals {
     pub const TASKMASTER: GeneralId = GeneralId(1);
     pub const JUNKYARD: GeneralId = GeneralId(2);
 }
+
+/// Stable ids into `RULES.perks`: eight per general, in each general's list order.
+pub mod perks {
+    use g2_sim::defs::PerkId;
+    // Bulldog (EU).
+    pub const BD_DOUBLE_SHIFTS: PerkId = PerkId(0);
+    pub const BD_HEAVY_PAYLOAD: PerkId = PerkId(1);
+    pub const BD_PROTECTOR_I: PerkId = PerkId(2);
+    pub const BD_PROTECTOR_II: PerkId = PerkId(3);
+    pub const BD_FACTORY_OVERTIME: PerkId = PerkId(4);
+    pub const BD_INSOURCED: PerkId = PerkId(5);
+    pub const BD_AERODYNAMICS_I: PerkId = PerkId(6);
+    pub const BD_AERODYNAMICS_II: PerkId = PerkId(7);
+    // Taskmaster (APA).
+    pub const TM_SPY_EFFICIENCY: PerkId = PerkId(8);
+    pub const TM_LOGISTICS: PerkId = PerkId(9);
+    pub const TM_PROTECTOR_I: PerkId = PerkId(10);
+    pub const TM_PROTECTOR_II: PerkId = PerkId(11);
+    pub const TM_FACTORY_OVERTIME: PerkId = PerkId(12);
+    pub const TM_VULCAN_BARRELS: PerkId = PerkId(13);
+    pub const TM_KANBAN: PerkId = PerkId(14);
+    pub const TM_COMMAND_I: PerkId = PerkId(15);
+    // Junkyard (GLA).
+    pub const JY_DISCIPLINE: PerkId = PerkId(16);
+    pub const JY_SCAVENGER: PerkId = PerkId(17);
+    pub const JY_LEVERAGE: PerkId = PerkId(18);
+    pub const JY_INSOURCED: PerkId = PerkId(19);
+    pub const JY_PROTECTOR_I: PerkId = PerkId(20);
+    pub const JY_PROTECTOR_II: PerkId = PerkId(21);
+    pub const JY_FACTORY_OVERTIME: PerkId = PerkId(22);
+    pub const JY_LEADERSHIP: PerkId = PerkId(23);
+}
 use ids::*;
+use perks::*;
 use upgrades::*;
 
 const fn secs(s: u32) -> u32 {
@@ -931,7 +964,7 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
 const HARVEST_WORKER: CollectorSpec = CollectorSpec { capacity: 40, load_ticks: secs(2), unload_ticks: secs(1) };
 
-pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS, upgrades: &UPGRADES };
+pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS, upgrades: &UPGRADES, perks: &PERKS };
 
 /// Zero Hour's player weapon upgrades are all +25% damage (96 of 97 `PLAYER_UPGRADE` bonuses in
 /// its `Weapon.ini`, e.g. AP Bullets, Uranium Shells).
@@ -1049,6 +1082,250 @@ static UPGRADES: [Upgrade; 9] = [
 /// placeholders in the spirit of pre-release sub-general designs (e.g. a supply doctrine:
 /// cheaper supply trucks, faster builds). Each has one active power, modelled on support
 /// powers the archive documents for other generals of the same side (numbers placeholders).
+/// The generals' perks (the alpha's Perks 3.0, October 2013: ranks 1-5, one slot per rank,
+/// "about eight or nine perks ... unique per General", additive on the normal game, bought and
+/// promoted with experience earned on that general). The names and what they act on are the
+/// alpha's Perks 2.0 tooltips from the developer walkthrough (archive/videos/official,
+/// 22:06-23:40), matched to what our units and powers can do: "Double Shifts" ('Carpet Bomb'
+/// comes online faster after use) tunes our general's power the same way. Every percentage,
+/// rank and price is a placeholder, of the size of a Zero Hour upgrade (10-25%).
+static PERKS: [Perk; 24] = [
+    // ---- Bulldog (EU) ----
+    perk(
+        "Double Shifts",
+        "The artillery barrage comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Heavy Payload",
+        "Barrage shells deal 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, EU_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(BD_PROTECTOR_I),
+        EU_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk("Factory Overtime", "Vehicles build 15% faster.", 2, 500, None, &[], EU_VEHICLES_FAST, None),
+    perk(
+        "Insourced",
+        "Tanks cost 10% less.",
+        3,
+        800,
+        None,
+        &[],
+        &[Modifier::Cost { def: EU_AEGIS, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Aerodynamics I",
+        "Aircraft gain 15% more hit points.",
+        4,
+        1000,
+        None,
+        &[(EU_VALKYRIE, Effect::Health { add: 93 })],
+        &[],
+        None,
+    ),
+    perk(
+        "Aerodynamics II",
+        "Aircraft gain a further 15% more hit points.",
+        5,
+        1500,
+        Some(BD_AERODYNAMICS_I),
+        &[(EU_VALKYRIE, Effect::Health { add: 93 })],
+        &[],
+        None,
+    ),
+    // ---- Taskmaster (APA) ----
+    perk(
+        "Spy Efficiency",
+        "The field repair comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Logistics",
+        "The field repair restores 25% more hit points.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 125 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, APA_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(TM_PROTECTOR_I),
+        APA_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk("Factory Overtime", "Vehicles build 15% faster.", 2, 500, None, &[], APA_VEHICLES_FAST, None),
+    perk(
+        "Vulcan Barrels",
+        "The Gatling Tank deals 20% more damage.",
+        3,
+        800,
+        None,
+        &[(APA_GATLING, Effect::Damage { percent: 120, against: None })],
+        &[],
+        None,
+    ),
+    perk(
+        "Kanban",
+        "Aircraft build 20% faster.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: APA_MANTIS, percent: 80 }],
+        None,
+    ),
+    perk(
+        "Command I",
+        "The command center takes 25% less damage.",
+        5,
+        1500,
+        None,
+        &[(APA_CC, Effect::Toughness { percent: 75 })],
+        &[],
+        None,
+    ),
+    // ---- Junkyard (GLA) ----
+    perk(
+        "Discipline",
+        "The ambush comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Scavenger",
+        "Units regain 2 hit points a second after 5 s without being hit.",
+        3,
+        800,
+        None,
+        GLA_SCAVENGE,
+        &[],
+        None,
+    ),
+    perk(
+        "Leverage",
+        "The ambush brings 50% more squads.",
+        4,
+        1000,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 150 }),
+    ),
+    perk(
+        "Insourced",
+        "Tanks cost 10% less.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::Cost { def: GLA_TANK, percent: 90 }],
+        None,
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, GLA_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(JY_PROTECTOR_I),
+        GLA_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk("Factory Overtime", "Vehicles build 15% faster.", 2, 500, None, &[], GLA_VEHICLES_FAST, None),
+    perk("Leadership", "Units gain double experience from kills.", 5, 1500, None, GLA_LEADERSHIP, &[], None),
+];
+
+#[allow(clippy::too_many_arguments)]
+const fn perk(
+    name: &'static str,
+    description: &'static str,
+    rank: u8,
+    price: u32,
+    requires: Option<PerkId>,
+    effects: &'static [(DefId, Effect)],
+    modifiers: &'static [Modifier],
+    power: Option<PowerTuning>,
+) -> Perk {
+    Perk { name, description, rank, price, requires, effects, modifiers, power }
+}
+
+const PROTECTOR: Effect = Effect::Toughness { percent: 90 };
+const EU_INFANTRY_10: &[(DefId, Effect)] = &[(EU_RECON, PROTECTOR), (EU_ROCKETS, PROTECTOR)];
+const APA_INFANTRY_10: &[(DefId, Effect)] = &[(APA_RED_GUARD, PROTECTOR), (APA_TANK_HUNTER, PROTECTOR)];
+const GLA_INFANTRY_10: &[(DefId, Effect)] = &[(GLA_RABBLE, PROTECTOR), (GLA_RPG, PROTECTOR)];
+const OVERTIME: u32 = 85;
+const EU_VEHICLES_FAST: &[Modifier] = &[
+    Modifier::BuildTime { def: EU_AEGIS, percent: OVERTIME },
+    Modifier::BuildTime { def: EU_ARTILLERY, percent: OVERTIME },
+    Modifier::BuildTime { def: EU_APC, percent: OVERTIME },
+];
+const APA_VEHICLES_FAST: &[Modifier] = &[
+    Modifier::BuildTime { def: APA_WARLORD, percent: OVERTIME },
+    Modifier::BuildTime { def: APA_THUNDERFIST, percent: OVERTIME },
+    Modifier::BuildTime { def: APA_GATLING, percent: OVERTIME },
+];
+const GLA_VEHICLES_FAST: &[Modifier] = &[
+    Modifier::BuildTime { def: GLA_TANK, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_TOXIN_ARTILLERY, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_TECHNICAL, percent: OVERTIME },
+];
+// A kill is 1 experience, so only whole multiples change anything.
+const LEAD: Effect = Effect::Experience { percent: 200 };
+const GLA_LEADERSHIP: &[(DefId, Effect)] = &[
+    (GLA_RABBLE, LEAD),
+    (GLA_RPG, LEAD),
+    (GLA_TANK, LEAD),
+    (GLA_TOXIN_ARTILLERY, LEAD),
+    (GLA_TECHNICAL, LEAD),
+    (GLA_TOXIN_CHOPPER, LEAD),
+];
+const SCAVENGE: Effect = Effect::Repair { hp: 2, calm_ticks: secs(5) };
+const GLA_SCAVENGE: &[(DefId, Effect)] = &[
+    (GLA_RABBLE, SCAVENGE),
+    (GLA_RPG, SCAVENGE),
+    (GLA_TANK, SCAVENGE),
+    (GLA_TOXIN_ARTILLERY, SCAVENGE),
+    (GLA_TECHNICAL, SCAVENGE),
+    (GLA_TOXIN_CHOPPER, SCAVENGE),
+];
+
 static GENERALS: [General; 3] = [
     General {
         name: "Bulldog",
@@ -1075,6 +1352,16 @@ static GENERALS: [General; 3] = [
             first_ticks: secs(240),
             cooldown_ticks: secs(240),
         }),
+        perks: &[
+            BD_DOUBLE_SHIFTS,
+            BD_HEAVY_PAYLOAD,
+            BD_PROTECTOR_I,
+            BD_PROTECTOR_II,
+            BD_FACTORY_OVERTIME,
+            BD_INSOURCED,
+            BD_AERODYNAMICS_I,
+            BD_AERODYNAMICS_II,
+        ],
     },
     General {
         name: "Taskmaster",
@@ -1092,6 +1379,16 @@ static GENERALS: [General; 3] = [
             first_ticks: secs(180),
             cooldown_ticks: secs(180),
         }),
+        perks: &[
+            TM_SPY_EFFICIENCY,
+            TM_LOGISTICS,
+            TM_PROTECTOR_I,
+            TM_PROTECTOR_II,
+            TM_FACTORY_OVERTIME,
+            TM_VULCAN_BARRELS,
+            TM_KANBAN,
+            TM_COMMAND_I,
+        ],
     },
     General {
         name: "Junkyard",
@@ -1108,6 +1405,16 @@ static GENERALS: [General; 3] = [
             first_ticks: secs(240),
             cooldown_ticks: secs(240),
         }),
+        perks: &[
+            JY_DISCIPLINE,
+            JY_SCAVENGER,
+            JY_LEVERAGE,
+            JY_INSOURCED,
+            JY_PROTECTOR_I,
+            JY_PROTECTOR_II,
+            JY_FACTORY_OVERTIME,
+            JY_LEADERSHIP,
+        ],
     },
 ];
 
@@ -1138,6 +1445,26 @@ pub fn map_by_name(name: &str) -> Option<MapDef> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn perk_ids_match_each_generals_list() {
+        let r = rules();
+        let mut seen = Vec::new();
+        for g in r.generals {
+            assert_eq!(g.perks.len(), 8, "{}: eight perks", g.name);
+            for (slot, &k) in g.perks.iter().enumerate() {
+                assert_eq!(k.0 as usize, seen.len(), "{} perk {slot} out of table order", g.name);
+                seen.push(k);
+                let perk = r.perk(k);
+                assert!((1..=5).contains(&perk.rank), "{}: rank {}", perk.name, perk.rank);
+                if let Some(lower) = perk.requires {
+                    assert!(g.perks.contains(&lower), "{}: lower tier from another general", perk.name);
+                    assert!(r.perk(lower).rank < perk.rank, "{}: lower tier ranks below it", perk.name);
+                }
+            }
+        }
+        assert_eq!(seen.len(), r.perks.len(), "every perk belongs to one general");
+    }
 
     #[test]
     fn id_constants_match_table_order() {

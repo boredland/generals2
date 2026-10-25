@@ -89,7 +89,13 @@ fn ai_setup(args: &[String]) -> Result<MatchSetup, String> {
                     Some(id)
                 }
             };
-            Ok(PlayerSetup { faction, starting_credits: 5_000, ai: Some(ai), general })
+            Ok(PlayerSetup {
+                faction,
+                starting_credits: 5_000,
+                ai: Some(ai),
+                general,
+                perks: g2_sim::ai::ai_perks(rules(), general, ai),
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
     let map = resolve(&flag(args, "--map", "Crater Ridge".to_owned())?)?;
@@ -132,6 +138,7 @@ fn survey(args: &[String]) -> Result<(), String> {
                             starting_credits: 5_000,
                             ai: Some(l),
                             general: None,
+                            perks: Vec::new(),
                         })
                         .to_vec();
                     let setup = MatchSetup { map: map.clone(), seed, players };
@@ -320,8 +327,20 @@ fn artillery(args: &[String]) -> Result<(), String> {
             for seat in 0..2u8 {
                 let me = PlayerId(seat);
                 let mut players = vec![
-                    PlayerSetup { faction: fa, starting_credits: 5_000, ai: Some(probed), general: None },
-                    PlayerSetup { faction: fb, starting_credits: 5_000, ai: Some(AiLevel::Easy), general: None },
+                    PlayerSetup {
+                        faction: fa,
+                        starting_credits: 5_000,
+                        ai: Some(probed),
+                        general: None,
+                        perks: Vec::new(),
+                    },
+                    PlayerSetup {
+                        faction: fb,
+                        starting_credits: 5_000,
+                        ai: Some(AiLevel::Easy),
+                        general: None,
+                        perks: Vec::new(),
+                    },
                 ];
                 if seat == 1 {
                     players.swap(0, 1);

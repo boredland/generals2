@@ -68,9 +68,9 @@ impl Sim {
         self.world.player(self.local).power_ready.map(|t| t.saturating_sub(self.world.tick()))
     }
 
-    /// The local player's general's power, if any.
+    /// The local player's general's power as their perks tune it, if any.
     pub fn power(&self) -> Option<g2_sim::defs::Power> {
-        self.world.player(self.local).general.and_then(|g| self.world.rules.general(g).power)
+        self.world.power_of(self.local)
     }
 
     /// Whether the local player sees `e` right now: own entities always, neutral resources once
@@ -131,12 +131,14 @@ impl Sim {
                 starting_credits: 5_000,
                 ai: spectate.then_some(g2_sim::AiLevel::Easy),
                 general: None,
+                perks: Vec::new(),
             },
             PlayerSetup {
                 faction: factions[1],
                 starting_credits: 5_000,
                 ai: Some(g2_sim::AiLevel::Easy),
                 general: None,
+                perks: Vec::new(),
             },
         ]
     }

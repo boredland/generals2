@@ -42,6 +42,8 @@ pub struct Player {
     pub upgrades: Vec<UpgradeId>,
     /// A stealth unit has hit one of this player's entities: they know stealth is in play.
     pub hit_by_stealth: bool,
+    /// Perks slotted for this match, from `PlayerSetup::perks`.
+    pub perks: Vec<crate::defs::PerkId>,
 }
 
 /// Running totals for the end-of-match screen. Output only: nothing in the simulation reads
@@ -203,6 +205,11 @@ impl World {
                     p.faction
                 );
             }
+            assert!(
+                p.perks.iter().all(|k| p.general.is_some_and(|g| rules.general(g).perks.contains(k))),
+                "perks {:?} are not all the general's",
+                p.perks
+            );
         }
         let mut world = World {
             rules,
@@ -243,9 +250,10 @@ impl World {
                 power_supply: 0,
                 power_drain: 0,
                 defeated: false,
-                power_ready: p.general.and_then(|g| rules.general(g).power).map(|pw| pw.first_ticks),
+                power_ready: crate::defs::tuned_power(rules, p.general, &p.perks).map(|pw| pw.first_ticks),
                 upgrades: Vec::new(),
                 hit_by_stealth: false,
+                perks: p.perks.clone(),
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
             // The onslaught has no base: its waves are all there is of it.
@@ -394,14 +402,18 @@ impl World {
                 .any(|e| e.owner == Some(player) && e.queue.iter().any(|p| p.item == Product::Upgrade(upgrade)))
     }
 
-    /// Every upgrade effect `player` has researched for `def`.
+    /// Effects on `player`'s `def`: their finished upgrades', then their slotted perks'.
     pub fn effects(&self, player: PlayerId, def: DefId) -> impl Iterator<Item = Effect> + '_ {
-        self.player(player)
-            .upgrades
-            .iter()
-            .flat_map(|&u| self.rules.upgrade(u).effects.iter())
-            .filter(move |&&(d, _)| d == def)
-            .map(|&(_, e)| e)
+        let p = self.player(player);
+        let upgrades = p.upgrades.iter().flat_map(|&u| self.rules.upgrade(u).effects.iter());
+        let perks = p.perks.iter().flat_map(|&k| self.rules.perk(k).effects.iter());
+        upgrades.chain(perks).filter(move |&&(d, _)| d == def).map(|&(_, e)| e)
+    }
+
+    /// `player`'s general's power as their perks tune it; `None` without one.
+    pub fn power_of(&self, player: PlayerId) -> Option<crate::defs::Power> {
+        let p = self.player(player);
+        crate::defs::tuned_power(self.rules, p.general, &p.perks)
     }
 
     /// Maximum hit points: the def's, plus any health upgrades its owner researched and its
@@ -701,15 +713,22 @@ impl World {
         }
     }
 
-    /// What `player` pays for `def`, after their general's modifiers. The general is fixed for the
-    /// match, so a refund at the same price is exact.
+    /// What `player` pays for `def`, after their general's and perks' modifiers. Both are
+    /// fixed for the match, so a refund at the same price is exact.
     pub fn cost_for(&self, player: PlayerId, def: DefId) -> crate::defs::Cost {
-        self.rules.cost(self.player(player).general, def)
+        self.rules.cost(self.modifiers(player), def)
     }
 
-    /// Ticks `player` needs to build or train `def`, after their general's modifiers.
+    /// Ticks `player` needs to build or train `def`, after their general's and perks' modifiers.
     pub fn build_ticks_for(&self, player: PlayerId, def: DefId) -> u32 {
-        self.rules.build_ticks(self.player(player).general, def)
+        self.rules.build_ticks(self.modifiers(player), def)
+    }
+
+    /// Cost and build-time changes of `player`'s general, then of each slotted perk.
+    fn modifiers(&self, player: PlayerId) -> impl Iterator<Item = crate::defs::Modifier> + '_ {
+        let p = self.player(player);
+        let general = p.general.into_iter().flat_map(|g| self.rules.general(g).modifiers.iter().copied());
+        general.chain(p.perks.iter().flat_map(|&k| self.rules.perk(k).modifiers.iter().copied()))
     }
 
     /// What a queue item costs `player`: a unit after their general's modifiers, a research
@@ -1719,9 +1738,8 @@ impl World {
     /// explored, so it can't be used to scout. Barrage shells fly like artillery shells, with no
     /// shooter entity (`POWER_SOURCE`), and are hashed with every other shell.
     fn use_power(&mut self, player: PlayerId, at: Vec2) -> Result<(), Reject> {
-        let p = &self.players[player.0 as usize];
-        let power = p.general.and_then(|g| self.rules.general(g).power).ok_or(Reject::PowerNotReady)?;
-        if p.power_ready.is_none_or(|t| self.tick < t) {
+        let power = self.power_of(player).ok_or(Reject::PowerNotReady)?;
+        if self.players[player.0 as usize].power_ready.is_none_or(|t| self.tick < t) {
             return Err(Reject::PowerNotReady);
         }
         if !self.map.contains(at) || !self.visions[player.0 as usize].is_explored(at) {
@@ -1819,13 +1837,23 @@ impl World {
         }
     }
 
-    /// The shooter of a kill (if it still stands: a shell's gun may be gone) gains `xp`. A rank
-    /// reached raises its maximum hit points by the rank's health and its current ones by the
-    /// same amount, as Zero Hour keeps the ratio when a promotion raises the maximum.
+    /// The shooter of a kill (if it still stands: a shell's gun may be gone) gains `xp`, scaled
+    /// by its owner's experience effects. A rank reached raises its maximum hit points by the
+    /// rank's health and its current ones by the same amount, as Zero Hour keeps the ratio when
+    /// a promotion raises the maximum.
     fn gain_experience(&mut self, shooter: EntityId, xp: u32) {
         let Some(e) = self.entities.get(shooter) else { return };
         let Some(v) = self.rules.def(e.def).veterancy else { return };
         let (before, owner, at) = (self.rank(e), e.owner, e.pos);
+        let extra: u32 = owner.map_or(0, |o| {
+            self.effects(o, e.def)
+                .map(|x| match x {
+                    Effect::Experience { percent } => percent.saturating_sub(100),
+                    _ => 0,
+                })
+                .sum()
+        });
+        let xp = xp + xp * extra / 100;
         let e = self.entities.get_mut(shooter).unwrap();
         e.experience += xp;
         let after = rank_for(Some(v), e.experience);

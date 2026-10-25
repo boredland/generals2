@@ -14,8 +14,8 @@ fn world(f0: Faction, credits: i64) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: credits, ai: None, general: None },
-            PlayerSetup { faction: Faction::Eu, starting_credits: credits, ai: None, general: None },
+            PlayerSetup { faction: f0, starting_credits: credits, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: Faction::Eu, starting_credits: credits, ai: None, general: None, perks: Vec::new() },
         ],
     };
     World::new(&setup, rules())
@@ -201,8 +201,8 @@ fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None },
-            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None },
+            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
         ],
     };
     // A square "lake" of terrain from (140,120) to (180,160); the target is its centre.
@@ -269,8 +269,8 @@ fn piles_deplete_and_vanish() {
         map,
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: None, general: None },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
         ],
     };
     let mut w = World::new(&setup, rules());
@@ -298,8 +298,8 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
         map,
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: None, general: None },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
         ],
     };
     let mut w = World::new(&setup, rules());
@@ -417,8 +417,15 @@ fn a_general_discounts_and_speeds_up_its_units() {
                         starting_credits: 10_000,
                         ai: None,
                         general: Some(g2_rules::generals::BULLDOG),
+                        perks: Vec::new(),
                     },
-                    PlayerSetup { faction: Faction::Eu, starting_credits: 10_000, ai: None, general: None },
+                    PlayerSetup {
+                        faction: Faction::Eu,
+                        starting_credits: 10_000,
+                        ai: None,
+                        general: None,
+                        perks: Vec::new(),
+                    },
                 ],
             };
             w = World::new(&setup, rules());
@@ -460,7 +467,13 @@ fn a_general_discounts_and_speeds_up_its_units() {
         players: w
             .players()
             .iter()
-            .map(|p| PlayerSetup { faction: p.faction, starting_credits: 10_000, ai: None, general: p.general })
+            .map(|p| PlayerSetup {
+                faction: p.faction,
+                starting_credits: 10_000,
+                ai: None,
+                general: p.general,
+                perks: Vec::new(),
+            })
             .collect(),
     };
     let decoded = g2_sim::Replay::decode(&w.replay(&setup).encode()).unwrap();
@@ -480,8 +493,9 @@ fn a_general_of_another_faction_is_refused_at_setup() {
                 starting_credits: 0,
                 ai: None,
                 general: Some(g2_rules::generals::JUNKYARD),
+                perks: Vec::new(),
             },
-            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None },
+            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
         ],
     };
     World::new(&setup, rules());
@@ -496,8 +510,8 @@ fn the_general_is_part_of_the_state_hash() {
             map: crater_ridge(),
             seed: 1,
             players: vec![
-                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general },
-                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None },
+                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general, perks: Vec::new() },
+                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
             ],
         };
         World::new(&setup, rules()).state_hash()
@@ -518,8 +532,15 @@ fn replays_with_invalid_generals_are_refused() {
                 starting_credits: 0,
                 ai: Some(g2_sim::AiLevel::Easy),
                 general: Some(g2_rules::generals::BULLDOG),
+                perks: Vec::new(),
             },
-            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: Some(g2_sim::AiLevel::Easy), general: None },
+            PlayerSetup {
+                faction: Faction::Gla,
+                starting_credits: 0,
+                ai: Some(g2_sim::AiLevel::Easy),
+                general: None,
+                perks: Vec::new(),
+            },
         ],
     };
     let (_, mut replay) = g2_sim::record(World::new(&setup, rules()), &setup, 60, |_| {});
@@ -537,8 +558,8 @@ fn surrender_defeats_the_player_and_the_last_one_standing_wins() {
             map: crater_ridge(),
             seed: 1,
             players: vec![
-                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None },
-                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None },
+                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
             ],
         },
         rules(),
@@ -740,7 +761,13 @@ fn mutual_kills_resolve_together() {
         map: crater_ridge(),
         seed: 1,
         players: [Faction::Apa, Faction::Apa]
-            .map(|faction| PlayerSetup { faction, starting_credits: 100_000, ai: None, general: None })
+            .map(|faction| PlayerSetup {
+                faction,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+            })
             .to_vec(),
     };
     let mut w = World::new(&setup, rules());
@@ -910,7 +937,13 @@ fn destroying_every_building_and_constructor_defeats_a_player() {
         players: w
             .players()
             .iter()
-            .map(|p| PlayerSetup { faction: p.faction, starting_credits: 100_000, ai: None, general: None })
+            .map(|p| PlayerSetup {
+                faction: p.faction,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+            })
             .collect(),
     };
     w.submit(P0, CommandKind::AttackMove { units: vec![tank], target: Vec2::from_int(200, 200) });

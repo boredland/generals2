@@ -67,6 +67,9 @@ pub struct PlayerSetup {
     pub ai: Option<AiLevel>,
     /// The chosen general of `faction`, or `None` to play the plain faction.
     pub general: Option<crate::defs::GeneralId>,
+    /// Perks slotted on that general for this match (from the player's profile); empty
+    /// without a general.
+    pub perks: Vec<crate::defs::PerkId>,
 }
 
 /// How strong the built-in AI plays. `Easy` is the original wave AI. `Normal` judges the battle

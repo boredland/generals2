@@ -22,13 +22,13 @@ use crate::world::World;
 pub const PROTOCOL: u16 = 2;
 /// Bumped on any change to simulation logic that the rules tables don't show (AI, combat,
 /// movement): two machines must run the same sim, or they drift apart within a second.
-pub const SIM_VERSION: u32 = 5;
+pub const SIM_VERSION: u32 = 6;
 
 /// What both machines must agree on before a match: `SIM_VERSION` and the rules tables
-/// (every unit, building, weapon, general and upgrade). Two different releases almost always
+/// (every unit, building, weapon, general, upgrade and perk). Two different releases almost always
 /// differ here, so they are refused at the handshake instead of failing with "out of sync".
 pub fn build_id(rules: &crate::defs::Rules) -> u64 {
-    let text = format!("{SIM_VERSION} {:?} {:?} {:?}", rules.defs, rules.generals, rules.upgrades);
+    let text = format!("{SIM_VERSION} {:?} {:?} {:?} {:?}", rules.defs, rules.generals, rules.upgrades, rules.perks);
     // FNV-1a, as `state_hash`.
     text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }

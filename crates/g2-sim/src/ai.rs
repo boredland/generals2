@@ -10,7 +10,7 @@
 //! piles run low.
 
 use crate::command::CommandKind;
-use crate::defs::{Armour, BuildingRole, Class, DefId, PowerKind, Weapon};
+use crate::defs::{Armour, BuildingRole, Class, DefId, GeneralId, PerkId, PowerKind, Rules, Weapon};
 use crate::entity::{DeployState, Entity, EntityId, Order, PlayerId};
 use crate::fixed::{Fx, Vec2};
 use crate::map::AiLevel;
@@ -35,6 +35,24 @@ pub struct Ai {
     enemy_seen: i64,
     /// No new wave before this tick: set by a retreat, so the army regroups first.
     regroup_until: u32,
+}
+
+/// What an AI general slots: `Easy` plays without perks; `Normal` and `Onslaught` slot as a
+/// rank 3 player would, the first three of the general's perks open by rank 3 whose lower tier
+/// is also slotted.
+pub fn ai_perks(rules: &Rules, general: Option<GeneralId>, level: AiLevel) -> Vec<PerkId> {
+    let Some(g) = general else { return Vec::new() };
+    if level == AiLevel::Easy {
+        return Vec::new();
+    }
+    let mut out: Vec<PerkId> = Vec::new();
+    for &k in rules.general(g).perks {
+        let p = rules.perk(k);
+        if out.len() < 3 && p.rank <= 3 && p.requires.is_none_or(|r| out.contains(&r)) {
+            out.push(k);
+        }
+    }
+    out
 }
 
 /// What a unit adds to a fight: hit points times damage per second, so a fresh tank counts
@@ -107,7 +125,7 @@ impl Ai {
             return None;
         }
         let player = world.player(self.player);
-        let power = player.general.and_then(|g| world.rules.general(g).power)?;
+        let power = world.power_of(self.player)?;
         if player.power_ready.is_none_or(|t| world.tick() < t) {
             return None;
         }

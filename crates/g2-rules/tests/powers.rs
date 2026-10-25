@@ -16,8 +16,8 @@ fn setup(f0: Faction, general: GeneralId) -> MatchSetup {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 10_000, ai: None, general: Some(general) },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 10_000, ai: None, general: None },
+            PlayerSetup { faction: f0, starting_credits: 10_000, ai: None, general: Some(general), perks: Vec::new() },
+            PlayerSetup { faction: Faction::Eu, starting_credits: 10_000, ai: None, general: None, perks: Vec::new() },
         ],
     }
 }
@@ -116,8 +116,20 @@ fn field_repair_restores_nearby_units() {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Apa, starting_credits: 10_000, ai: None, general: Some(TASKMASTER) },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 10_000, ai: None, general: Some(BULLDOG) },
+            PlayerSetup {
+                faction: Faction::Apa,
+                starting_credits: 10_000,
+                ai: None,
+                general: Some(TASKMASTER),
+                perks: Vec::new(),
+            },
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 10_000,
+                ai: None,
+                general: Some(BULLDOG),
+                perks: Vec::new(),
+            },
         ],
     };
     let mut w = World::new(&s, rules());

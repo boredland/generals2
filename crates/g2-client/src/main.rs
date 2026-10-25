@@ -36,6 +36,7 @@ mod menu;
 mod models;
 mod movie;
 mod net;
+mod profile;
 mod rig;
 mod sim;
 mod terrain;
@@ -146,7 +147,10 @@ fn parse_args() -> Result<Args, String> {
                         menu::Screen::Match
                     }
                     Some("end") => menu::Screen::End,
-                    other => return Err(format!("--menu expects main|controls|setup|pause|end, got {other:?}")),
+                    Some("generals") => menu::Screen::Generals,
+                    other => {
+                        return Err(format!("--menu expects main|controls|setup|pause|end|generals, got {other:?}"));
+                    }
                 })
             }
             "--screenshot" => a.screenshot = Some(it.next().ok_or("--screenshot needs a path")?),
@@ -255,7 +259,14 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
         Ok(Some(id))
     };
     let player = |i: usize, ai: Option<g2_sim::AiLevel>| -> Result<PlayerSetup, String> {
-        Ok(PlayerSetup { faction: args.factions[i], starting_credits: 5_000, ai, general: general(i)? })
+        let general = general(i)?;
+        Ok(PlayerSetup {
+            faction: args.factions[i],
+            starting_credits: 5_000,
+            ai,
+            general,
+            perks: ai.map_or_else(Vec::new, |level| g2_sim::ai::ai_perks(g2_rules::rules(), general, level)),
+        })
     };
     // `--ai onslaught` makes the enemy the waves; a spectated player 0 is then `Normal`.
     let own = match args.ai {

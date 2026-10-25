@@ -12,9 +12,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// v2 added `map_fingerprint`, v3 each player's general, v4 the AI level (0 human, 1 + level;
 /// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI), v5 the
 /// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3), v7 the `Research` command
-/// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14). Older replays still
-/// decode.
-pub const VERSION: u16 = 8;
+/// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14), v9 each player's slotted
+/// perks. Older replays still decode.
+pub const VERSION: u16 = 9;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -56,6 +56,10 @@ impl Replay {
             w.i64(p.starting_credits);
             w.u8(p.ai.map_or(0, |l| 1 + l as u8));
             w.u16(p.general.map_or(NO_GENERAL, |g| g.0));
+            w.u8(p.perks.len() as u8);
+            for k in &p.perks {
+                w.u16(k.0);
+            }
         }
         w.u32(self.length_ticks);
         w.u32(self.commands.len() as u32);
@@ -105,7 +109,17 @@ impl Replay {
                 3.. => Some(r.u16()?).filter(|&g| g != NO_GENERAL).map(crate::defs::GeneralId),
                 _ => None,
             };
-            players.push(PlayerSetup { faction, starting_credits, ai, general });
+            let perks = match version {
+                9.. => {
+                    let n = r.u8()? as usize;
+                    if n > crate::defs::PERK_SLOTS {
+                        return Err(DecodeError::BadTag(n as u8));
+                    }
+                    (0..n).map(|_| r.u16().map(crate::defs::PerkId)).collect::<Result<Vec<_>, _>>()?
+                }
+                _ => Vec::new(),
+            };
+            players.push(PlayerSetup { faction, starting_credits, ai, general, perks });
         }
         let length_ticks = r.u32()?;
         let mut commands = Vec::new();
@@ -128,7 +142,8 @@ impl Replay {
 impl Replay {
     /// Whether this replay can be simulated on `map` with `rules`: the map is the one it was
     /// recorded on (v1 replays carry no fingerprint and pass), the map has enough player starts,
-    /// and every general exists and belongs to its player's faction. Replay files are untrusted
+    /// every general exists and belongs to its player's faction, and every perk exists, is one
+    /// of its player's general's, and is slotted once. Replay files are untrusted
     /// input; call this before `verify_replay` or `World::new`, which assume a valid setup.
     pub fn check(&self, map: &crate::map::MapDef, rules: &crate::defs::Rules) -> Result<(), String> {
         if let Some(f) = self.map_fingerprint
@@ -154,6 +169,26 @@ impl Replay {
                 rules.generals.get(g.0 as usize).ok_or_else(|| format!("player {i}: unknown general id {}", g.0))?;
             if general.faction != p.faction {
                 return Err(format!("player {i}: general {} does not belong to {:?}", general.name, p.faction));
+            }
+            if p.perks.len() > crate::defs::PERK_SLOTS {
+                return Err(format!(
+                    "player {i}: {} perks slotted, at most {}",
+                    p.perks.len(),
+                    crate::defs::PERK_SLOTS
+                ));
+            }
+            for (j, k) in p.perks.iter().enumerate() {
+                if !general.perks.contains(k) || p.perks[..j].contains(k) {
+                    return Err(format!(
+                        "player {i}: perk id {} is not one of {}'s, or is slotted twice",
+                        k.0, general.name
+                    ));
+                }
+            }
+        }
+        for (i, p) in self.players.iter().enumerate() {
+            if p.general.is_none() && !p.perks.is_empty() {
+                return Err(format!("player {i}: perks without a general"));
             }
         }
         Ok(())

@@ -16,9 +16,13 @@ use std::sync::mpsc;
 
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
+use g2_sim::defs::PerkId;
 use g2_sim::{AiLevel, CommandKind, Faction, GeneralId, PlayerId, PlayerSetup};
 
 use crate::hud::{DIM, PANEL, PANEL_EDGE, SLOT, TEAL, TEXT, clock, text};
+use g2_sim::ai::ai_perks;
+
+use crate::profile::{MAX_RANK, Profile, Refused, match_experience, promotion_cost};
 use crate::sim::Sim;
 
 /// Spawns that belong to the running match (scene, models, HUD, camera). `swap_world`
@@ -66,6 +70,13 @@ pub enum Act {
     Resume,
     Surrender,
     QuitToMenu,
+    /// The Generals screen, on the general it shows.
+    OpenGenerals,
+    CycleShownGeneral(i32),
+    Promote,
+    BuyPerk(PerkId),
+    SlotPerk(PerkId),
+    UnslotPerk(PerkId),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -76,6 +87,7 @@ pub enum Screen {
     Setup,
     Match,
     End,
+    Generals,
 }
 
 /// One skirmish player: slot 0 is the human at the keyboard, the rest are AI.
@@ -112,8 +124,9 @@ impl Default for SkirmishConfig {
 }
 
 impl SkirmishConfig {
-    /// Builds the match this config describes. Slot 0 is the human player (`Sim::local`).
-    pub fn build(&self) -> Result<Sim, String> {
+    /// Builds the match this config describes. Slot 0 is the human player (`Sim::local`), who
+    /// slots `perks` (from their profile) on their general; AI slots pick their own.
+    pub fn build(&self, perks: &[PerkId]) -> Result<Sim, String> {
         let source = if self.map.contains(':') {
             Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &self.map)?)
         } else {
@@ -129,7 +142,18 @@ impl SkirmishConfig {
         let players: Vec<PlayerSetup> = self
             .slots
             .iter()
-            .map(|s| PlayerSetup { faction: s.faction, starting_credits: self.credits, ai: s.ai, general: s.general })
+            .enumerate()
+            .map(|(i, s)| PlayerSetup {
+                faction: s.faction,
+                starting_credits: self.credits,
+                ai: s.ai,
+                general: s.general,
+                perks: match s.ai {
+                    Some(level) => ai_perks(g2_rules::rules(), s.general, level),
+                    None if i == 0 && s.general.is_some() => perks.to_vec(),
+                    None => Vec::new(),
+                },
+            })
             .collect();
         let mut sim = Sim::new(map, source, self.seed, players);
         sim.fog = self.fog;
@@ -157,11 +181,25 @@ pub struct Ui {
     pub paused: bool,
     pub config: SkirmishConfig,
     pub map_page: usize,
+    /// The general the Generals screen shows.
+    pub shown_general: GeneralId,
+    /// The last Generals screen refusal, shown until the next action there.
+    pub refused: Option<Refused>,
+    /// The experience the finished match earned, for the end screen; set once per match.
+    pub earned: Option<(GeneralId, u32)>,
 }
 
 impl Default for Ui {
     fn default() -> Self {
-        Ui { screen: Screen::Main, paused: false, config: SkirmishConfig::default(), map_page: 0 }
+        Ui {
+            screen: Screen::Main,
+            paused: false,
+            config: SkirmishConfig::default(),
+            map_page: 0,
+            shown_general: GeneralId(0),
+            refused: None,
+            earned: None,
+        }
     }
 }
 
@@ -212,13 +250,16 @@ impl Plugin for MenuPlugin {
                 let _ = tx.send(g2_maps::skirmish_maps(&g2_maps::vendored_root()));
             });
         }
+        if !app.world().contains_resource::<Profile>() {
+            app.insert_resource(Profile::load(Profile::default_path(), g2_rules::rules()));
+        }
         app.init_resource::<Ui>()
             .init_resource::<Pending>()
             .init_resource::<MatchEpoch>()
             .insert_resource(MapListChannel(std::sync::Mutex::new(rx)))
             .add_systems(
                 Update,
-                (poll_maps, interact, apply, watch_winner, rebuild, hover, hide_hud)
+                (poll_maps, interact, apply, watch_winner, award_experience, rebuild, hover, hide_hud)
                     .chain()
                     .in_set(MenuSet)
                     .run_if(resource_exists::<Sim>),
@@ -259,7 +300,7 @@ fn interact(
         let aimed = aim.as_mut().is_some_and(|a| std::mem::take(&mut a.0));
         if !placed && !aimed {
             pending.0.push(match (ui.screen, ui.paused) {
-                (Screen::Setup | Screen::Controls, _) => Act::BackToMain,
+                (Screen::Setup | Screen::Controls | Screen::Generals, _) => Act::BackToMain,
                 (Screen::Match, false) => Act::Pause,
                 (Screen::Match, true) => Act::Resume,
                 (Screen::End, _) => Act::QuitToMenu,
@@ -282,10 +323,10 @@ fn hover(mut buttons: Query<(&Btn, &RelativeCursorPosition, &mut BackgroundColor
 /// Top-level match spawns that are UI nodes: the HUD panels, not the 3D scene.
 type HudRoots = (With<MatchEntity>, With<Node>);
 
-/// The match HUD is hidden behind the full-screen menus (main, controls, setup); pause and the
-/// end screen keep it, dimmed, as context.
+/// The match HUD is hidden behind the full-screen menus (main, controls, setup, generals);
+/// pause and the end screen keep it, dimmed, as context.
 fn hide_hud(ui: Res<Ui>, mut roots: Query<&mut Visibility, HudRoots>) {
-    let hidden = matches!(ui.screen, Screen::Main | Screen::Controls | Screen::Setup);
+    let hidden = matches!(ui.screen, Screen::Main | Screen::Controls | Screen::Setup | Screen::Generals);
     for mut v in &mut roots {
         v.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
     }
@@ -312,11 +353,13 @@ fn apply_one(world: &mut World, act: Act) {
             if let Some(starts) = map_starts(world, &config.map) {
                 config.clamp_slots(starts);
             }
-            match config.build() {
+            let perks = world.resource::<Profile>().slotted(config.slots[0].general);
+            match config.build(&perks) {
                 Ok(sim) => {
                     swap_world(world, sim);
                     let mut ui = world.resource_mut::<Ui>();
                     ui.config = config;
+                    ui.earned = None;
                     ui.screen = Screen::Match;
                     ui.paused = false;
                     world.resource_mut::<Sim>().speed = 1;
@@ -429,6 +472,40 @@ fn apply_one(world: &mut World, act: Act) {
                 let mut ui = world.resource_mut::<Ui>();
                 ui.config.seed = ui.config.seed.wrapping_add(1);
             }
+            // Opens on the general the player last chose in the setup, if any.
+            Act::OpenGenerals => {
+                let mut ui = world.resource_mut::<Ui>();
+                ui.screen = Screen::Generals;
+                ui.refused = None;
+                if let Some(g) = ui.config.slots[0].general {
+                    ui.shown_general = g;
+                }
+            }
+            Act::CycleShownGeneral(d) => {
+                let n = g2_rules::rules().generals.len() as i32;
+                let mut ui = world.resource_mut::<Ui>();
+                ui.shown_general = GeneralId((ui.shown_general.0 as i32 + d).rem_euclid(n) as u16);
+                ui.refused = None;
+            }
+            Act::Promote | Act::BuyPerk(_) | Act::SlotPerk(_) | Act::UnslotPerk(_) => {
+                let g = world.resource::<Ui>().shown_general;
+                let rules = g2_rules::rules();
+                let mut profile = world.resource_mut::<Profile>();
+                let done = match act {
+                    Act::Promote => profile.promote(g),
+                    Act::BuyPerk(k) => profile.buy(rules, g, k),
+                    Act::SlotPerk(k) => profile.slot(g, k),
+                    _ => {
+                        let Act::UnslotPerk(k) = act else { unreachable!() };
+                        profile.unslot(g, k);
+                        Ok(())
+                    }
+                };
+                if done.is_ok() {
+                    profile.save(rules);
+                }
+                world.resource_mut::<Ui>().refused = done.err();
+            }
             Act::Start | Act::QuitGame => unreachable!("handled above"),
         },
     }
@@ -456,6 +533,19 @@ fn watch_winner(sim: Res<Sim>, mut ui: ResMut<Ui>) {
         ui.screen = Screen::End;
         ui.paused = false;
     }
+}
+
+/// A finished match earns the local human's general experience in their profile, once.
+/// Watching AIs, or playing without a general, earns nothing.
+fn award_experience(sim: Res<Sim>, mut ui: ResMut<Ui>, mut profile: ResMut<Profile>) {
+    if ui.screen != Screen::End || ui.earned.is_some() || sim.world.is_ai(sim.local) {
+        return;
+    }
+    let Some(g) = sim.world.player(sim.local).general else { return };
+    let xp = match_experience(sim.world.winner() == Some(sim.local), sim.world.stats(sim.local).kills);
+    profile.earn(g, xp);
+    profile.save(g2_rules::rules());
+    ui.earned = Some((g, xp));
 }
 
 const MAPS_PER_PAGE: usize = 12;
@@ -495,10 +585,11 @@ fn rebuild(
     mut commands: Commands,
     ui: Res<Ui>,
     sim: Res<Sim>,
+    profile: Res<Profile>,
     maps: Option<Res<MapList>>,
     old: Query<Entity, With<MenuUi>>,
 ) {
-    if !ui.is_changed() {
+    if !ui.is_changed() && !profile.is_changed() {
         return;
     }
     for e in &old {
@@ -529,6 +620,7 @@ fn rebuild(
             Screen::Setup => setup(root, &ui, maps.as_ref().map(|m| m.0.as_slice())),
             Screen::Match => pause(root),
             Screen::End => end_screen(root, &sim, &ui),
+            Screen::Generals => generals(root, &ui, &profile),
         });
 }
 
@@ -591,6 +683,7 @@ fn main_menu(root: &mut ChildSpawnerCommands) {
         title(p, "OPEN RTS");
         caption(p, "an original RTS engine");
         button(p, "SKIRMISH", Act::OpenSetup, 260.0);
+        button(p, "GENERALS", Act::OpenGenerals, 260.0);
         button(p, "CONTROLS", Act::ShowControls, 260.0);
         button(p, "QUIT", Act::QuitGame, 260.0);
     });
@@ -735,10 +828,97 @@ fn end_screen(root: &mut ChildSpawnerCommands, sim: &Sim, ui: &Ui) {
                 r.spawn((text(&out, 13.0, TEAL), Node { width: px(110), ..default() }));
             });
         }
+        if let Some((g, xp)) = ui.earned {
+            caption(p, &format!("{} earned {xp} XP", world.rules.general(g).name));
+        }
         button(p, "PLAY AGAIN", Act::Start, 320.0);
         button(p, "CHANGE SETUP", Act::ChangeSetup, 320.0);
         button(p, "MAIN MENU", Act::QuitToMenu, 320.0);
     });
+}
+
+/// The Generals screen: one general's rank, experience, perk slots and perks. Each perk shows
+/// its rank, price and state, and its button the one thing it can do now.
+fn generals(root: &mut ChildSpawnerCommands, ui: &Ui, profile: &Profile) {
+    let rules = g2_rules::rules();
+    let g = ui.shown_general;
+    let general = rules.general(g);
+    let me = profile.progress(g);
+    panel(root, 720.0, |p| {
+        p.spawn(Node { column_gap: px(8), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+            button(r, "<", Act::CycleShownGeneral(-1), 44.0);
+            r.spawn((
+                text(&format!("{} {}", faction_tag(general.faction), general.name), 28.0, TEAL),
+                Node { width: px(340), justify_content: JustifyContent::Center, ..default() },
+            ));
+            button(r, ">", Act::CycleShownGeneral(1), 44.0);
+        });
+        let next = if me.rank < MAX_RANK {
+            format!("promote: {} XP", promotion_cost(me.rank))
+        } else {
+            "highest rank".to_owned()
+        };
+        p.spawn(Node { column_gap: px(10), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+            r.spawn(text(
+                &format!(
+                    "Rank {} of {MAX_RANK} | {} XP | slots {}/{} | {next}",
+                    me.rank,
+                    me.xp,
+                    me.slotted.len(),
+                    me.rank
+                ),
+                13.0,
+                DIM,
+            ));
+            if me.rank < MAX_RANK {
+                button(r, "PROMOTE", Act::Promote, 110.0);
+            }
+        });
+        if let Some(power) = general.power {
+            caption(p, &format!("Power: {}", power.name));
+        }
+        for &k in general.perks {
+            let perk = rules.perk(k);
+            let (state, act, label) = if me.slotted.contains(&k) {
+                ("slotted", Act::UnslotPerk(k), "UNSLOT")
+            } else if me.bought.contains(&k) {
+                ("owned", Act::SlotPerk(k), "SLOT")
+            } else if me.rank < perk.rank {
+                ("locked", Act::BuyPerk(k), "BUY")
+            } else {
+                ("", Act::BuyPerk(k), "BUY")
+            };
+            p.spawn(Node { width: px(680), column_gap: px(10), align_items: AlignItems::Center, ..default() })
+                .with_children(|r| {
+                    r.spawn((text(perk.name, 14.0, TEXT), Node { width: px(150), ..default() }));
+                    r.spawn((text(perk.description, 12.0, DIM), Node { width: px(300), ..default() }));
+                    r.spawn((
+                        text(&format!("R{} {} XP", perk.rank, perk.price), 12.0, DIM),
+                        Node { width: px(90), ..default() },
+                    ));
+                    r.spawn((text(state, 12.0, TEAL), Node { width: px(50), ..default() }));
+                    button(r, label, act, 70.0);
+                });
+        }
+        if let Some(why) = ui.refused {
+            p.spawn(text(refusal(why), 13.0, TEAL));
+        }
+        caption(p, "Play a skirmish as this general to earn XP; slotted perks apply in every match.");
+        button(p, "BACK", Act::BackToMain, 200.0);
+    });
+}
+
+fn refusal(r: Refused) -> &'static str {
+    match r {
+        Refused::MaxRank => "Already at the highest rank.",
+        Refused::NotEnoughXp => "Not enough XP.",
+        Refused::RankTooLow => "This perk needs a higher rank.",
+        Refused::NeedsLowerTier => "Buy the lower tier first.",
+        Refused::NotThisGenerals => "That perk belongs to another general.",
+        Refused::NotBought => "Buy the perk before slotting it.",
+        Refused::NoFreeSlot => "No free slot: unslot a perk or promote.",
+        Refused::AlreadySlotted => "Already slotted.",
+    }
 }
 
 fn faction_tag(f: Faction) -> &'static str {
@@ -774,6 +954,7 @@ mod tests {
             .init_resource::<crate::view::Mirror>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<Profile>()
             .add_plugins(MenuPlugin { blocking: true });
         let window = app.world_mut().spawn_empty().id();
         (app, window)
@@ -939,5 +1120,64 @@ mod tests {
         act(&mut app, Act::Surrender);
         act(&mut app, Act::Start);
         assert!(!app.world().resource::<crate::input::PowerAim>().0, "the new match starts unarmed");
+    }
+
+    /// The Generals screen promotes, buys and slots on the general it shows; refusals are
+    /// shown and change nothing.
+    #[test]
+    fn the_generals_screen_spends_experience() {
+        use g2_rules::generals::{BULLDOG, JUNKYARD};
+        use g2_rules::perks::*;
+        let (mut app, _) = app();
+        app.world_mut().resource_mut::<Profile>().earn(JUNKYARD, 2_000);
+        act(&mut app, Act::OpenGenerals);
+        assert_eq!(screen(&app), Screen::Generals);
+        assert_eq!(app.world().resource::<Ui>().shown_general, BULLDOG);
+        act(&mut app, Act::CycleShownGeneral(-1));
+        assert_eq!(app.world().resource::<Ui>().shown_general, JUNKYARD, "wraps around");
+        act(&mut app, Act::BuyPerk(JY_LEADERSHIP));
+        assert_eq!(app.world().resource::<Ui>().refused, Some(Refused::RankTooLow));
+        act(&mut app, Act::BuyPerk(JY_DISCIPLINE));
+        act(&mut app, Act::SlotPerk(JY_DISCIPLINE));
+        act(&mut app, Act::Promote);
+        assert_eq!(app.world().resource::<Ui>().refused, None);
+        let p = app.world().resource::<Profile>().progress(JUNKYARD);
+        let price = g2_rules::rules().perk(JY_DISCIPLINE).price;
+        assert_eq!((p.rank, p.xp, p.slotted), (2, 2_000 - price - promotion_cost(1), vec![JY_DISCIPLINE]));
+    }
+
+    /// A match started as a general carries the profile's slotted perks for the human and the
+    /// AI's own for an AI general; finishing it earns the human's general experience once.
+    #[test]
+    fn matches_use_slotted_perks_and_earn_experience() {
+        use g2_rules::generals::{BULLDOG, JUNKYARD};
+        use g2_rules::perks::*;
+        let (mut app, _) = app();
+        {
+            let mut profile = app.world_mut().resource_mut::<Profile>();
+            profile.earn(BULLDOG, 1_000);
+            profile.buy(g2_rules::rules(), BULLDOG, BD_INSOURCED).unwrap_err();
+            profile.buy(g2_rules::rules(), BULLDOG, BD_PROTECTOR_I).unwrap();
+            profile.slot(BULLDOG, BD_PROTECTOR_I).unwrap();
+        }
+        let xp = app.world().resource::<Profile>().progress(BULLDOG).xp;
+        act(&mut app, Act::CycleGeneral(0));
+        act(&mut app, Act::CycleGeneral(1));
+        act(&mut app, Act::Start);
+        let w = &app.world().resource::<Sim>().world;
+        assert_eq!(w.player(PlayerId(0)).perks, vec![BD_PROTECTOR_I]);
+        assert_eq!(w.player(PlayerId(1)).general, Some(JUNKYARD));
+        assert_eq!(w.player(PlayerId(1)).perks, ai_perks(g2_rules::rules(), Some(JUNKYARD), AiLevel::Normal));
+        assert!(!w.player(PlayerId(1)).perks.is_empty());
+        act(&mut app, Act::Surrender);
+        for _ in 0..8 {
+            app.world_mut().resource_mut::<Sim>().world.step();
+        }
+        app.update();
+        app.update();
+        assert_eq!(screen(&app), Screen::End);
+        let earned = match_experience(false, 0);
+        assert_eq!(app.world().resource::<Ui>().earned, Some((BULLDOG, earned)));
+        assert_eq!(app.world().resource::<Profile>().progress(BULLDOG).xp, xp + earned, "earned once");
     }
 }

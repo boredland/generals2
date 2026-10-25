@@ -299,6 +299,41 @@ pub struct General {
     pub faction: Faction,
     pub modifiers: &'static [Modifier],
     pub power: Option<Power>,
+    /// The perks this general may slot, cheapest rank first (the alpha's Perks 3.0: "about
+    /// eight or nine perks ... unique per general").
+    pub perks: &'static [PerkId],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub struct PerkId(pub u16);
+
+/// The most perks one player may slot: one per general rank, and the alpha's ranks end at 5.
+pub const PERK_SLOTS: usize = 5;
+
+/// A perk: a permanent, additive bonus a player slots into one of their general's perk slots
+/// before a match. `effects` work like a finished upgrade's from the first tick; `power`
+/// tunes the general's power. `rank` is the general rank it needs, `price` its experience
+/// cost to buy, `requires` the lower tier that must be bought first (the alpha shows all
+/// three).
+#[derive(Clone, Debug)]
+pub struct Perk {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub rank: u8,
+    pub price: u32,
+    pub requires: Option<PerkId>,
+    pub effects: &'static [(DefId, Effect)],
+    pub modifiers: &'static [Modifier],
+    pub power: Option<PowerTuning>,
+}
+
+/// How a perk changes its general's power, in whole percent of normal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PowerTuning {
+    /// Time between uses (also the wait for the first).
+    Cooldown { percent: u32 },
+    /// Barrage shell damage, repair amount, or ambush squad count.
+    Strength { percent: u32 },
 }
 
 /// A general's active power: aimed at a point the player has explored, then unavailable for
@@ -362,12 +397,15 @@ pub enum Effect {
     Health { add: i32 },
     /// Regains `hp` every second once `calm_ticks` have passed without being hit.
     Repair { hp: i32, calm_ticks: u32 },
+    /// Experience from kills, in percent of normal (rounded down).
+    Experience { percent: u32 },
 }
 
 pub struct Rules {
     pub defs: &'static [Def],
     pub generals: &'static [General],
     pub upgrades: &'static [Upgrade],
+    pub perks: &'static [Perk],
 }
 
 impl Rules {
@@ -387,30 +425,60 @@ impl Rules {
         &self.upgrades[id.0 as usize]
     }
 
+    pub fn perk(&self, id: PerkId) -> &Perk {
+        &self.perks[id.0 as usize]
+    }
+
     pub fn find_general(&self, name: &str) -> Option<GeneralId> {
         self.generals.iter().position(|g| g.name.eq_ignore_ascii_case(name)).map(|i| GeneralId(i as u16))
     }
 
-    /// Cost of `def` for a player with `general`: integer percent, rounded down.
-    pub fn cost(&self, general: Option<GeneralId>, def: DefId) -> Cost {
+    /// Cost of `def` under `modifiers` (a general's and its slotted perks'): integer percent,
+    /// applied in turn and rounded down.
+    pub fn cost(&self, modifiers: impl Iterator<Item = Modifier>, def: DefId) -> Cost {
         let base = self.def(def).cost;
-        let percent = self.modifiers(general).fold(100_i64, |p, m| match m {
+        let percent = modifiers.fold(100_i64, |p, m| match m {
             Modifier::Cost { def: d, percent } if d == def => p * percent / 100,
             _ => p,
         });
         Cost { credits: base.credits * percent / 100 }
     }
 
-    /// Build time of `def` in ticks for a player with `general`; at least one tick.
-    pub fn build_ticks(&self, general: Option<GeneralId>, def: DefId) -> u32 {
-        let percent = self.modifiers(general).fold(100_u32, |p, m| match m {
+    /// Build time of `def` in ticks under `modifiers`; at least one tick.
+    pub fn build_ticks(&self, modifiers: impl Iterator<Item = Modifier>, def: DefId) -> u32 {
+        let percent = modifiers.fold(100_u32, |p, m| match m {
             Modifier::BuildTime { def: d, percent } if d == def => p * percent / 100,
             _ => p,
         });
         (self.def(def).build_ticks * percent / 100).max(1)
     }
+}
 
-    fn modifiers(&self, general: Option<GeneralId>) -> impl Iterator<Item = Modifier> + '_ {
-        general.into_iter().flat_map(|g| self.general(g).modifiers.iter().copied())
+/// `general`'s power with `perks`' tunings: cooldown percentages and strength percentages each
+/// add up (two -10% cooldown perks make -20%), as upgrade effects do.
+pub fn tuned_power(rules: &Rules, general: Option<GeneralId>, perks: &[PerkId]) -> Option<Power> {
+    let mut power = general.and_then(|g| rules.general(g).power)?;
+    let (mut cooldown, mut strength) = (0i64, 0i64);
+    for t in perks.iter().filter_map(|&k| rules.perk(k).power) {
+        match t {
+            PowerTuning::Cooldown { percent } => cooldown += percent as i64 - 100,
+            PowerTuning::Strength { percent } => strength += percent as i64 - 100,
+        }
     }
+    let scale = |v: i64, d: i64| (v * (100 + d) / 100).max(1);
+    power.cooldown_ticks = scale(power.cooldown_ticks as i64, cooldown) as u32;
+    power.first_ticks = scale(power.first_ticks as i64, cooldown) as u32;
+    power.kind = match power.kind {
+        PowerKind::Barrage { shells, delay_ticks, every_ticks, damage, bonus, radius } => PowerKind::Barrage {
+            shells,
+            delay_ticks,
+            every_ticks,
+            damage: scale(damage as i64, strength) as i32,
+            bonus: bonus.map(|b| (b as i64 * (100 + strength) / 100) as i32),
+            radius,
+        },
+        PowerKind::Repair { radius, hp } => PowerKind::Repair { radius, hp: scale(hp as i64, strength) as i32 },
+        PowerKind::Ambush { def, count } => PowerKind::Ambush { def, count: scale(count as i64, strength) as u32 },
+    };
+    Some(power)
 }

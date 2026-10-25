@@ -1081,7 +1081,13 @@ mod tests {
                 map: def,
                 seed: 1,
                 players: [Faction::Eu, Faction::Gla]
-                    .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None })
+                    .map(|faction| PlayerSetup {
+                        faction,
+                        starting_credits: 5_000,
+                        ai: None,
+                        general: None,
+                        perks: Vec::new(),
+                    })
                     .to_vec(),
             };
             World::new(&setup, g2_rules::rules())
@@ -1116,6 +1122,7 @@ mod tests {
                     starting_credits: 5_000,
                     ai: Some(g2_sim::AiLevel::Easy),
                     general: None,
+                    perks: Vec::new(),
                 })
                 .to_vec(),
         };
