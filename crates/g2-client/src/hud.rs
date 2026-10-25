@@ -669,7 +669,10 @@ fn update_fields(
             Field::SelInfo => {
                 t.0 = focus.map_or(String::new(), |e| {
                     let d = rules.def(e.def);
-                    let mut s = format!("{}/{}", e.hp, d.hp);
+                    let mut s = format!("{}/{}", e.hp, world.max_hp(e));
+                    if d.veterancy.is_some() {
+                        s += &format!("  -  {}", rank_label(world.rank(e)));
+                    }
                     if let (Some(done), Some(owner)) = (e.construction, e.owner) {
                         s += &format!("  -  building {}%", done * 100 / world.build_ticks_for(owner, e.def));
                     }
@@ -909,10 +912,12 @@ fn overlays(
                 });
         }
         let selected = sel.0.contains(&e.id);
-        let damaged = e.hp < def.hp;
-        if e.owner.is_some() && (selected || damaged) {
+        let max = world.max_hp(e);
+        let damaged = e.hp < max;
+        let rank = world.rank(e);
+        if e.owner.is_some() && (selected || damaged || rank > 0) {
             let w = if def.is_building() { 46.0 } else { 22.0 };
-            let frac = (e.hp as f32 / def.hp.max(1) as f32).clamp(0.0, 1.0);
+            let frac = (e.hp as f32 / max.max(1) as f32).clamp(0.0, 1.0);
             let color = if frac > 0.5 {
                 Color::srgb(0.3, 0.95, 0.3)
             } else if frac > 0.25 {
@@ -940,7 +945,34 @@ fn overlays(
                         BackgroundColor(color),
                     ));
                 });
+            // Rank chevrons at the bar's left end, one gold mark per rank.
+            if rank > 0 {
+                commands
+                    .spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: px(screen.x - w / 2.0 - 4.0 * rank as f32 - 2.0),
+                            top: px(screen.y - 10.0),
+                            column_gap: px(1),
+                            ..default()
+                        },
+                        Overlay,
+                    ))
+                    .with_children(|row| {
+                        for _ in 0..rank {
+                            row.spawn((Node { width: px(3), height: px(8), ..default() }, BackgroundColor(XP)));
+                        }
+                    });
+            }
         }
+    }
+}
+
+/// The selection panel's rank: "RECRUIT", or one chevron per rank.
+fn rank_label(rank: u8) -> String {
+    match rank {
+        0 => "RECRUIT".into(),
+        n => format!("RANK {}", "^".repeat(n as usize)),
     }
 }
 

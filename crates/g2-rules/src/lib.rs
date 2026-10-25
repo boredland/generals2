@@ -5,7 +5,7 @@
 //! Everything else is a placeholder chosen for playability and will be tuned.
 use g2_sim::defs::{
     Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, General, Modifier, Power,
-    PowerKind, Rules, Shell, Upgrade, UpgradeId, Weapon,
+    PowerKind, Rules, Shell, Upgrade, UpgradeId, Veterancy, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -122,6 +122,8 @@ const fn building(
         builds: NONE,
         deploy: None,
         researches: NO_RESEARCH,
+        experience: 0,
+        veterancy: None,
     }
 }
 
@@ -158,6 +160,8 @@ const fn unit(
         builds,
         deploy: None,
         researches: NO_RESEARCH,
+        experience: 1,
+        veterancy: None,
     }
 }
 
@@ -193,7 +197,19 @@ const fn soldier(
         builds: NONE,
         deploy: None,
         researches: NO_RESEARCH,
+        experience: 1,
+        veterancy: None,
     }
+}
+
+/// `d` earns ranks, with the alpha's rules for every unit: 1 experience per kill (buildings
+/// grant none), ranks at 3, 6 and 10, rank 2 regenerating 5 hit points a second while idle.
+/// `health` is its rank-1 hit points and `cooldown_percent` its rank-3 fire interval, from
+/// the alpha unit's own `RtsVeterancyComponentData` (the interval cut as a share of that unit's
+/// main weapon interval, since some of our guns are stand-ins with other intervals).
+const fn ranked(mut d: Def, health: i32, cooldown_percent: u32) -> Def {
+    d.veterancy = Some(Veterancy { experience: [3, 6, 10], health, idle_regen: 5, cooldown_percent });
+    d
 }
 
 /// `damage` plus `[infantry, light, heavy, structure]` bonuses, `range` in world units and
@@ -268,6 +284,8 @@ static DEFS: [Def; 42] = [
         builds: NONE,
         deploy: None,
         researches: NO_RESEARCH,
+        experience: 0,
+        veterancy: None,
     },
     Def {
         name: "Oil Well",
@@ -282,6 +300,8 @@ static DEFS: [Def; 42] = [
         builds: NONE,
         deploy: None,
         researches: NO_RESEARCH,
+        experience: 0,
+        veterancy: None,
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
@@ -413,10 +433,20 @@ static DEFS: [Def; 42] = [
         &[HOLLOW_POINT],
     ),
     building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS, EU_ARTILLERY, EU_APC]),
+    // Ranks (`ranked`): each unit's rank-1 health and rank-3 fire interval come from the alpha
+    // unit it stands for (EU Howitzer: the rocket vehicle).
     // src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
-    soldier("EU Recon Squad", Faction::Eu, 200, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+    ranked(
+        soldier("EU Recon Squad", Faction::Eu, 200, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+        21,
+        93,
+    ),
     // src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
-    soldier("EU Aegis Tank", Faction::Eu, 660, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+    ranked(
+        soldier("EU Aegis Tank", Faction::Eu, 660, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+        90,
+        92,
+    ),
     researching(
         building(
             "APA Barracks",
@@ -447,9 +477,17 @@ static DEFS: [Def; 42] = [
         &[FIRESTORM_SHELLS],
     ),
     // src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
-    soldier("APA Red Guard", Faction::Apa, 180, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+    ranked(
+        soldier("APA Red Guard", Faction::Apa, 180, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+        12,
+        94,
+    ),
     // src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
-    soldier("APA Warlord Tank", Faction::Apa, 610, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+    ranked(
+        soldier("APA Warlord Tank", Faction::Apa, 610, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+        68,
+        93,
+    ),
     researching(
         building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE, GLA_RPG]),
         &[SHORTENED_FUSES],
@@ -467,111 +505,161 @@ static DEFS: [Def; 42] = [
         &[GLA_TANK, GLA_TOXIN_ARTILLERY, GLA_TECHNICAL],
     ),
     // src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
-    soldier(
-        "GLA Rabble Squad",
-        Faction::Gla,
-        160,
-        Armour::Infantry,
-        credits(120),
-        secs(6),
-        10,
-        2,
-        weapon(12, [4, 4, 0, 0], 20, 10),
+    ranked(
+        soldier(
+            "GLA Rabble Squad",
+            Faction::Gla,
+            160,
+            Armour::Infantry,
+            credits(120),
+            secs(6),
+            10,
+            2,
+            weapon(12, [4, 4, 0, 0], 20, 10),
+        ),
+        30,
+        94,
     ),
     // src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
     // placeholders: cheaper, faster and weaker than the Warlord.
-    soldier(
-        "GLA Scorpion Tank",
-        Faction::Gla,
-        420,
-        Armour::Light,
-        credits(700),
-        secs(18),
-        11,
-        3,
-        weapon(30, [0, 15, 0, 0], 30, 12),
+    ranked(
+        soldier(
+            "GLA Scorpion Tank",
+            Faction::Gla,
+            420,
+            Armour::Light,
+            credits(700),
+            secs(18),
+            11,
+            3,
+            weapon(30, [0, 15, 0, 0], 30, 12),
+        ),
+        72,
+        92,
     ),
     // src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
     // cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders.
-    deploying(
-        soldier(
-            "APA Thunderfist",
-            Faction::Apa,
-            600,
-            Armour::Heavy,
-            credits(980),
-            centis(2151),
-            7,
-            3,
-            THUNDERFIST_CANNON,
+    ranked(
+        deploying(
+            soldier(
+                "APA Thunderfist",
+                Faction::Apa,
+                600,
+                Armour::Heavy,
+                credits(980),
+                centis(2151),
+                7,
+                3,
+                THUNDERFIST_CANNON,
+            ),
+            HOWITZER,
+            30,
         ),
-        HOWITZER,
-        30,
+        45,
+        80,
     ),
     // src: Toxin Artillery hp 950, $1000, 30.11 s, GLA war factory, anti-ground artillery.
     // Weapon, armour (Light, like the Scorpion) and speed are placeholders; it fires on the move.
-    soldier("GLA Toxin Artillery", Faction::Gla, 950, Armour::Light, credits(1000), centis(3011), 7, 3, TOXIN_SHELL),
+    ranked(
+        soldier(
+            "GLA Toxin Artillery",
+            Faction::Gla,
+            950,
+            Armour::Light,
+            credits(1000),
+            centis(3011),
+            7,
+            3,
+            TOXIN_SHELL,
+        ),
+        105,
+        95,
+    ),
     // Placeholder throughout: no EU artillery card is archived. Fires on the move.
-    soldier("EU Howitzer", Faction::Eu, 550, Armour::Heavy, credits(950), secs(24), 7, 3, EU_SHELL),
+    ranked(soldier("EU Howitzer", Faction::Eu, 550, Armour::Heavy, credits(950), secs(24), 7, 3, EU_SHELL), 39, 93),
     // ---- Anti-armour infantry and fast vehicles ----------------------------------------------
     // src: Rocket Squad hp 180, $300, 16.29 s, EU barracks, anti-armour. Weapon and speed:
     // `ROCKETS`, a placeholder.
-    soldier("EU Rocket Squad", Faction::Eu, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+    ranked(
+        soldier("EU Rocket Squad", Faction::Eu, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+        18,
+        93,
+    ),
     // src: Tank Hunter, APA barracks, anti-armour rocket infantry; the card has no numbers.
     // Placeholder: the EU Rocket Squad's.
-    soldier("APA Tank Hunter", Faction::Apa, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+    ranked(
+        soldier("APA Tank Hunter", Faction::Apa, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+        18,
+        91,
+    ),
     // Placeholder throughout: no GLA anti-armour infantry is archived. A Rabble-priced squad
     // with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks.
-    soldier(
-        "GLA RPG Squad",
-        Faction::Gla,
-        150,
-        Armour::Infantry,
-        credits(250),
-        secs(14),
-        9,
-        2,
-        weapon(40, [0, 0, 60, 0], 26, 20),
+    ranked(
+        soldier(
+            "GLA RPG Squad",
+            Faction::Gla,
+            150,
+            Armour::Infantry,
+            credits(250),
+            secs(14),
+            9,
+            2,
+            weapon(40, [0, 0, 60, 0], 26, 20),
+        ),
+        14,
+        93,
     ),
     // src: Armored Personnel Carrier hp 390, Light, $435, 14.66 s, EU war factory; machine gun
     // 46, cooldown 2.25, range 45; land speed 19. Transport and repair turret are not modelled.
-    soldier(
-        "EU APC",
-        Faction::Eu,
-        390,
-        Armour::Light,
-        credits(435),
-        centis(1466),
-        19,
-        3,
-        weapon(46, [0, 0, 0, 0], 45, 23),
+    ranked(
+        soldier(
+            "EU APC",
+            Faction::Eu,
+            390,
+            Armour::Light,
+            credits(435),
+            centis(1466),
+            19,
+            3,
+            weapon(46, [0, 0, 0, 0], 45, 23),
+        ),
+        54,
+        93,
     ),
     // src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
     // (anti-air too; there is no air). Gun and speed are placeholders: rapid, strong against
     // infantry.
-    soldier(
-        "APA Gatling Tank",
-        Faction::Apa,
-        490,
-        Armour::Light,
-        credits(660),
-        centis(2330),
-        12,
-        3,
-        weapon(10, [12, 0, 0, 0], 32, 4),
+    ranked(
+        soldier(
+            "APA Gatling Tank",
+            Faction::Apa,
+            490,
+            Armour::Light,
+            credits(660),
+            centis(2330),
+            12,
+            3,
+            weapon(10, [12, 0, 0, 0], 32, 4),
+        ),
+        60,
+        90,
     ),
     // src: Technical, GLA light utility vehicle with a 12.7 mm machine gun; the card has no
     // numbers. Placeholder: the cheapest, fastest vehicle in the game, fragile.
-    soldier(
-        "GLA Technical",
-        Faction::Gla,
-        280,
-        Armour::Light,
-        credits(400),
-        secs(10),
-        17,
-        3,
-        weapon(14, [6, 0, 0, 0], 30, 6),
+    ranked(
+        soldier(
+            "GLA Technical",
+            Faction::Gla,
+            280,
+            Armour::Light,
+            credits(400),
+            secs(10),
+            17,
+            3,
+            weapon(14, [6, 0, 0, 0], 30, 6),
+        ),
+        23,
+        93,
     ),
     // ---- Tech buildings ----------------------------------------------------------------------
     // src: the alpha's blueprints: EU tech lab (es_techstructurea) hp 750, $750, 20 s, 30 power;

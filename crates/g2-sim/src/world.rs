@@ -119,6 +119,13 @@ pub enum Event {
         upgrade: UpgradeId,
         at: Vec2,
     },
+    /// `player`'s `unit`, standing at `at`, reached `rank` (1-3). Output only.
+    Promoted {
+        player: PlayerId,
+        unit: EntityId,
+        rank: u8,
+        at: Vec2,
+    },
 }
 
 /// An artillery shell in flight. Part of the state hash.
@@ -258,6 +265,7 @@ impl World {
             cooldown: 0,
             deploy: DeployState::Packed,
             last_hit: None,
+            experience: 0,
             route: Route::default(),
         }
     }
@@ -374,11 +382,14 @@ impl World {
             .map(|&(_, e)| e)
     }
 
-    /// Maximum hit points: the def's, plus any health upgrades its owner researched.
+    /// Maximum hit points: the def's, plus any health upgrades its owner researched and its
+    /// rank's extra health.
     pub fn max_hp(&self, e: &Entity) -> i32 {
-        self.max_hp_of(e.owner, e.def)
+        let rank = self.rules.def(e.def).veterancy.filter(|_| self.rank(e) >= 1).map_or(0, |v| v.health);
+        self.max_hp_of(e.owner, e.def) + rank
     }
 
+    /// A fresh entity's maximum hit points: the def's plus its owner's health upgrades.
     fn max_hp_of(&self, owner: Option<PlayerId>, def: DefId) -> i32 {
         let extra = owner.map_or(0, |o| {
             self.effects(o, def)
@@ -389,6 +400,12 @@ impl World {
                 .sum()
         });
         self.rules.def(def).hp + extra
+    }
+
+    /// 0 for a recruit, then 1-3 (the alpha's veteran ranks) as experience reaches each of its
+    /// def's thresholds. Always 0 for defs without veterancy.
+    pub fn rank(&self, e: &Entity) -> u8 {
+        rank_for(self.rules.def(e.def).veterancy, e.experience)
     }
 
     /// `w` as `owner`'s upgrades leave it for a `def`: damage and fire rate. Percentages of a
@@ -414,6 +431,18 @@ impl World {
         }
         w.damage = damage;
         w.cooldown_ticks = (w.cooldown_ticks as i32 * (100 + cooldown) / 100).max(1) as u32;
+        w
+    }
+
+    /// `w` as unit `e` fires it: its owner's upgrades, then a rank-3 unit's faster fire.
+    pub(crate) fn unit_weapon(&self, e: &Entity, w: crate::defs::Weapon) -> crate::defs::Weapon {
+        let mut w = match e.owner {
+            Some(owner) => self.upgraded_weapon(owner, e.def, w),
+            None => w,
+        };
+        if let Some(v) = self.rules.def(e.def).veterancy.filter(|_| self.rank(e) >= 3) {
+            w.cooldown_ticks = (w.cooldown_ticks * v.cooldown_percent / 100).max(1);
+        }
         w
     }
 
@@ -985,8 +1014,9 @@ impl World {
         }
     }
 
-    /// Repair upgrades: every second, an entity that hasn't been hit for its effect's quiet
-    /// spell regains hit points, up to its maximum. Buildings under construction are left alone.
+    /// Self-healing, every second, up to the maximum: repair upgrades once an entity hasn't been
+    /// hit for the effect's quiet spell, and a rank-2 unit's regeneration while it has no order
+    /// (the alpha's `HealthRegenWhenIdle`). Buildings under construction are left alone.
     fn update_repairs(&mut self) {
         if !self.tick.is_multiple_of(TICKS_PER_SECOND) {
             return;
@@ -995,13 +1025,15 @@ impl World {
             let e = self.entities.get(id).unwrap();
             let (Some(owner), true, true) = (e.owner, e.hp > 0, e.is_complete()) else { continue };
             let calm = |t: u32| e.last_hit.is_none_or(|h| self.tick >= h + t);
-            let heal: i32 = self
+            let repair: i32 = self
                 .effects(owner, e.def)
                 .map(|x| match x {
                     Effect::Repair { hp, calm_ticks } if calm(calm_ticks) => hp,
                     _ => 0,
                 })
                 .sum();
+            let idle = self.rules.def(e.def).veterancy.filter(|_| self.rank(e) >= 2 && e.order == Order::Idle);
+            let heal = repair + idle.map_or(0, |v| v.idle_regen);
             let max = self.max_hp(e);
             if heal > 0 && e.hp < max {
                 let e = self.entities.get_mut(id).unwrap();
@@ -1154,9 +1186,8 @@ impl World {
         let e = self.entities.get(id).unwrap();
         let d = self.rules.def(e.def);
         let (pos, speed, radius, owner, order) = (e.pos, d.speed(), d.radius, e.owner.unwrap(), e.order);
-        let def = e.def;
         let deploy = d.deploy.map(|mut dep| {
-            dep.weapon = self.upgraded_weapon(owner, def, dep.weapon);
+            dep.weapon = self.unit_weapon(e, dep.weapon);
             dep
         });
         let state = e.deploy;
@@ -1186,7 +1217,8 @@ impl World {
             DeployState::Packed | DeployState::Deployed => {}
         }
         let deployed = state == DeployState::Deployed;
-        let weapon = d.weapon_for(deployed).map(|w| self.upgraded_weapon(owner, def, w));
+        let e = self.entities.get(id).unwrap();
+        let weapon = d.weapon_for(deployed).map(|w| self.unit_weapon(e, w));
         // A deployed unit given anything that moves it packs up first; the order waits. On an
         // attack-move it stays set up while its howitzer has a target, and moves on after.
         let moves = match order {
@@ -1202,14 +1234,17 @@ impl World {
         let (new_pos, new_order) = match order {
             Order::Idle => {
                 // Guard: an idle armed unit engages what comes close and then walks back. A
-                // deployable one first sets up if an enemy is within its main gun's reach.
+                // deployable one first sets up if an enemy is within its main gun's reach. A
+                // deployed one can't close in, so only an enemy already in its band counts:
+                // one just beyond it would flip it to attack-move and straight back every tick.
                 if let Some(dep) = deploy.filter(|_| !deployed)
                     && self.enemy_in_band(owner, pos, dep.weapon, ACQUIRE).is_some()
                 {
                     self.start_deploy(id, dep.ticks);
                     return;
                 }
-                match weapon.and_then(|w| self.enemy_in_band(owner, pos, w, ACQUIRE)) {
+                let acquire = if deployed { Fx::ZERO } else { ACQUIRE };
+                match weapon.and_then(|w| self.enemy_in_band(owner, pos, w, acquire)) {
                     Some(t) => (pos, Order::AttackMove { dest: pos, pace: speed, engaged: Some(t) }),
                     None => (pos, Order::Idle),
                 }
@@ -1521,7 +1556,29 @@ impl World {
                     let s = &mut self.stats[v.0 as usize];
                     if self.rules.def(def).is_unit() { s.units_lost += 1 } else { s.buildings_lost += 1 }
                 }
+                self.gain_experience(shooter, self.rules.def(def).experience);
             }
+        }
+    }
+
+    /// The shooter of a kill (if it still stands: a shell's gun may be gone) gains `xp`. A rank
+    /// reached raises its maximum hit points by the rank's health and its current ones by the
+    /// same amount, as Zero Hour keeps the ratio when a promotion raises the maximum.
+    fn gain_experience(&mut self, shooter: EntityId, xp: u32) {
+        let Some(e) = self.entities.get(shooter) else { return };
+        let Some(v) = self.rules.def(e.def).veterancy else { return };
+        let (before, owner, at) = (self.rank(e), e.owner, e.pos);
+        let e = self.entities.get_mut(shooter).unwrap();
+        e.experience += xp;
+        let after = rank_for(Some(v), e.experience);
+        if after == before {
+            return;
+        }
+        if before == 0 && e.hp > 0 {
+            e.hp += v.health;
+        }
+        if let Some(player) = owner {
+            self.events.push(Event::Promoted { player, unit: shooter, rank: after, at });
         }
     }
 
@@ -1763,12 +1820,23 @@ impl World {
                 let def = roster[(n as usize + k as usize) % roster.len()];
                 let at = if n == 0 { front } else { front + around(n - 1, Fx::from_int(6)) };
                 let pos = self.nav.free_point(self.map.clamp(at));
-                self.spawn_owned(def, owner, pos);
+                let unit = self.spawn_owned(def, owner, pos);
+                let xp = crate::onslaught::wave_experience(k);
+                let e = self.entities.get_mut(unit).unwrap();
+                e.experience = xp;
+                // Arriving ranked: the rank's extra hit points come with it, full.
+                let max = self.max_hp(self.entities.get(unit).unwrap());
+                self.entities.get_mut(unit).unwrap().hp = max;
                 self.stats[i].units_built += 1;
                 self.events.push(Event::Produced { player: owner, def, at: pos });
             }
         }
     }
+}
+
+/// The rank `experience` earns under `v`: how many of its three thresholds it has reached.
+fn rank_for(v: Option<crate::defs::Veterancy>, experience: u32) -> u8 {
+    v.map_or(0, |v| v.experience.iter().filter(|&&need| experience >= need).count() as u8)
 }
 
 /// Whether a target whose edge is `gap` away is in weapon `w`'s firing band (within range,

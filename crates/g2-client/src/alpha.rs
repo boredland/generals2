@@ -180,6 +180,7 @@ fn effect_for(cue: Cue) -> &'static str {
         Cue::Cash => "sound/sfx/neutral/structures/waves/np_supplycrate_pickup",
         Cue::Click => "sound/sfx/neutral/ui/waves/ui_default",
         Cue::Refused => "sound/sfx/neutral/ui/waves/ui_error",
+        Cue::Promoted => "sound/sfx/neutral/ui/waves/ui_upgrade_unlocked",
     }
 }
 

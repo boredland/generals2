@@ -20,6 +20,18 @@ pub fn wave_size(k: u32) -> u32 {
     2 + k
 }
 
+/// Experience every unit of wave `k` arrives with: none for the first three, then enough for
+/// the first rank, the second from wave 7 and the third for the last two. A defender's army
+/// gains ranks fighting the waves, so waves of green units soon stop being a threat.
+pub fn wave_experience(k: u32) -> u32 {
+    match k {
+        0..=2 => 0,
+        3..=5 => 3,
+        6..=7 => 6,
+        _ => 10,
+    }
+}
+
 /// The tick wave `k` appears on.
 pub fn wave_tick(k: u32) -> u32 {
     FIRST_WAVE + k * WAVE_EVERY

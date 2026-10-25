@@ -62,10 +62,12 @@ pub enum Cue {
     Click,
     /// One of our orders refused (no money, bad placement).
     Refused,
+    /// One of our units reached a new rank.
+    Promoted,
 }
 
 impl Cue {
-    pub const ALL: [Cue; 11] = [
+    pub const ALL: [Cue; 12] = [
         Cue::Shot { heavy: false },
         Cue::Shot { heavy: true },
         Cue::Launch,
@@ -77,6 +79,7 @@ impl Cue {
         Cue::Cash,
         Cue::Click,
         Cue::Refused,
+        Cue::Promoted,
     ];
 
     /// Mix level: gunfire under the blasts, notifications above the battle.
@@ -88,7 +91,7 @@ impl Cue {
             Cue::Blast => 0.55,
             Cue::Kill { building: false } => 0.45,
             Cue::Kill { building: true } => 0.7,
-            Cue::Ready | Cue::Built => 0.45,
+            Cue::Ready | Cue::Built | Cue::Promoted => 0.45,
             Cue::Cash => 0.15,
             Cue::Click => 0.3,
             // A clipped buzz: dense, so it sits lower than the click.
@@ -465,6 +468,7 @@ pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
                 out.push((Cue::Cash, world.entity(depot).map(|d| d.pos)));
             }
             Event::Rejected { player, .. } if player == me => out.push((Cue::Refused, None)),
+            Event::Promoted { player, at, .. } if player == me => out.push((Cue::Promoted, Some(at))),
             _ => {}
         }
     }
@@ -537,6 +541,8 @@ fn synth(cue: Cue) -> Vec<f32> {
             let buzz = (sine(170.0, t) + sine(340.0, t) * 0.5 + sine(510.0, t) * 0.33).clamp(-0.8, 0.8);
             buzz * gate * 0.8
         }),
+        // Four rising tones, a bugle-like arpeggio to the octave.
+        Cue::Promoted => chime(&[523.25, 659.25, 783.99, 1_046.5], 0.09),
     };
     fade_out(&mut s, 0.01);
     let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));

@@ -104,6 +104,8 @@ pub struct Entity {
     pub deploy: DeployState,
     /// Tick this entity last took damage; repair upgrades wait for a quiet spell after it.
     pub last_hit: Option<u32>,
+    /// Experience from kills; sets its rank (`World::rank`).
+    pub experience: u32,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -253,6 +255,7 @@ mod tests {
             cooldown: 0,
             deploy: DeployState::Packed,
             last_hit: None,
+            experience: 0,
             route: Route::default(),
         }
     }

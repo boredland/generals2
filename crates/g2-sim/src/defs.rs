@@ -149,6 +149,22 @@ pub struct Def {
     pub deploy: Option<Deploy>,
     /// Upgrades this building researches, after the units it trains in its build grid.
     pub researches: &'static [UpgradeId],
+    /// Experience its killer gains when it is destroyed.
+    pub experience: u32,
+    /// Units that earn ranks; `None` for units that never do (and every building).
+    pub veterancy: Option<Veterancy>,
+}
+
+/// What a unit gains by rank, after the alpha's `RtsVeterancyComponentData`: three ranks at
+/// `experience[i]` total experience from kills. Rank 1 adds `health` maximum hit points, rank 2
+/// regains `idle_regen` hit points a second while the unit has no order, rank 3 fires faster:
+/// `cooldown_percent` of the normal time between shots. A rank keeps every lower rank's gains.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Veterancy {
+    pub experience: [u32; 3],
+    pub health: i32,
+    pub idle_regen: i32,
+    pub cooldown_percent: u32,
 }
 
 impl Def {

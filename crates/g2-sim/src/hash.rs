@@ -106,6 +106,7 @@ impl World {
             h.u64(e.powered as u64);
             h.u64(e.income_ticks as u64);
             h.u64(e.cooldown as u64);
+            h.u64(e.experience as u64);
             // Only repair upgrades read it, so only owners with upgrades hash it; matches
             // without upgrades hash as before.
             if e.owner.is_some_and(|o| !self.players[o.0 as usize].upgrades.is_empty()) {

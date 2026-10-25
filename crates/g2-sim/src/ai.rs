@@ -38,12 +38,14 @@ pub struct Ai {
 }
 
 /// What a unit adds to a fight: hit points times damage per second, so a fresh tank counts
-/// for more than a damaged one and a fast gun for more than a slow one. Unarmed units: 0.
+/// for more than a damaged one and a fast gun for more than a slow one, with its owner's
+/// upgrades and its rank. Unarmed units: 0.
 pub fn strength(world: &World, e: &Entity) -> i64 {
     let d = world.rules.def(e.def);
     let Some(w) = d.weapon_for(e.deploy == DeployState::Deployed).or(d.deploy.map(|dep| dep.weapon)) else {
         return 0;
     };
+    let w = world.unit_weapon(e, w);
     e.hp.max(0) as i64 * w.damage as i64 * TICKS_PER_SECOND as i64 / w.cooldown_ticks.max(1) as i64
 }
 
