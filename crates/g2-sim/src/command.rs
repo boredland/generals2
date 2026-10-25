@@ -70,6 +70,16 @@ pub enum CommandKind {
     Power {
         at: Vec2,
     },
+    /// Infantry walk to `container` (a building or vehicle of theirs, or an empty neutral one)
+    /// and get in, as many as fit.
+    Garrison {
+        units: Vec<EntityId>,
+        container: EntityId,
+    },
+    /// Everyone inside `container` gets out.
+    Evacuate {
+        container: EntityId,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.
@@ -96,4 +106,6 @@ pub enum Reject {
     InvalidTarget,
     /// The upgrade is already researched, or queued somewhere.
     AlreadyResearched,
+    /// No unit can go in: none is infantry, the container is full, an enemy's, or holds none.
+    CannotGarrison,
 }

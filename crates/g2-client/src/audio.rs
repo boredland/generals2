@@ -469,6 +469,7 @@ pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
             }
             Event::Rejected { player, .. } if player == me => out.push((Cue::Refused, None)),
             Event::Promoted { player, at, .. } if player == me => out.push((Cue::Promoted, Some(at))),
+            Event::Garrisoned { player, at, .. } if player == me => out.push((Cue::Click, Some(at))),
             _ => {}
         }
     }

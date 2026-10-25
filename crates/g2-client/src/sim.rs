@@ -84,11 +84,12 @@ impl Sim {
             }
     }
 
-    /// Whether `e` is drawn: what the local player sees, plus enemy buildings it remembers.
-    /// Buildings don't move, so a remembered one stands where it was seen. One destroyed out
-    /// of sight stays drawn as a ghost (`view::sync_entities`) until the spot is seen again.
+    /// Whether `e` is drawn: what the local player sees, plus enemy buildings it remembers,
+    /// but no unit inside a building or vehicle (the container stands for it). Buildings don't
+    /// move, so a remembered one stands where it was seen. One destroyed out of sight stays
+    /// drawn as a ghost (`view::sync_entities`) until the spot is seen again.
     pub fn shows(&self, e: &g2_sim::Entity) -> bool {
-        self.sees(e) || self.remembers(e.id)
+        e.inside.is_none() && (self.sees(e) || self.remembers(e.id))
     }
 
     /// Whether the local player's fog still remembers entity `id` (an enemy building, possibly

@@ -126,6 +126,13 @@ pub enum Event {
         rank: u8,
         at: Vec2,
     },
+    /// `player`'s `unit` got into `container` at `at`. Output only.
+    Garrisoned {
+        player: PlayerId,
+        unit: EntityId,
+        container: EntityId,
+        at: Vec2,
+    },
 }
 
 /// An artillery shell in flight. Part of the state hash.
@@ -141,6 +148,8 @@ pub struct ShellInFlight {
     pub damage: i32,
     pub bonus: [i32; 4],
     pub radius: Fx,
+    /// Extra damage against a building with units inside when the shell lands.
+    pub garrison_bonus: i32,
 }
 
 pub struct World {
@@ -215,6 +224,11 @@ impl World {
         for &(pos, reserve) in &setup.map.oil_wells {
             world.spawn_neutral(rules.oil_well(), pos, reserve);
         }
+        for &(pos, radius) in &setup.map.civilians {
+            if let Some(def) = rules.civilian_for(radius) {
+                world.spawn_neutral(def, pos, 0);
+            }
+        }
         for (i, p) in setup.players.iter().enumerate() {
             let owner = PlayerId(i as u8);
             world.players.push(Player {
@@ -266,6 +280,7 @@ impl World {
             deploy: DeployState::Packed,
             last_hit: None,
             experience: 0,
+            inside: None,
             route: Route::default(),
         }
     }
@@ -547,6 +562,8 @@ impl World {
         // After the shots, so a unit hit this tick has its quiet spell restart before it heals.
         self.update_repairs();
         self.separate_units();
+        // After separation, so a transport pushed aside carries its passengers along.
+        self.carry_occupants();
         self.update_derricks();
         // Defeat first, so an eliminated player's remaining units go in the same tick.
         self.update_defeat();
@@ -603,6 +620,58 @@ impl World {
             return Err(Reject::NotOwner);
         }
         Ok(e)
+    }
+
+    /// The units inside `container`, in entity order.
+    pub fn occupants(&self, container: EntityId) -> Vec<EntityId> {
+        self.entities.iter().filter(|e| e.inside == Some(container)).map(|e| e.id).collect()
+    }
+
+    /// Free places in `container` for `player`'s infantry: its garrison's capacity minus those
+    /// already inside. `None` if it has no garrison, isn't finished, or isn't theirs to enter
+    /// (an enemy's, or a neutral one someone else holds).
+    pub fn garrison_room(&self, player: PlayerId, container: EntityId) -> Option<u32> {
+        let c = self.entities.get(container).filter(|c| c.hp > 0 && c.is_complete())?;
+        let g = self.rules.def(c.def).garrison?;
+        let civilian = self.rules.def(c.def).role() == Some(BuildingRole::Civilian);
+        if !(c.owner == Some(player) || (civilian && c.owner.is_none())) {
+            return None;
+        }
+        Some(g.capacity.saturating_sub(self.occupants(container).len() as u32))
+    }
+
+    fn enterable(&self, player: PlayerId, container: EntityId) -> bool {
+        self.garrison_room(player, container).is_some_and(|room| room > 0)
+    }
+
+    /// Everyone inside `container` steps out around it, idle; a civilian building left empty
+    /// is neutral again.
+    fn evacuate(&mut self, container: EntityId) {
+        let Some(c) = self.entities.get(container) else { return };
+        let (at, r) = (c.pos, self.rules.def(c.def).radius);
+        for (k, u) in self.occupants(container).into_iter().enumerate() {
+            let ur = self.radius_of(u);
+            let ring = r + ur + SLACK;
+            let spot = self.nav.free_point(self.map.clamp(at + around(k as u32, ring)));
+            let e = self.entities.get_mut(u).unwrap();
+            e.inside = None;
+            e.pos = spot;
+            e.order = Order::Idle;
+            e.route = Route::default();
+        }
+        if self.rules.def(self.entities.get(container).unwrap().def).role() == Some(BuildingRole::Civilian) {
+            self.entities.get_mut(container).unwrap().owner = None;
+        }
+    }
+
+    /// Units inside a container sit at its centre: a transport that moved takes them along.
+    fn carry_occupants(&mut self) {
+        for id in self.entities.ids() {
+            let Some(c) = self.entities.get(id).unwrap().inside else { continue };
+            if let Some(at) = self.entities.get(c).map(|c| c.pos) {
+                self.entities.get_mut(id).unwrap().pos = at;
+            }
+        }
     }
 
     /// What `player` pays for `def`, after their general's modifiers. The general is fixed for the
@@ -823,6 +892,28 @@ impl World {
                 Ok(())
             }
             CommandKind::Power { at } => self.use_power(player, *at),
+            CommandKind::Garrison { units, container } => {
+                if !self.enterable(player, *container) {
+                    return Err(Reject::CannotGarrison);
+                }
+                let units = self.own_units(player, units, |d| d.can_garrison()).map_err(|_| Reject::CannotGarrison)?;
+                for u in units {
+                    let e = self.entities.get_mut(u).unwrap();
+                    if e.inside.is_none() {
+                        e.order = Order::Garrison { container: *container };
+                        e.home = None;
+                    }
+                }
+                Ok(())
+            }
+            CommandKind::Evacuate { container } => {
+                self.owned(player, *container)?;
+                if self.occupants(*container).is_empty() {
+                    return Err(Reject::CannotGarrison);
+                }
+                self.evacuate(*container);
+                Ok(())
+            }
         }
     }
 
@@ -1213,6 +1304,10 @@ impl World {
             let e = self.entities.get_mut(id).unwrap();
             e.cooldown = e.cooldown.saturating_sub(1);
         }
+        if let Some(container) = self.entities.get(id).unwrap().inside {
+            self.fire_from_inside(id, container);
+            return;
+        }
         // Setting up and packing up take time, during which the unit neither moves nor fires.
         match state {
             DeployState::Deploying(t) | DeployState::Packing(t) if t > 1 => {
@@ -1354,6 +1449,19 @@ impl World {
                     }
                 }
             },
+            // Walk to the container's edge and get in, if there is still room; else stop.
+            Order::Garrison { container } => match self.entities.get(container) {
+                Some(c) if self.enterable(owner, container) => {
+                    let (cpos, cr) = (c.pos, self.rules.def(c.def).radius);
+                    let (p, arrived) = self.approach(id, cpos, cr + radius, speed);
+                    if arrived {
+                        self.enter(id, container);
+                        return;
+                    }
+                    (p, order)
+                }
+                _ => (pos, Order::Idle),
+            },
         };
         let e = self.entities.get_mut(id).unwrap();
         e.pos = self.map.clamp(new_pos);
@@ -1364,6 +1472,44 @@ impl World {
         e.order = new_order;
         if new_order == Order::Idle {
             e.home = None;
+        }
+    }
+
+    /// `unit` gets in: it takes the container's position, and a neutral building becomes its
+    /// player's.
+    fn enter(&mut self, unit: EntityId, container: EntityId) {
+        let (cpos, owner) = (self.entities.get(container).unwrap().pos, self.entities.get(unit).unwrap().owner);
+        let e = self.entities.get_mut(unit).unwrap();
+        e.inside = Some(container);
+        e.pos = cpos;
+        e.order = Order::Idle;
+        e.home = None;
+        e.route = Route::default();
+        let c = self.entities.get_mut(container).unwrap();
+        if c.owner.is_none() {
+            c.owner = owner;
+        }
+        self.events.push(Event::Garrisoned { player: owner.unwrap(), unit, container, at: cpos });
+    }
+
+    /// A unit inside a container that lets its garrison fire shoots out from the container's
+    /// edge: at the nearest visible enemy within its weapon's range plus the container's range
+    /// bonus, measured from that edge. It never moves.
+    fn fire_from_inside(&mut self, id: EntityId, container: EntityId) {
+        let Some(c) = self.entities.get(container) else { return };
+        let cdef = self.rules.def(c.def);
+        let Some(g) = cdef.garrison.filter(|g| g.fires) else { return };
+        let e = self.entities.get(id).unwrap();
+        let Some(base) = self.rules.def(e.def).weapon() else { return };
+        let mut w = self.unit_weapon(e, base);
+        // Fired from the edge, reaching the bonus further: centre-based range grows by both.
+        let extra = cdef.radius + g.range_bonus;
+        w.range += extra;
+        w.air_range = w.air_range.map(|r| r + extra);
+        let owner = e.owner.unwrap();
+        let cpos = c.pos;
+        if let Some(t) = self.enemy_in_band(owner, cpos, w, Fx::ZERO) {
+            self.engage(id, t, w, Fx::ZERO);
         }
     }
 
@@ -1380,10 +1526,11 @@ impl World {
     }
 
     /// `target` if it is a live entity owned by an opponent of `owner` that can be shot (units
-    /// and buildings, not neutral resources). Fog is not checked: an attack order, once given,
-    /// chases its target through fog while it lives. Whether it may be given is `attackable`.
+    /// and buildings, not neutral resources, not units inside something). Fog is not checked:
+    /// an attack order, once given, chases its target through fog while it lives. Whether it
+    /// may be given is `attackable`.
     fn live_enemy(&self, owner: PlayerId, target: EntityId) -> Option<&Entity> {
-        self.entities.get(target).filter(|t| t.owner.is_some_and(|o| o != owner) && t.hp > 0)
+        self.entities.get(target).filter(|t| t.owner.is_some_and(|o| o != owner) && t.hp > 0 && t.inside.is_none())
     }
 
     /// Whether `owner` may order an attack on `target`: a live enemy it sees now, or an enemy
@@ -1403,7 +1550,7 @@ impl World {
         let vision = &self.visions[owner.0 as usize];
         let mut best: Option<(bool, Fx, EntityId)> = None;
         for e in self.entities.iter() {
-            if !e.owner.is_some_and(|o| o != owner) || e.hp <= 0 {
+            if !e.owner.is_some_and(|o| o != owner) || e.hp <= 0 || e.inside.is_some() {
                 continue;
             }
             let d = self.rules.def(e.def);
@@ -1451,7 +1598,10 @@ impl World {
         }
         self.entities.get_mut(id).unwrap().cooldown = w.cooldown_ticks;
         match w.shell {
-            None => self.shots.push((id, owner, target, w.damage_vs(armour), false)),
+            None => {
+                let damage = w.damage_vs(armour) + self.garrison_bonus_vs(w.garrison_bonus, target);
+                self.shots.push((id, owner, target, damage, false));
+            }
             Some(s) => {
                 let flight = (pos.distance(tpos) / s.speed).floor_int().max(1) as u32;
                 let lands = self.tick + flight;
@@ -1465,6 +1615,7 @@ impl World {
                     damage: w.damage,
                     bonus: w.bonus,
                     radius: s.radius,
+                    garrison_bonus: w.garrison_bonus,
                 });
                 self.events.push(Event::Fired { shooter: id, from: pos, at: tpos, lands });
             }
@@ -1483,7 +1634,8 @@ impl World {
         for s in due {
             self.events.push(Event::Landed { at: s.at, radius: s.radius });
             for e in self.entities.iter() {
-                if !e.owner.is_some_and(|o| o != s.owner) || e.hp <= 0 {
+                // Units inside something take nothing: the building or vehicle shields them.
+                if !e.owner.is_some_and(|o| o != s.owner) || e.hp <= 0 || e.inside.is_some() {
                     continue;
                 }
                 let d = self.rules.def(e.def);
@@ -1494,10 +1646,16 @@ impl World {
                 if e.pos.distance(s.at) - d.radius > s.radius {
                     continue;
                 }
-                let damage = (s.damage + s.bonus[d.armour as usize]).max(1);
+                let damage =
+                    (s.damage + s.bonus[d.armour as usize]).max(1) + self.garrison_bonus_vs(s.garrison_bonus, e.id);
                 self.shots.push((s.shooter, s.owner, e.id, damage, true));
             }
         }
+    }
+
+    /// `bonus` if `target` has units inside it now, else 0.
+    fn garrison_bonus_vs(&self, bonus: i32, target: EntityId) -> i32 {
+        if bonus != 0 && self.entities.iter().any(|e| e.inside == Some(target)) { bonus } else { 0 }
     }
 
     /// The player's general's power at `at`. A power aims only at ground the player has
@@ -1527,6 +1685,7 @@ impl World {
                         damage,
                         bonus,
                         radius,
+                        garrison_bonus: 0,
                     });
                 }
             }
@@ -1717,8 +1876,15 @@ impl World {
     /// never against structures: they fly over them.
     fn separate_units(&mut self) {
         let ids = self.entities.ids();
-        let units: Vec<EntityId> =
-            ids.iter().copied().filter(|&id| self.rules.def(self.entities.get(id).unwrap().def).is_unit()).collect();
+        // Units inside something sit at its centre and take no part.
+        let units: Vec<EntityId> = ids
+            .iter()
+            .copied()
+            .filter(|&id| {
+                let e = self.entities.get(id).unwrap();
+                self.rules.def(e.def).is_unit() && e.inside.is_none()
+            })
+            .collect();
         let statics: Vec<(Vec2, Fx)> = ids
             .iter()
             .filter_map(|&id| {
@@ -1806,10 +1972,29 @@ impl World {
     }
 
     fn cleanup(&mut self) {
+        // Units inside a destroyed building or vehicle die with it (the alpha's
+        // `DieWithGarrison`).
         for id in self.entities.ids() {
             let e = self.entities.get(id).unwrap();
-            let depleted = matches!(self.rules.def(e.def).class, Class::SupplyPile) && e.resource <= 0;
+            let Some(c) = e.inside else { continue };
+            if self.entities.get(c).is_none_or(|c| c.hp <= 0) {
+                let owner = e.owner;
+                self.entities.get_mut(id).unwrap().hp = 0;
+                if let Some(o) = owner {
+                    self.stats[o.0 as usize].units_lost += 1;
+                }
+            }
+        }
+        for id in self.entities.ids() {
+            let e = self.entities.get(id).unwrap();
+            let d = self.rules.def(e.def);
+            let depleted = matches!(d.class, Class::SupplyPile) && e.resource <= 0;
             let owner_out = e.owner.is_some_and(|o| self.players[o.0 as usize].defeated);
+            // A civilian building outlives whoever held it: it is neutral again.
+            if owner_out && e.hp > 0 && d.role() == Some(BuildingRole::Civilian) {
+                self.entities.get_mut(id).unwrap().owner = None;
+                continue;
+            }
             if depleted || e.hp <= 0 || owner_out {
                 self.entities.despawn(id);
             }
@@ -1823,10 +2008,13 @@ impl World {
             }
             let owner = Some(PlayerId(i as u8));
             let onslaught = self.ai[i].as_ref().is_some_and(|a| a.level() == AiLevel::Onslaught);
-            // Entities killed this tick (hp ≤ 0) are swept by `cleanup` right after.
+            // Entities killed this tick (hp ≤ 0) are swept by `cleanup` right after. A civilian
+            // building held is no base: it doesn't keep a player in the game.
             let alive = self.entities.iter().any(|e| {
                 let d = self.rules.def(e.def);
-                e.owner == owner && e.hp > 0 && (d.is_building() || d.is_constructor())
+                e.owner == owner
+                    && e.hp > 0
+                    && ((d.is_building() && d.role() != Some(BuildingRole::Civilian)) || d.is_constructor())
             });
             // The onslaught has no base to lose: it is beaten once its last wave is out and gone.
             p.defeated = if onslaught {
@@ -1947,5 +2135,17 @@ impl Rules {
     pub fn starting_constructor(&self, faction: Faction) -> DefId {
         let cc = self.def(self.command_center(faction));
         *cc.produces.iter().find(|&&u| self.def(u).is_constructor()).expect("command center produces no constructor")
+    }
+
+    /// The civilian building def for a map building of footprint `radius`: of those whose
+    /// radius is at most `radius` (so it never blocks ground the map left open), the largest;
+    /// `None` if every civilian def is larger. Ties go to the earlier def.
+    pub fn civilian_for(&self, radius: Fx) -> Option<DefId> {
+        self.defs
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.role() == Some(BuildingRole::Civilian) && d.radius <= radius)
+            .max_by_key(|&(i, d)| (d.radius, std::cmp::Reverse(i)))
+            .map(|(i, _)| DefId(i as u16))
     }
 }

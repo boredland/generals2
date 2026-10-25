@@ -422,8 +422,9 @@ impl Ai {
             out.push(CommandKind::Gather { units: idle, pile });
         }
 
-        // 5. Army.
-        let army: Vec<_> = mine.iter().copied().filter(|e| rules.def(e.def).weapon().is_some()).collect();
+        // 5. Army. Units inside a garrison hold it; they aren't sent anywhere.
+        let army: Vec<_> =
+            mine.iter().copied().filter(|e| rules.def(e.def).weapon().is_some() && e.inside.is_none()).collect();
         let home = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos));
         if self.level == AiLevel::Easy {
             self.waves(world, &mine, &army, home, out);
@@ -477,7 +478,12 @@ impl Ai {
         let (me, rules) = (self.player, world.rules);
         let idle: Vec<EntityId> = world
             .entities()
-            .filter(|e| e.owner == Some(me) && e.order == Order::Idle && rules.def(e.def).weapon().is_some())
+            .filter(|e| {
+                e.owner == Some(me)
+                    && e.order == Order::Idle
+                    && rules.def(e.def).weapon().is_some()
+                    && e.inside.is_none()
+            })
             .map(|e| e.id)
             .collect();
         if !idle.is_empty()
@@ -511,7 +517,11 @@ impl Ai {
         let seen_now = sum(&mut enemies.iter());
         // Slow fade (a 64th per second): an army that walked out of sight still exists.
         self.enemy_seen = (self.enemy_seen - self.enemy_seen / 64).max(seen_now);
-        let buildings: Vec<&&Entity> = mine.iter().filter(|e| rules.def(e.def).is_building()).collect();
+        // A held civilian building is no base to defend or fall back to.
+        let buildings: Vec<&&Entity> = mine
+            .iter()
+            .filter(|e| rules.def(e.def).is_building() && rules.def(e.def).role() != Some(BuildingRole::Civilian))
+            .collect();
         let near_base = |p: Vec2| buildings.iter().any(|b| b.pos.distance(p) <= DEFEND_RADIUS);
         let at_home = |e: &&Entity| near_base(e.pos);
 
@@ -566,6 +576,30 @@ impl Ai {
         if !fleeing.is_empty() {
             out.push(CommandKind::Move { units: fleeing, target: home });
             self.regroup_until = world.tick() + 20 * TICKS_PER_SECOND;
+        }
+
+        // Garrisons: idle infantry at home take an empty civilian building near the base, one
+        // building at a time, so the base's approaches have a strongpoint.
+        if let Some(house) = world
+            .entities()
+            .filter(|e| {
+                e.owner.is_none()
+                    && rules.def(e.def).role() == Some(BuildingRole::Civilian)
+                    && near_base(e.pos)
+                    && vision.is_visible(e.pos)
+            })
+            .min_by_key(|e| (e.pos.distance(home), e.id))
+            && let Some(room) = world.garrison_room(me, house.id)
+        {
+            let squads: Vec<EntityId> = army
+                .iter()
+                .filter(|e| e.order == Order::Idle && at_home(e) && rules.def(e.def).can_garrison())
+                .take(room as usize)
+                .map(|e| e.id)
+                .collect();
+            if !squads.is_empty() {
+                out.push(CommandKind::Garrison { units: squads, container: house.id });
+            }
         }
 
         // New wave: every idle armed unit, at home or left in the field by an earlier wave,

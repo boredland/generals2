@@ -16,6 +16,8 @@ pub struct MapDef {
     /// Cells on a bridge deck, same layout: walkable, but nothing may be built there, or a
     /// building could close the only crossing. Empty means no bridges.
     pub decks: Vec<bool>,
+    /// Neutral buildings infantry can garrison: centre and footprint radius.
+    pub civilians: Vec<(Vec2, Fx)>,
 }
 
 impl MapDef {

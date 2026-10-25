@@ -42,6 +42,15 @@ impl crate::map::MapDef {
                 }
             }
         }
+        // Hashed only when present, so maps without them keep their fingerprint.
+        if !self.civilians.is_empty() {
+            h.u64(self.civilians.len() as u64);
+            for &(p, r) in &self.civilians {
+                h.i64(p.x.0);
+                h.i64(p.y.0);
+                h.i64(r.0);
+            }
+        }
         h.0
     }
 }
@@ -107,6 +116,11 @@ impl World {
             h.u64(e.income_ticks as u64);
             h.u64(e.cooldown as u64);
             h.u64(e.experience as u64);
+            // Only for units inside something, so matches without garrisons hash as before.
+            if let Some(c) = e.inside {
+                h.u64(0x6761_7272);
+                id(&mut h, c);
+            }
             // Only repair upgrades read it, so only owners with upgrades hash it; matches
             // without upgrades hash as before.
             if e.owner.is_some_and(|o| !self.players[o.0 as usize].upgrades.is_empty()) {
@@ -149,6 +163,10 @@ impl World {
                 h.i64(b as i64);
             }
             h.i64(s.radius.0);
+            // Only when set, so shells without one (the golden replay's) hash as before.
+            if s.garrison_bonus != 0 {
+                h.i64(0x6762_0000 + s.garrison_bonus as i64);
+            }
         }
         h.0
     }
@@ -201,6 +219,10 @@ fn hash_order(h: &mut Fnv, o: Order) {
             h.i64(dest.y.0);
             h.i64(pace.0);
             h.u64(engaged.map_or(u64::MAX, |e| ((e.index as u64) << 32) | e.generation as u64));
+        }
+        Order::Garrison { container } => {
+            h.u64(6);
+            id(h, container);
         }
     }
 }

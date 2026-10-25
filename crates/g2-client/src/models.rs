@@ -328,6 +328,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
     let mut p = Vec::new();
     let w = r * 1.75;
     match (faction, role) {
+        (_, BuildingRole::Civilian) => civilian(&mut p, r),
         (_, BuildingRole::OilDerrick { .. }) => derrick(&mut p, faction, r),
         (Faction::Gla, BuildingRole::SupplyCenter { .. }) => stash(&mut p, w),
         (Faction::Gla, BuildingRole::CommandCenter) => fortress(&mut p, w),
@@ -633,6 +634,60 @@ fn salvage_bay(p: &mut Vec<Part>, w: f32) {
     p.push(block(Slot::Hazard, w * 0.28, -w * 0.02, 5.0, w * 0.3, 0.35, 0.35));
     sandbags(p, -w * 0.45, w * 0.44, w * 0.05, w * 0.44, 0.4, 5);
     mast(p, -w * 0.32, -w * 0.3, top);
+}
+
+/// A civilian building, in no faction's colours: concrete walls, a tin or flat roof, dark
+/// windows. Shaped by size: a one-room shanty under a tin sheet, a two-storey house with a
+/// stepped tile roof, or a flat-roofed block with a roof terrace and water tanks.
+fn civilian(p: &mut Vec<Part>, r: f32) {
+    let w = r * 1.5;
+    let window = |p: &mut Vec<Part>, x: f32, z: f32, y: f32, along_x: bool| {
+        let (sx, sz) = if along_x { (0.9, 0.08) } else { (0.08, 0.9) };
+        p.push(bx(Slot::Dark, Vec3::new(x, y, z), Vec3::new(sx, 0.9, sz)));
+    };
+    if r < 2.5 {
+        p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w, 2.4, w * 0.9));
+        let mut roof = block(Slot::Crate(3), 0.0, 0.0, 2.4, w * 1.1, 0.18, w);
+        roof.yaw = 0.06;
+        p.push(roof);
+        p.push(block(Slot::Wood, w * 0.15, w * 0.46, 0.0, 0.9, 1.8, 0.1));
+        window(p, -w * 0.25, w * 0.46, 1.4, true);
+        p.push(block(Slot::Crate(0), -w * 0.42, -w * 0.3, 0.0, 0.7, 0.6, 0.7));
+    } else if r < 4.0 {
+        p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w, 5.0, w * 0.85));
+        p.push(block(Slot::Panel, 0.0, 0.0, 2.45, w * 1.02, 0.18, w * 0.87));
+        // Stepped roof: two tile slabs either side of a dark ridge beam.
+        for s in [-1.0, 1.0] {
+            p.push(bx(Slot::Crate(4), Vec3::new(0.0, 5.3 - s * 0.2, s * w * 0.22), Vec3::new(w * 1.05, 0.2, w * 0.5)));
+        }
+        p.push(block(Slot::Dark, 0.0, 0.0, 5.5, w * 1.05, 0.25, 0.3));
+        for y in [1.3, 3.8] {
+            for x in [-0.28, 0.28] {
+                window(p, x * w, w * 0.43, y, true);
+                window(p, w * 0.5, x * w * 0.8, y, false);
+            }
+        }
+        p.push(block(Slot::Wood, 0.0, w * 0.43, 0.0, 1.0, 2.0, 0.12));
+        p.push(block(Slot::Dark, -w * 0.38, -w * 0.32, 5.6, 0.5, 1.6, 0.5));
+    } else {
+        p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w, 7.5, w * 0.9));
+        p.push(block(Slot::Panel, 0.0, 0.0, 7.5, w * 1.02, 0.4, w * 0.92));
+        for y in [1.3, 3.8, 6.2] {
+            for x in [-0.33, 0.0, 0.33] {
+                window(p, x * w, w * 0.455, y, true);
+                window(p, w * 0.505, x * w * 0.85, y, false);
+            }
+        }
+        // Roof terrace: low parapet, two water tanks, an awning over the stairwell.
+        p.push(block(Slot::Concrete, 0.0, -w * 0.43, 7.9, w, 0.6, 0.15));
+        p.push(block(Slot::Concrete, -w * 0.49, 0.0, 7.9, 0.15, 0.6, w * 0.9));
+        for x in [0.25, 0.4] {
+            p.push(cyl(Slot::Crate(3), Vec3::new(x * w, 8.6, -w * 0.25), Vec3::new(1.2, 1.4, 1.2)));
+        }
+        p.push(block(Slot::Concrete, -w * 0.25, w * 0.2, 7.9, 2.0, 2.0, 2.0));
+        p.push(block(Slot::Crate(1), -w * 0.25, w * 0.2 + 1.3, 9.0, 2.4, 0.12, 1.2));
+        p.push(block(Slot::Wood, w * 0.1, w * 0.45, 0.0, 1.4, 2.2, 0.12));
+    }
 }
 
 fn derrick(p: &mut Vec<Part>, faction: Faction, r: f32) {
@@ -1078,6 +1133,12 @@ pub fn parts_for(def: &Def, faction: Option<Faction>) -> Vec<Part> {
     match (def.class, faction) {
         (Class::SupplyPile, _) => supply_pile(r),
         (Class::OilWell, _) => oil_well(r),
+        // Neutral or held, a civilian building keeps its look.
+        (Class::Building { role: BuildingRole::Civilian, .. }, _) => {
+            let mut p = Vec::new();
+            civilian(&mut p, r);
+            p
+        }
         (Class::Building { role, .. }, Some(f)) => building(f, role, r),
         (Class::Unit { .. }, Some(f)) => unit(f, def, r),
         _ => Vec::new(),

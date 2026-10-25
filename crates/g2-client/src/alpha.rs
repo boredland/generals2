@@ -117,6 +117,9 @@ fn model_for(def: &str) -> Option<&'static str> {
         "EU Valkyrie" => "_eur/eu_heavyrockethelo/eu_heavyrockethelo_skn_mesh",
         "APA Mantis" => "_asia/au_lightgunhelo/au_lightgunhelo_skn_mesh",
         "GLA Toxin Chopper" => "_gla/gu_lightchemicalhelo/gu_lightchemicalhelo_skn_mesh",
+        "Shanty" => "civilian/africa/afri_cb_shanty/afri_cb_shanty_05_mesh",
+        "Town House" => "civilian/africa/afri_cb_town/afri_cb_town_09_mesh",
+        "Urban Block" => "civilian/africa/afri_cb_urban/afri_cb_urban_03_mesh",
         _ => return None,
     })
 }
@@ -324,7 +327,8 @@ mod tests {
     #[test]
     fn every_def_has_a_model_and_every_unit_a_voice() {
         for def in g2_rules::rules().defs {
-            if def.faction.is_none() {
+            let civilian = def.role() == Some(g2_sim::BuildingRole::Civilian);
+            if def.faction.is_none() && !civilian {
                 continue;
             }
             assert!(model_for(def.name).is_some(), "{} has no alpha model", def.name);
@@ -342,7 +346,8 @@ mod tests {
         let Some(dir) = std::env::var_os("G2_ALPHA_CACHE") else { return };
         let cache = Cache(PathBuf::from(dir));
         let bounds = cache.bounds();
-        for def in g2_rules::rules().defs.iter().filter(|d| d.faction.is_some()) {
+        let civilian = |d: &&Def| d.role() == Some(g2_sim::BuildingRole::Civilian);
+        for def in g2_rules::rules().defs.iter().filter(|d| d.faction.is_some() || civilian(d)) {
             assert!(cache.model(def, &bounds).is_some(), "{}: model missing from the import", def.name);
         }
         let s = Sounds::load(&cache);

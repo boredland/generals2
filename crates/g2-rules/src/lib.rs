@@ -4,8 +4,8 @@
 //! outside this repository.
 //! Everything else is a placeholder chosen for playability and will be tuned.
 use g2_sim::defs::{
-    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, General, Modifier, Power,
-    PowerKind, Rules, Shell, Targets, Upgrade, UpgradeId, Veterancy, Weapon,
+    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, Garrison, General, Modifier,
+    Power, PowerKind, Rules, Shell, Targets, Upgrade, UpgradeId, Veterancy, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -59,6 +59,9 @@ pub mod ids {
     pub const EU_VALKYRIE: DefId = DefId(44);
     pub const APA_MANTIS: DefId = DefId(45);
     pub const GLA_TOXIN_CHOPPER: DefId = DefId(46);
+    pub const SHANTY: DefId = DefId(47);
+    pub const TOWN_HOUSE: DefId = DefId(48);
+    pub const URBAN_BLOCK: DefId = DefId(49);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -129,6 +132,7 @@ const fn building(
         researches: NO_RESEARCH,
         experience: 0,
         veterancy: None,
+        garrison: None,
     }
 }
 
@@ -167,6 +171,7 @@ const fn unit(
         researches: NO_RESEARCH,
         experience: 1,
         veterancy: None,
+        garrison: None,
     }
 }
 
@@ -210,6 +215,7 @@ const fn soldier(
         researches: NO_RESEARCH,
         experience: 1,
         veterancy: None,
+        garrison: None,
     }
 }
 
@@ -242,6 +248,7 @@ const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) 
         shell: None,
         targets: Targets::Ground,
         air_range: None,
+        garrison_bonus: 0,
     }
 }
 
@@ -258,6 +265,19 @@ const fn anti_air(mut w: Weapon, air_range: i64) -> Weapon {
 const fn shelling(mut w: Weapon, radius: i64, speed: i64, min_range: i64) -> Weapon {
     w.shell = Some(Shell { radius: Fx::from_int(radius), speed: per_sec(speed), min_range: Fx::from_int(min_range) });
     w
+}
+
+/// `w` deals `bonus` more to a building with units inside (the card's "vs. garrisoned
+/// buildings").
+const fn garrison_buster(mut w: Weapon, bonus: i32) -> Weapon {
+    w.garrison_bonus = bonus;
+    w
+}
+
+/// `d` carries up to `capacity` infantry that can't fire from inside (the alpha's transports).
+const fn carrying(mut d: Def, capacity: u32) -> Def {
+    d.garrison = Some(Garrison { capacity, fires: false, range_bonus: Fx::ZERO });
+    d
 }
 
 /// `d` deploys for `weapon`, taking `set_up_tenths` tenths of a second each way.
@@ -281,10 +301,10 @@ const TANK_GUN: Weapon = weapon(40, [0, 30, 0, 0], 35, 15);
 // src: Thunderfist undeployed cannon 40 (+30 vs. light units), cooldown 1.65, range 30.
 const THUNDERFIST_CANNON: Weapon = weapon(40, [0, 30, 0, 0], 30, 16);
 // src: Thunderfist deployed howitzer 100 (+30 vs. light units, +100 vs. garrisoned buildings),
-// cooldown 4, range 65. There are no garrisons, so the +100 goes to every building (a
-// placeholder). Blast radius 6, shell speed 40/s and minimum range 20: placeholders, after the
-// way Zero Hour's artillery (Inferno cannon: radius 15, minimum range 50 of 300) is shaped.
-const HOWITZER: Weapon = shelling(weapon(100, [0, 30, 0, 100], 65, 40), 6, 40, 20);
+// cooldown 4, range 65. Blast radius 6, shell speed 40/s and minimum range 20: placeholders,
+// after the way Zero Hour's artillery (Inferno cannon: radius 15, minimum range 50 of 300) is
+// shaped.
+const HOWITZER: Weapon = garrison_buster(shelling(weapon(100, [0, 30, 0, 0], 65, 40), 6, 40, 20), 100);
 // Placeholder: GLA Toxin Artillery's "tri-artillery cannon" has no numbers on its card, and
 // its toxin damage over time is not modelled. A lighter, faster-firing shell than the howitzer.
 const TOXIN_SHELL: Weapon = shelling(weapon(45, [15, 0, 0, 0], 55, 25), 8, 40, 15);
@@ -299,7 +319,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 47] = [
+static DEFS: [Def; 50] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -315,6 +335,7 @@ static DEFS: [Def; 47] = [
         researches: NO_RESEARCH,
         experience: 0,
         veterancy: None,
+        garrison: None,
     },
     Def {
         name: "Oil Well",
@@ -331,6 +352,7 @@ static DEFS: [Def; 47] = [
         researches: NO_RESEARCH,
         experience: 0,
         veterancy: None,
+        garrison: None,
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
@@ -651,21 +673,26 @@ static DEFS: [Def; 47] = [
         93,
     ),
     // src: Armored Personnel Carrier hp 390, Light, $435, 14.66 s, EU war factory; machine gun
-    // 46, cooldown 2.25, range 45; land speed 19. Transport and repair turret are not modelled.
-    ranked(
-        soldier(
-            "EU APC",
-            Faction::Eu,
-            390,
-            Armour::Light,
-            credits(435),
-            centis(1466),
-            19,
-            3,
-            weapon(46, [0, 0, 0, 0], 45, 23),
+    // 46, cooldown 2.25, range 45; land speed 19. Carries two infantry squads who can't fire
+    // from inside (the alpha's `RtsGarrisonComponentData`: capacity 2, no attack from garrison).
+    // The repair turret is not modelled.
+    carrying(
+        ranked(
+            soldier(
+                "EU APC",
+                Faction::Eu,
+                390,
+                Armour::Light,
+                credits(435),
+                centis(1466),
+                19,
+                3,
+                weapon(46, [0, 0, 0, 0], 45, 23),
+            ),
+            54,
+            93,
         ),
-        54,
-        93,
+        2,
     ),
     // src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
     // (anti-air too; there is no air). Gun and speed are placeholders: rapid, strong against
@@ -778,7 +805,39 @@ static DEFS: [Def; 47] = [
         27,
         93,
     ),
+    // ---- Civilian buildings -----------------------------------------------------------------
+    // src: the alpha's civilian buildings (afri_cb_*), by their display name: shanty (hp 300,
+    // room for 1; 600, 2; 800, 3), town house (600, 2; 800, 3; 1200, 4) and urban block (1200
+    // and 1700, 4), all firing out with an 8-unit range bonus. One row per size class, each the
+    // class's middle size. Footprints: the map's buildings (from the original Generals / Zero
+    // Hour maps) take the largest class that fits inside their own footprint; smaller ones
+    // stay scenery.
+    civilian("Shanty", 600, 2, 2),
+    civilian("Town House", 800, 3, 3),
+    civilian("Urban Block", 1200, 4, 5),
 ];
+
+/// A neutral civilian building infantry can garrison: `capacity` places, firing out with the
+/// alpha's 8-unit range bonus.
+const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> Def {
+    Def {
+        name,
+        faction: None,
+        class: Class::Building { power: 0, power_radius: Fx::ZERO, role: BuildingRole::Civilian },
+        hp,
+        armour: Armour::Structure,
+        cost: credits(0),
+        build_ticks: 0,
+        radius: Fx::from_int(radius),
+        produces: NONE,
+        builds: NONE,
+        deploy: None,
+        researches: NO_RESEARCH,
+        experience: 0,
+        veterancy: None,
+        garrison: Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(8) }),
+    }
+}
 
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
 const HARVEST_WORKER: CollectorSpec = CollectorSpec { capacity: 40, load_ticks: secs(2), unload_ticks: secs(1) };
@@ -979,6 +1038,7 @@ pub fn crater_ridge() -> MapDef {
         oil_wells: vec![(v(60, 150), 3000), (v(340, 250), 3000), (v(120, 280), 5000), (v(280, 120), 5000)],
         terrain: Vec::new(),
         decks: Vec::new(),
+        civilians: Vec::new(),
     }
 }
 
@@ -1041,6 +1101,9 @@ mod tests {
             (EU_VALKYRIE, "EU Valkyrie"),
             (APA_MANTIS, "APA Mantis"),
             (GLA_TOXIN_CHOPPER, "GLA Toxin Chopper"),
+            (SHANTY, "Shanty"),
+            (TOWN_HOUSE, "Town House"),
+            (URBAN_BLOCK, "Urban Block"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

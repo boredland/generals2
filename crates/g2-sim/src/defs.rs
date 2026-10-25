@@ -99,6 +99,8 @@ impl Targets {
 /// the target stood on when it fired; the shell lands after its flight time and damages every
 /// ground enemy within `radius` of that spot, so a unit that moved away is missed. `air_range`,
 /// when set, is the range against aircraft (the alpha's rocket squads reach further up).
+/// `garrison_bonus` is extra damage against a building with units inside (the Thunderfist
+/// howitzer's card: "+100 vs. garrisoned buildings").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Weapon {
     pub damage: i32,
@@ -109,6 +111,7 @@ pub struct Weapon {
     pub shell: Option<Shell>,
     pub targets: Targets,
     pub air_range: Option<Fx>,
+    pub garrison_bonus: i32,
 }
 
 impl Weapon {
@@ -143,6 +146,17 @@ pub struct Deploy {
     pub ticks: u32,
 }
 
+/// Room for infantry inside a building or vehicle, after the alpha's `RtsGarrisonComponentData`:
+/// up to `capacity` units (a squad takes one place). With `fires`, they shoot out from its edge
+/// with `range_bonus` added to their weapons' reach; inside they can't be targeted, and die
+/// with it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Garrison {
+    pub capacity: u32,
+    pub fires: bool,
+    pub range_bonus: Fx,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BuildingRole {
     CommandCenter,
@@ -158,6 +172,9 @@ pub enum BuildingRole {
     Factory,
     /// Researches upgrades only (tech labs).
     Lab,
+    /// A neutral building on the map (houses, shops): no production and no power. Infantry may
+    /// garrison it; while they do, it belongs to their player.
+    Civilian,
 }
 
 #[derive(Clone, Debug)]
@@ -182,6 +199,8 @@ pub struct Def {
     pub experience: u32,
     /// Units that earn ranks; `None` for units that never do (and every building).
     pub veterancy: Option<Veterancy>,
+    /// Units may enter it (`Garrison`); `None` for everything else.
+    pub garrison: Option<Garrison>,
 }
 
 /// What a unit gains by rank, after the alpha's `RtsVeterancyComponentData`: three ranks at
@@ -240,6 +259,12 @@ impl Def {
 
     pub fn flies(&self) -> bool {
         matches!(self.class, Class::Unit { flies: true, .. })
+    }
+
+    /// Armed infantry, the only units that enter garrisons (the alpha's `IncludeInfantry`;
+    /// constructors and collectors stay out).
+    pub fn can_garrison(&self) -> bool {
+        self.is_unit() && !self.flies() && self.armour == Armour::Infantry && self.weapon().is_some()
     }
 
     pub fn role(&self) -> Option<BuildingRole> {

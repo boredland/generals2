@@ -694,6 +694,13 @@ fn update_fields(
                             DeployState::Packing(_) => "  -  packing up",
                         };
                     }
+                    if let Some(g) = d.garrison {
+                        let n = world.occupants(e.id).len();
+                        s += &format!("  -  garrison {n}/{}", g.capacity);
+                        if n > 0 && e.owner == Some(sim.local) {
+                            s += " (E: evacuate)";
+                        }
+                    }
                     s
                 })
             }
@@ -910,6 +917,34 @@ fn overlays(
                         row.spawn((Node { width: px(6), height: px(5), ..default() }, BackgroundColor(c)));
                     }
                 });
+        }
+        // Garrison pips over a building or vehicle with units inside: one per place, filled
+        // in its holder's team colour.
+        if let (Some(g), Some(owner)) = (def.garrison, e.owner) {
+            let n = world.occupants(e.id).len();
+            if n > 0 {
+                let team = crate::models::TEAM_PALETTE[sim.teams[owner.0 as usize]];
+                let Some(at) = place(screen, 30.0) else { continue };
+                commands
+                    .spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: px(at.x - 4.0 * g.capacity as f32),
+                            top: px(at.y - 28.0),
+                            column_gap: px(2),
+                            padding: UiRect::all(px(1)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+                        Overlay,
+                    ))
+                    .with_children(|row| {
+                        for i in 0..g.capacity as usize {
+                            let c = if i < n { team } else { Color::srgb(0.18, 0.20, 0.20) };
+                            row.spawn((Node { width: px(6), height: px(6), ..default() }, BackgroundColor(c)));
+                        }
+                    });
+            }
         }
         let selected = sel.0.contains(&e.id);
         let max = world.max_hp(e);

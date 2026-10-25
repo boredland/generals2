@@ -184,6 +184,14 @@ pub(crate) fn keyboard(
             sim.order(CommandKind::Deploy { units: deployable, deployed: !all_set_up });
         }
     }
+    // E: everyone gets out of the selected buildings and vehicles that hold units.
+    if keys.just_pressed(KeyCode::KeyE) {
+        for &id in &sel.0 {
+            if sim.world.entity(id).is_some_and(|e| e.owner == Some(sim.local)) && !sim.world.occupants(id).is_empty() {
+                sim.order(CommandKind::Evacuate { container: id });
+            }
+        }
+    }
     for (i, key) in DIGITS.iter().enumerate() {
         if keys.just_pressed(*key) {
             press_slot(&mut sim, &sel, &mut placing, i);
@@ -390,6 +398,16 @@ fn mouse(
             Some(t) if t.owner == Some(me) && t.construction.is_some() => {
                 [Some(CommandKind::Construct { units, site: t.id }), None]
             }
+            // Infantry get into a building or vehicle with room for them; the rest move there.
+            Some(t) if sim.world.garrison_room(me, t.id).is_some_and(|room| room > 0) => {
+                let (infantry, others): (Vec<_>, Vec<_>) = units
+                    .into_iter()
+                    .partition(|id| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).can_garrison()));
+                [
+                    (!infantry.is_empty()).then_some(CommandKind::Garrison { units: infantry, container: t.id }),
+                    (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+                ]
+            }
             _ if attack_move => {
                 let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
                 [
@@ -411,7 +429,7 @@ fn mouse(
 fn pick(sim: &Sim, at: g2_sim::Vec2, filter: impl Fn(&g2_sim::Entity) -> bool) -> Option<EntityId> {
     sim.world
         .entities()
-        .filter(|e| sim.shows(e) && filter(e))
+        .filter(|e| sim.shows(e) && e.inside.is_none() && filter(e))
         .filter(|e| e.pos.distance(at) <= sim.world.rules.def(e.def).radius + g2_sim::Fx::ONE)
         .min_by_key(|e| sim.world.rules.def(e.def).radius)
         .map(|e| e.id)

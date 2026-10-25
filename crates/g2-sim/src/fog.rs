@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::defs::{DefId, Rules};
+use crate::defs::{BuildingRole, DefId, Rules};
 use crate::entity::{Entities, EntityId, PlayerId};
 use crate::fixed::{Fx, Vec2};
 
@@ -156,7 +156,9 @@ pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquir
         v.memory.retain(|_, s| !cell_index(w, h, s.pos).is_some_and(|i| visible[i]));
         for e in entities.iter() {
             let Some(owner) = e.owner else { continue };
-            if owner.0 as usize == p || e.hp <= 0 || !rules.def(e.def).is_building() {
+            // Bases only: a civilian building changes hands, so its holder isn't remembered.
+            let d = rules.def(e.def);
+            if owner.0 as usize == p || e.hp <= 0 || !d.is_building() || d.role() == Some(BuildingRole::Civilian) {
                 continue;
             }
             if v.is_visible(e.pos) {

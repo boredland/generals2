@@ -249,12 +249,16 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
             Some((scene, scale, offset)) => {
                 // The alpha's models carry no team colour: a thin ring on the ground in the
                 // team's colour keeps the sides apart, as the alpha's selection rings did.
+                // Civilian buildings change hands, so they have none; a garrison's pips show
+                // who holds one.
                 let r = def.radius.to_f32();
-                b.spawn((
-                    Mesh3d(assets.ring.clone()),
-                    MeshMaterial3d(assets.team[team].clone()),
-                    Transform::from_xyz(0.0, 0.08, 0.0).with_scale(Vec3::new(r, 1.0, r)),
-                ));
+                if def.role() != Some(g2_sim::BuildingRole::Civilian) {
+                    b.spawn((
+                        Mesh3d(assets.ring.clone()),
+                        MeshMaterial3d(assets.team[team].clone()),
+                        Transform::from_xyz(0.0, 0.08, 0.0).with_scale(Vec3::new(r, 1.0, r)),
+                    ));
+                }
                 // A squad is three soldiers in the procedural model's wedge.
                 let spots: &[Vec3] = if def.armour == g2_sim::Armour::Infantry {
                     &[Vec3::new(0.0, 0.0, 0.7), Vec3::new(-0.8, 0.0, -0.4), Vec3::new(0.8, 0.0, -0.4)]
@@ -610,6 +614,8 @@ pub fn overlay_anchor(sim: &Sim, e: &g2_sim::Entity) -> Vec3 {
     let def = sim.world.rules.def(e.def);
     let height = match def.class {
         Class::Building { role: BuildingRole::CommandCenter, .. } => 12.0,
+        // Civilian buildings are low: a shanty is 2.5 tall, a town house 6, a block 9.
+        Class::Building { role: BuildingRole::Civilian, .. } => 2.0 + def.radius.to_f32() * 1.5,
         Class::Building { .. } => 8.0,
         Class::Unit { collector: Some(_), .. }
             if e.owner.is_some_and(|o| sim.world.player(o).faction == Faction::Eu) =>

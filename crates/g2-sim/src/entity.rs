@@ -42,6 +42,10 @@ pub enum Order {
         pace: Fx,
         engaged: Option<EntityId>,
     },
+    /// Infantry walking to `container` (a building or vehicle with room) to get in.
+    Garrison {
+        container: EntityId,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -106,6 +110,9 @@ pub struct Entity {
     pub last_hit: Option<u32>,
     /// Experience from kills; sets its rank (`World::rank`).
     pub experience: u32,
+    /// The building or vehicle this unit is inside, if any. Inside it neither moves nor can be
+    /// targeted; its position follows the container's.
+    pub inside: Option<EntityId>,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -256,6 +263,7 @@ mod tests {
             deploy: DeployState::Packed,
             last_hit: None,
             experience: 0,
+            inside: None,
             route: Route::default(),
         }
     }

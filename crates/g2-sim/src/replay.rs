@@ -12,8 +12,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// v2 added `map_fingerprint`, v3 each player's general, v4 the AI level (0 human, 1 + level;
 /// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI), v5 the
 /// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3), v7 the `Research` command
-/// (tag 12). Older replays still decode.
-pub const VERSION: u16 = 7;
+/// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14). Older replays still
+/// decode.
+pub const VERSION: u16 = 8;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -257,6 +258,15 @@ impl Writer {
                 self.id(*producer);
                 self.u16(upgrade.0);
             }
+            CommandKind::Garrison { units, container } => {
+                self.u8(13);
+                self.ids(units);
+                self.id(*container);
+            }
+            CommandKind::Evacuate { container } => {
+                self.u8(14);
+                self.id(*container);
+            }
         }
     }
 }
@@ -321,6 +331,8 @@ impl Reader<'_> {
             10 => CommandKind::Deploy { units: self.ids()?, deployed: self.u8()? != 0 },
             11 => CommandKind::Power { at: self.pos()? },
             12 => CommandKind::Research { producer: self.id()?, upgrade: crate::defs::UpgradeId(self.u16()?) },
+            13 => CommandKind::Garrison { units: self.ids()?, container: self.id()? },
+            14 => CommandKind::Evacuate { container: self.id()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }
