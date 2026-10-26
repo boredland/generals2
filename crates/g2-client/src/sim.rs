@@ -244,12 +244,22 @@ pub fn save_replay_on_exit(mut exits: MessageReader<AppExit>, sim: Res<Sim>, to:
 #[derive(Clone, Copy, Debug)]
 pub enum Shot {
     /// A hit on a target at `at`; `tracer` for direct fire (a shell's hits are its blast).
-    Hit { from: g2_sim::Vec2, at: g2_sim::Vec2, killed: bool, tracer: bool, target: Option<g2_sim::DefId> },
+    /// `look` is the shooter's weapon as drawn, `None` when nothing fired it directly; `air`
+    /// marks a shooter or target in the air.
+    Hit {
+        from: g2_sim::Vec2,
+        at: g2_sim::Vec2,
+        killed: bool,
+        tracer: bool,
+        target: Option<g2_sim::DefId>,
+        look: Option<crate::fx::Look>,
+        air: (bool, bool),
+    },
     /// A shell from `from` to `at`, in the air for `flight` more ticks, `done` of its whole flight
     /// (0 at the muzzle) already behind it.
-    Shell { from: g2_sim::Vec2, at: g2_sim::Vec2, flight: u32, done: f32 },
+    Shell { from: g2_sim::Vec2, at: g2_sim::Vec2, flight: u32, done: f32, look: crate::fx::Look },
     /// A shell landed at `at`; its blast has `radius`.
-    Blast { at: g2_sim::Vec2, radius: g2_sim::Fx },
+    Blast { at: g2_sim::Vec2, radius: g2_sim::Fx, look: crate::fx::Look },
 }
 
 pub struct SimPlugin;
@@ -319,14 +329,32 @@ pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
     let tick = world.tick();
     for e in world.events() {
         match *e {
-            g2_sim::world::Event::Hit { shooter, at, killed, splash, target_def, .. } => {
-                let from = world.entity(shooter).map_or(at, |s| s.pos);
-                hits.0.push(Shot::Hit { from, at, killed, tracer: !splash, target: killed.then_some(target_def) });
+            g2_sim::world::Event::Hit { shooter, target, at, killed, splash, target_def, .. } => {
+                let s = world.entity(shooter);
+                let from = s.map_or(at, |s| s.pos);
+                let look = s.map(|s| crate::fx::Look::of_unit(world, s));
+                let flies = |e: Option<&g2_sim::Entity>| e.is_some_and(|e| world.rules.def(e.def).flies());
+                let target_flies = world.entity(target).map_or(world.rules.def(target_def).flies(), |t| flies(Some(t)));
+                hits.0.push(Shot::Hit {
+                    from,
+                    at,
+                    killed,
+                    tracer: !splash,
+                    target: killed.then_some(target_def),
+                    look,
+                    air: (flies(s), target_flies),
+                })
             }
-            g2_sim::world::Event::Fired { from, at, lands, .. } => {
-                hits.0.push(Shot::Shell { from, at, flight: lands.saturating_sub(tick) + 1, done: 0.0 })
+            g2_sim::world::Event::Fired { from, at, lands, source, .. } => hits.0.push(Shot::Shell {
+                from,
+                at,
+                flight: lands.saturating_sub(tick) + 1,
+                done: 0.0,
+                look: crate::fx::Look::of_shell(world, source),
+            }),
+            g2_sim::world::Event::Landed { at, radius, source } => {
+                hits.0.push(Shot::Blast { at, radius, look: crate::fx::Look::of_shell(world, source) })
             }
-            g2_sim::world::Event::Landed { at, radius } => hits.0.push(Shot::Blast { at, radius }),
             _ => {}
         }
     }

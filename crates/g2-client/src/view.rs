@@ -38,18 +38,6 @@ struct StealthHalo;
 #[derive(Component)]
 struct Rotor;
 
-/// A short-lived combat effect: a tracer from shooter to target, the flash of a kill or a
-/// blast, or a shell in the air.
-#[derive(Component)]
-struct Effect {
-    age: f32,
-    life: f32,
-    /// Grows from 1 to this many times its spawn scale over its life (kill flashes).
-    grow: f32,
-    /// A shell: it flies from `.0` to `.1` on an arc this high at its peak, over `life`.
-    arc: Option<(Vec3, Vec3, f32)>,
-}
-
 /// What a kill leaves behind: it sits on the ground for `life` seconds, then sinks out of sight
 /// over the last `SINK_SECS` and goes.
 #[derive(Component)]
@@ -64,9 +52,6 @@ const SINK_SECS: f32 = 6.0;
 /// Unit and building wrecks stay this long.
 const UNIT_WRECK_SECS: f32 = 25.0;
 const BUILDING_WRECK_SECS: f32 = 70.0;
-
-/// Seconds a tracer stays visible; kill flashes last three times as long.
-const TRACER_SECS: f32 = 0.12;
 
 /// Present in screenshot mode: effects keep their spawn state so the captured frame shows them.
 #[derive(Resource)]
@@ -84,11 +69,7 @@ struct Assets3d {
     materials: BTreeMap<(Option<Faction>, SlotKey), Handle<StandardMaterial>>,
     /// `Slot::Team` per `models::TEAM_PALETTE` entry.
     team: Vec<Handle<StandardMaterial>>,
-    /// Unlit, additive-looking muzzle/tracer and explosion colours.
-    tracer: Handle<StandardMaterial>,
-    blast: Handle<StandardMaterial>,
-    /// Charred ground and rubble left where something died.
-    scorch: Handle<StandardMaterial>,
+    /// Rubble left where something died (its scorch mark is `fx::Palette::scorch`).
     rubble: Handle<StandardMaterial>,
     /// A toxin cloud's low green haze.
     toxin: Handle<StandardMaterial>,
@@ -131,8 +112,10 @@ impl Plugin for ViewPlugin {
                 sync_entities,
                 interpolate,
                 spin_rotors,
+                crate::fx::setup.run_if(crate::menu::scene_start),
                 spawn_effects,
-                age_effects,
+                crate::fx::age,
+                crate::fx::face_camera,
                 age_wrecks,
                 sync_clouds,
             )
@@ -179,26 +162,12 @@ fn setup_scene(
         }
     }
     let team = models::TEAM_PALETTE.iter().map(|&c| materials.add(material(c, Slot::Team))).collect();
-    let glow = |c: Color, k: f32| StandardMaterial {
-        base_color: c,
-        emissive: c.to_linear() * k,
-        unlit: true,
-        alpha_mode: AlphaMode::Add,
-        ..default()
-    };
     commands.insert_resource(Assets3d {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0)),
         sphere: meshes.add(Sphere::new(0.5).mesh().ico(2).unwrap()),
         materials: table,
         team,
-        tracer: materials.add(glow(Color::srgb(1.0, 0.85, 0.45), 4.0)),
-        blast: materials.add(glow(Color::srgb(1.0, 0.5, 0.15), 3.0)),
-        scorch: materials.add(StandardMaterial {
-            base_color: Color::srgb(0.045, 0.04, 0.035),
-            perceptual_roughness: 1.0,
-            ..default()
-        }),
         rubble: materials.add(StandardMaterial {
             base_color: Color::srgb(0.16, 0.14, 0.12),
             perceptual_roughness: 0.95,
@@ -452,9 +421,11 @@ fn interpolate(sim: Res<Sim>, prev: Res<Previous>, fixed: Res<Time<Fixed>>, mut 
 }
 
 /// How high an aircraft flies above the ground: the alpha helicopters' `AirCeiling` (16.5).
-/// Ground units: 0.
+pub const FLIGHT_HEIGHT: f32 = 16.5;
+
+/// How high `def` flies above the ground: `FLIGHT_HEIGHT` for aircraft, 0 for ground units.
 pub fn flight_height(def: &g2_sim::Def) -> f32 {
-    if def.flies() { 16.5 } else { 0.0 }
+    if def.flies() { FLIGHT_HEIGHT } else { 0.0 }
 }
 
 fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
@@ -463,113 +434,31 @@ fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
     }
 }
 
-/// A tracer for every direct hit (a thin glowing bar from muzzle height at the shooter to the
-/// target), an expanding fireball where a hit destroyed its target, a shell flying on an arc
-/// for its flight time, and a blast the size of its radius where it lands. Under fog, only
-/// what has an end the local player sees.
-fn spawn_effects(mut commands: Commands, assets: Res<Assets3d>, sim: Res<Sim>, mut hits: ResMut<crate::sim::Hits>) {
-    use crate::sim::Shot;
-    let vision = sim.world.vision(sim.local);
-    let seen = |p: g2_sim::Vec2| !sim.fog || vision.is_visible(p);
-    let tick_secs = 1.0 / g2_sim::TICKS_PER_SECOND as f32;
-    for shot in hits.0.drain(..) {
-        match shot {
-            Shot::Hit { from, at, killed, tracer, target } => {
-                if !seen(from) && !seen(at) {
-                    continue;
-                }
-                if let (true, Some(def)) = (killed && seen(at), target) {
-                    spawn_wreck(&mut commands, &assets, &sim, at, def);
-                }
-                let (a, b) = (sim.to_world(from) + Vec3::Y * 1.5, sim.to_world(at) + Vec3::Y * 1.5);
-                let len = a.distance(b);
-                // A building dies in a bigger fireball than a unit.
-                let blast_scale = target.map_or(2.5, |d| 2.0 + sim.world.rules.def(d).radius.to_f32() * 0.45);
-                if tracer && len > 0.1 {
-                    commands.spawn((
-                        crate::menu::MatchEntity,
-                        Mesh3d(assets.cube.clone()),
-                        MeshMaterial3d(assets.tracer.clone()),
-                        Transform::from_translation((a + b) / 2.0)
-                            .looking_at(b, Vec3::Y)
-                            .with_scale(Vec3::new(0.25, 0.25, len)),
-                        Effect { age: 0.0, life: TRACER_SECS, grow: 1.0, arc: None },
-                    ));
-                }
-                if killed {
-                    commands.spawn((
-                        crate::menu::MatchEntity,
-                        Mesh3d(assets.sphere.clone()),
-                        MeshMaterial3d(assets.blast.clone()),
-                        Transform::from_translation(b).with_scale(Vec3::splat(blast_scale)),
-                        Effect { age: 0.0, life: TRACER_SECS * 3.0, grow: 3.0, arc: None },
-                    ));
-                }
-            }
-            Shot::Shell { from, at, flight, done } => {
-                if !seen(from) && !seen(at) {
-                    continue;
-                }
-                let (a, b) = (sim.to_world(from) + Vec3::Y * 2.5, sim.to_world(at) + Vec3::Y * 0.5);
-                let peak = (a.distance(b) * 0.35).max(4.0);
-                // A shell already partway along (a screenshot of one fired earlier) starts there.
-                let whole = flight as f32 * tick_secs / (1.0 - done).max(0.05);
-                let age = whole * done;
-                let start = a.lerp(b, done) + Vec3::Y * peak * 4.0 * done * (1.0 - done);
-                commands.spawn((
-                    crate::menu::MatchEntity,
-                    Mesh3d(assets.sphere.clone()),
-                    MeshMaterial3d(assets.tracer.clone()),
-                    Transform::from_translation(start).with_scale(Vec3::splat(0.9)),
-                    Effect { age, life: whole, grow: 1.0, arc: Some((a, b, peak)) },
-                ));
-            }
-            Shot::Blast { at, radius } => {
-                if !seen(at) {
-                    continue;
-                }
-                let r = radius.to_f32();
-                commands.spawn((
-                    crate::menu::MatchEntity,
-                    Mesh3d(assets.sphere.clone()),
-                    MeshMaterial3d(assets.blast.clone()),
-                    Transform::from_translation(sim.to_world(at) + Vec3::Y * 0.5).with_scale(Vec3::new(r, r * 0.5, r)),
-                    Effect { age: 0.0, life: TRACER_SECS * 4.0, grow: 1.4, arc: None },
-                ));
-            }
-        }
-    }
-}
-
-fn age_effects(
+/// Combat effects (`fx.rs`) for every shot since the last frame, and the wreck of every kill.
+fn spawn_effects(
     mut commands: Commands,
-    time: Res<Time>,
-    frozen: Option<Res<FreezeEffects>>,
-    mut q: Query<(Entity, &mut Effect, &mut Transform)>,
+    assets: Res<Assets3d>,
+    palette: Option<Res<crate::fx::Palette>>,
+    sim: Res<Sim>,
+    mut hits: ResMut<crate::sim::Hits>,
 ) {
-    if frozen.is_some() {
-        return;
-    }
-    for (id, mut fx, mut tf) in &mut q {
-        let before = 1.0 + (fx.grow - 1.0) * (fx.age / fx.life);
-        fx.age += time.delta_secs();
-        if fx.age >= fx.life {
-            commands.entity(id).despawn();
-            continue;
-        }
-        let t = fx.age / fx.life;
-        if let Some((a, b, peak)) = fx.arc {
-            tf.translation = a.lerp(b, t) + Vec3::Y * peak * 4.0 * t * (1.0 - t);
-        }
-        let now = 1.0 + (fx.grow - 1.0) * t;
-        tf.scale *= now / before;
+    let Some(palette) = palette else { return };
+    for (at, def) in crate::fx::spawn_shots(&mut commands, &palette, &sim, hits.0.drain(..)) {
+        spawn_wreck(&mut commands, &assets, &palette, &sim, at, def);
     }
 }
 
 /// Leaves a scorch mark and a few tumbled slabs where a unit or building died. Wrecks are
 /// decoration only: they are not sim entities, never block anything and are not hashed. Their
 /// shapes come from the spot, so a replay or a second viewer draws the same ones.
-fn spawn_wreck(commands: &mut Commands, assets: &Assets3d, sim: &Sim, at: g2_sim::Vec2, def: g2_sim::DefId) {
+fn spawn_wreck(
+    commands: &mut Commands,
+    assets: &Assets3d,
+    palette: &crate::fx::Palette,
+    sim: &Sim,
+    at: g2_sim::Vec2,
+    def: g2_sim::DefId,
+) {
     let d = sim.world.rules.def(def);
     let building = d.is_building();
     let r = d.radius.to_f32().max(1.5);
@@ -585,12 +474,15 @@ fn spawn_wreck(commands: &mut Commands, assets: &Assets3d, sim: &Sim, at: g2_sim
         (h & 0xffff) as f32 / 65_535.0
     };
     let wreck = |age_life: f32, depth: f32| Wreck { age: 0.0, life: age_life, depth, ground };
-    // The scorch: a flat dark disc just above the ground, wider than what died.
+    // The scorch: a soft charred patch on the ground, wider than what died, at its own angle.
     commands.spawn((
         crate::menu::MatchEntity,
-        Mesh3d(assets.cylinder.clone()),
-        MeshMaterial3d(assets.scorch.clone()),
-        Transform::from_translation(origin + Vec3::Y * 0.06).with_scale(Vec3::new(r * 2.3, 0.05, r * 2.3)),
+        Mesh3d(palette.decal.clone()),
+        MeshMaterial3d(palette.scorch.clone()),
+        Transform::from_translation(origin + Vec3::Y * 0.08)
+            .with_rotation(Quat::from_rotation_y(rnd(97) * std::f32::consts::TAU))
+            .with_scale(Vec3::new(r * 3.4, 1.0, r * 3.4)),
+        bevy::light::NotShadowCaster,
         wreck(life, 0.3),
     ));
     let slabs = if building { 5 } else { 2 };
@@ -730,6 +622,7 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<Image>()
             .insert_resource(sim)
             .init_resource::<Previous>()
             .init_resource::<crate::sim::Hits>()
@@ -784,30 +677,28 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<Image>()
             .insert_resource(sim)
             .init_resource::<Previous>()
             .init_resource::<crate::sim::Hits>()
             .add_plugins(ViewPlugin);
         app.update();
         let wrecks = |app: &mut App| app.world_mut().query::<&Wreck>().iter(app.world()).count();
-        app.world_mut().resource_mut::<crate::sim::Hits>().0.push(crate::sim::Shot::Hit {
+        let hit = |killed| crate::sim::Shot::Hit {
             from: at,
             at,
-            killed: true,
+            killed,
             tracer: false,
-            target: Some(def),
-        });
+            target: killed.then_some(def),
+            look: None,
+            air: (false, false),
+        };
+        app.world_mut().resource_mut::<crate::sim::Hits>().0.push(hit(true));
         app.update();
         let n = wrecks(&mut app);
         assert!(n >= 3, "a scorch and rubble: {n}");
         // Not a kill: nothing is left behind.
-        app.world_mut().resource_mut::<crate::sim::Hits>().0.push(crate::sim::Shot::Hit {
-            from: at,
-            at,
-            killed: false,
-            tracer: false,
-            target: None,
-        });
+        app.world_mut().resource_mut::<crate::sim::Hits>().0.push(hit(false));
         app.update();
         assert_eq!(wrecks(&mut app), n, "a plain hit leaves no wreck");
         // Time passes: the wreck sinks before it goes.
@@ -842,27 +733,29 @@ mod tests {
         app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Mesh>()
             .init_asset::<StandardMaterial>()
+            .init_asset::<Image>()
             .insert_resource(sim)
             .init_resource::<Previous>()
             .init_resource::<crate::sim::Hits>()
             .insert_resource(FreezeEffects)
             .add_plugins(ViewPlugin);
         let (from, at) = (Vec2::from_int(100, 100), Vec2::from_int(160, 100));
+        let look = crate::fx::Look::Shell { toxic: false, napalm: false };
         for done in [0.0, 0.5] {
             app.world_mut().resource_mut::<crate::sim::Hits>().0.push(crate::sim::Shot::Shell {
                 from,
                 at,
                 flight: 20,
                 done,
+                look,
             });
         }
         app.update();
         let mut shells: Vec<(f32, f32, f32)> = app
             .world_mut()
-            .query::<(&Effect, &Transform)>()
+            .query::<(&crate::fx::Flight, &Transform)>()
             .iter(app.world())
-            .filter(|(e, _)| e.arc.is_some())
-            .map(|(e, tf)| (tf.translation.x, e.age, e.life))
+            .map(|(f, tf)| (tf.translation.x, f.age, f.life))
             .collect();
         shells.sort_by(|a, b| a.0.total_cmp(&b.0));
         let [(x0, age0, life0), (x1, age1, life1)] = shells[..] else { panic!("two shells: {shells:?}") };

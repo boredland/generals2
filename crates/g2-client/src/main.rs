@@ -30,6 +30,7 @@ mod alpha;
 mod alpha_hud;
 mod audio;
 mod camera;
+mod fx;
 mod hud;
 mod input;
 mod look;
@@ -397,8 +398,8 @@ mod headless {
     /// What to capture: the sim's state after `ticks`, seen through `view`, at `size`, saved
     /// to `path`; optionally with one entity selected or the intro movie on screen. With
     /// `frames`, it is a clip instead: that many frames, one sim tick each (30 per second of
-    /// play), saved to `path` with its `{}` replaced by the frame number, the camera easing
-    /// toward the fighting.
+    /// play), saved to `path` with its `{}` replaced by the frame number; with `View::Battle`,
+    /// the camera easing toward the fighting.
     pub struct Capture {
         pub ticks: u32,
         pub path: String,
@@ -440,7 +441,8 @@ mod headless {
             let whole = (s.lands - s.fired).max(1);
             let left = s.lands.saturating_sub(now) + 1;
             let done = (now - s.fired) as f32 / whole as f32;
-            hits.0.push(crate::sim::Shot::Shell { from: s.from, at: s.at, flight: left, done: done.min(0.95) });
+            let look = crate::fx::Look::of_shell(&sim.world, s.source);
+            hits.0.push(crate::sim::Shot::Shell { from: s.from, at: s.at, flight: left, done: done.min(0.95), look });
         }
         // Midpoint of the last few ticks' shots (shooter to target), for `View::Battle`, so both
         // sides of the fight are in frame.
@@ -598,7 +600,7 @@ mod headless {
             wait(&mut apps);
         }
         if let Some(n) = frames {
-            return clip(apps, &target, &path, n, fight.is_some());
+            return clip(apps, &target, &path, n, matches!(view, View::Battle));
         }
         apps.main
             .world_mut()

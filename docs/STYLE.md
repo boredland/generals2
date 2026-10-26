@@ -51,6 +51,17 @@ Requirements: every element shows live sim data, nothing is decorative, there ar
 - **World overlays**: `COLLECTORS n/cap` over own supply centers (red at the faction cap), and health bars over the selection and damaged entities.
 - Not shown until the systems exist: generals and perks, abilities, experience.
 
+## Combat effects (`fx.rs`)
+
+Requirements: you can tell what fired from what you see, a kill reads bigger than a hit, and effects never touch the sim (wrecks and particles are not hashed; the shapes come from the spot and tick, so a replay draws the same ones). Each shot's look comes from the firing unit's weapon: machine guns, cannons, rockets, flamethrowers, toxin sprayers, lasers and railguns, artillery shells, and power strikes (bombs, barrages and missiles).
+
+- Soft billboarded puffs on one procedural sprite: additive fire, flame, spark, toxin and plasma tracks that fade by darkening, and blended smoke, dust and toxin-haze tracks in mid tones picked against the graded ground. Every track's materials are made once and shared, so a particle is two handle clones.
+- **Direct fire**: machine guns flash and send a burst of glowing dashes down the line (three for heavy guns, two for light); cannons flash, puff barrel smoke and send a hot slug; a rocket flies with a smoke trail; a flamethrower sends an orange stream widening toward the target; a toxin sprayer a green spray; a laser a beam with a hot core and a faint sheath, the railgun's blue-white with a vapour trail. Each ends in sparks, a puff and dust.
+- **Shells and strikes**: a shell flies its arc with a thin smoke trail; a power's bombs and barrage shells drop steeply from high above each spot; missiles climb high and come down. The landing blast is a white flash, a fireball, a dust ring, smoke that rises and spreads, debris that settles on the ground and a point light. Toxin blasts are green with a haze, a nuke's blue-white, and napalm leaves fire burning on the ground.
+- **Kills**: a fireball sized by what died (a building's also sends up a tall, slow smoke plume), then a soft scorch decal and rubble that sink away.
+- No bloom: the game camera's colour pipeline stays as it is (AgX without HDR), so hot effects glow by additive colour, not post-processing.
+- Cost: a 200-frame clip of an Inferno Artillery strike (up to 228 particles alive at once) renders at a median 19.7 ms a frame at 1280×720 on the build host's integrated GPU, no slower in its busiest tenth than in its quietest frames.
+
 ## Budget
 
 The headless screenshot mode prints the mesh count and the average time of 30 rendered frames, each waited out on the GPU. That is serialized render time, not a windowed frame rate (no vsync or pipelining), and it is noisy: two identical 1080p runs of the densest original map (`zh:Red Rock`, about 35,000 meshes, mostly scenery) gave 9.2 and 13.3 ms on the build host's integrated GPU. The look pass roughly doubled the mesh count (2,800-3,000 to 5,500-7,700 on typical maps). Frame rate in a real window has not been measured.
@@ -59,7 +70,7 @@ The headless screenshot mode prints the mesh count and the average time of 30 re
 
 Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6XKby6Qz5oI]`. Matched now: ground colour (within about 10%), centre brightness (117-125 against 125-142 sRGB luminance), contact shadows, tree silhouettes. Still open, largest first:
 
-- No effects: smoke from stacks, dust under vehicles, muzzle flash, explosion debris (`view.rs`).
+- Few ambient effects: no smoke from stacks or dust under vehicles (`view.rs`).
 - No animation: rotors, treads, walking infantry, pumpjacks (`view.rs`, `models.rs`).
 - Building walls read flat: the footage's painted panel texture and wear can't come from primitives alone; a procedural panel/grime texture per slot would (`view.rs` materials).
 - EU roofs are nearly one tone; the footage has more orange trim and darker roof plates (`models.rs`).

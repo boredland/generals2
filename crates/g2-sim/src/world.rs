@@ -100,11 +100,13 @@ pub enum Event {
         from: Vec2,
         at: Vec2,
         lands: u32,
+        source: ShellSource,
     },
     /// A shell landed at `at` with blast `radius`; each unit it damaged is a `Hit`. Output only.
     Landed {
         at: Vec2,
         radius: Fx,
+        source: ShellSource,
     },
     /// `player`'s production finished a `def` unit at `at`. Output only.
     Produced {
@@ -146,7 +148,17 @@ pub enum Event {
     },
 }
 
-/// An artillery shell in flight. Part of the state hash.
+/// What sent a shell, for drawing it: the weapon of a unit def (which outlives the shooter,
+/// gone or packed up by the time it lands) or a player's power. Output only: not hashed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShellSource {
+    /// A unit of this def, deployed (its `deploy` weapon) or not.
+    Gun { def: DefId, deployed: bool },
+    /// `player`'s power in `slot`.
+    Power { player: PlayerId, slot: u8 },
+}
+
+/// An artillery shell in flight. Part of the state hash, except `source`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ShellInFlight {
     pub shooter: EntityId,
@@ -161,6 +173,7 @@ pub struct ShellInFlight {
     pub radius: Fx,
     /// Extra damage against a building with units inside when the shell lands.
     pub garrison_bonus: i32,
+    pub source: ShellSource,
 }
 
 /// A lingering toxin cloud from a missile power. Part of the state hash.
@@ -1763,6 +1776,7 @@ impl World {
             Some(s) => {
                 let flight = (pos.distance(tpos) / s.speed).floor_int().max(1) as u32;
                 let lands = self.tick + flight;
+                let source = ShellSource::Gun { def: self.entities.get(id).unwrap().def, deployed };
                 self.shells.push(ShellInFlight {
                     shooter: id,
                     owner,
@@ -1774,8 +1788,9 @@ impl World {
                     bonus: w.bonus,
                     radius: s.radius,
                     garrison_bonus: w.garrison_bonus,
+                    source,
                 });
-                self.events.push(Event::Fired { shooter: id, from: pos, at: tpos, lands });
+                self.events.push(Event::Fired { shooter: id, from: pos, at: tpos, lands, source });
             }
         }
         pos
@@ -1788,13 +1803,14 @@ impl World {
         let tick = self.tick;
         // A power's missiles leave their silo on a later tick than the order: shown on launch.
         for s in self.shells.iter().filter(|s| s.fired == tick && s.shooter == POWER_SOURCE && s.from != s.at) {
-            self.events.push(Event::Fired { shooter: POWER_SOURCE, from: s.from, at: s.at, lands: s.lands });
+            let (from, at, lands, source) = (s.from, s.at, s.lands, s.source);
+            self.events.push(Event::Fired { shooter: POWER_SOURCE, from, at, lands, source });
         }
         let (due, flying): (Vec<_>, Vec<_>) =
             core::mem::take(&mut self.shells).into_iter().partition(|s| s.lands <= tick);
         self.shells = flying;
         for s in due {
-            self.events.push(Event::Landed { at: s.at, radius: s.radius });
+            self.events.push(Event::Landed { at: s.at, radius: s.radius, source: s.source });
             for e in self.entities.iter() {
                 // Units inside something take nothing: the building or vehicle shields them.
                 if !e.owner.is_some_and(|o| o != s.owner) || e.hp <= 0 || e.inside.is_some() {
@@ -1871,6 +1887,7 @@ impl World {
                         bonus,
                         radius,
                         garrison_bonus: 0,
+                        source: ShellSource::Power { player, slot },
                     });
                 }
             }
@@ -1952,6 +1969,7 @@ impl World {
                         bonus: [0; 4],
                         radius,
                         garrison_bonus: 0,
+                        source: ShellSource::Power { player, slot },
                     });
                 }
                 if cloud_ticks > 0 {
@@ -2035,6 +2053,7 @@ impl World {
                             bonus,
                             radius,
                             garrison_bonus: 0,
+                            source: ShellSource::Power { player: owner, slot },
                         });
                     }
                 }

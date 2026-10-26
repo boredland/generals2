@@ -2,7 +2,7 @@
 //! warm afternoon sun with crisp shadows to the lower right, warm ambient, warm grade, distance
 //! haze and a heavy vignette.
 
-use bevy::camera::{Exposure, PerspectiveProjection};
+use bevy::camera::{Exposure, PerspectiveProjection, ShadowLodOrigin};
 use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::effect_stack::Vignette;
@@ -46,6 +46,9 @@ pub fn camera_bundle() -> impl Bundle {
         bevy::pbr::ScreenSpaceAmbientOcclusion { radius: 2.0, constant_object_thickness: 1.0, ..default() },
         Msaa::Off,
         bevy::anti_alias::fxaa::Fxaa::default(),
+        // Effect flares are point lights; headless renders go to an image, not a window, so
+        // Bevy can't pick this camera for their shadow LOD by itself.
+        ShadowLodOrigin,
     )
 }
 
