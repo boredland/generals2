@@ -5,8 +5,8 @@
 //! higher tier, the lower one bought; a bought perk is kept for good. The alpha also charged
 //! CP to slot a perk; we have no second currency, so slotting is free.
 //!
-//! Saved as plain text at `$G2_PROFILE`, else `$XDG_DATA_HOME/generals2/profile`, else
-//! `~/.local/share/generals2/profile`. One line per general:
+//! Saved as plain text at `$G2_PROFILE`, else `profile` in the game's data folder
+//! (`g2_frostbite::import::data_dir`: `~/.local/share/generals2` on Linux). One line per general:
 //! `general <name> xp <n> rank <n> bought <id,..> slotted <id,..>`, perks by id.
 
 use std::collections::BTreeMap;
@@ -71,10 +71,7 @@ impl Profile {
         if let Some(p) = std::env::var_os("G2_PROFILE") {
             return Some(PathBuf::from(p));
         }
-        let data = std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-        Some(data.join("generals2/profile"))
+        Some(g2_frostbite::import::data_dir()?.join("profile"))
     }
 
     /// Reads the profile at `path`; a missing file is an empty profile. Lines that don't parse,

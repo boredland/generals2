@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # A dry run: builds every package and keeps them as workflow artifacts, publishes nothing.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -12,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      # The AppImage bundles the original maps from vendor/ea/CnC_Modding_Support.
+      # The packages bundle the original maps from vendor/ea/CnC_Modding_Support.
       - uses: actions/checkout@v5
 
       - name: Fetch map sources
@@ -28,14 +30,98 @@ jobs:
       - name: Build AppImage
         run: scripts/build-appimage.sh
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/Generals2-x86_64.AppImage
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch map sources
+        run: git submodule update --init --depth 1 vendor/ea/CnC_Modding_Support
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build zip
+        run: scripts/build-windows-zip.sh
+
+      # The release build has no console, so a headless frame is the check that it runs:
+      # rendered on WARP, Windows' software Direct3D 12, from the unpacked zip.
+      - name: Smoke test
+        run: |
+          mkdir smoke && cd smoke && 7z x ../dist/Generals2-windows-x86_64.zip >/dev/null
+          WGPU_BACKEND=dx12 WGPU_FORCE_FALLBACK_ADAPTER=1 "./Open RTS/g2-client.exe" \
+            --map "zh:Tournament Desert" --spectate --ticks 300 --size 640x360 --screenshot shot.png
+          ls -la shot.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/Generals2-windows-x86_64.zip
+            smoke/shot.png
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch map sources
+        run: git submodule update --init --depth 1 vendor/ea/CnC_Modding_Support
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build app and disk image
+        run: scripts/build-macos-app.sh
+
+      # A headless frame from the packaged app, on the runner's Metal device.
+      - name: Smoke test
+        run: |
+          "target/macos/Open RTS.app/Contents/MacOS/g2-client" \
+            --map "zh:Tournament Desert" --spectate --ticks 300 --size 640x360 --screenshot shot.png
+          ls -la shot.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: |
+            dist/Generals2-macOS.dmg
+            shot.png
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [appimage, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
       - name: Checksums
         working-directory: dist
-        run: sha256sum Generals2-x86_64.AppImage > SHA256SUMS
+        run: sha256sum Generals2-x86_64.AppImage Generals2-windows-x86_64.zip Generals2-macOS.dmg > SHA256SUMS
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/Generals2-x86_64.AppImage
+            dist/Generals2-windows-x86_64.zip
+            dist/Generals2-macOS.dmg
             dist/SHA256SUMS
           generate_release_notes: true

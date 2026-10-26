@@ -299,7 +299,7 @@ fn alpha(args: &[String]) -> Result<(), String> {
     }
     let out = match args.get(2) {
         Some(p) => std::path::PathBuf::from(p),
-        None => import::default_cache().ok_or("no cache folder: set G2_ALPHA_CACHE or HOME")?,
+        None => import::default_cache().ok_or("no data folder for the cache: set G2_ALPHA_CACHE")?,
     };
     let t0 = Instant::now();
     let report = import::import(&a, &out, import::Parts::default(), &mut |part| {

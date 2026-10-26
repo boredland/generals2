@@ -841,17 +841,18 @@ pub struct Entry {
     pub path: std::path::PathBuf,
 }
 
-/// Root of the map sources: `$G2_MAPS_DIR` if set (a `CnC_Modding_Support` checkout), else
-/// `../share/generals2/maps` next to the running binary when present (an installed copy such
-/// as the AppImage), else the vendored submodule of this workspace.
+/// Root of the map sources: `$G2_MAPS_DIR` if set (a `CnC_Modding_Support` checkout), else the
+/// maps an installed copy carries beside the running binary (`../share/generals2/maps` in the
+/// AppImage, `maps` next to the Windows exe, `../Resources/maps` in the macOS app), else the
+/// vendored submodule of this workspace.
 pub fn vendored_root() -> std::path::PathBuf {
     if let Some(dir) = std::env::var_os("G2_MAPS_DIR") {
         return dir.into();
     }
-    let installed = std::env::current_exe()
-        .ok()
-        .and_then(|exe| Some(exe.parent()?.parent()?.join("share/generals2/maps")))
-        .filter(|dir| dir.is_dir());
+    let installed = std::env::current_exe().ok().and_then(|exe| {
+        let bin = exe.parent()?;
+        ["../share/generals2/maps", "maps", "../Resources/maps"].iter().map(|rel| bin.join(rel)).find(|d| d.is_dir())
+    });
     installed
         .unwrap_or_else(|| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../vendor/ea/CnC_Modding_Support"))
 }

@@ -52,3 +52,28 @@ jobs:
       # dev profile opt-level; the suite is measured in seconds when built optimised.
       - name: Test
         run: cargo test --workspace --release
+
+  # The same build and tests on Windows and macOS (Apple silicon). Lints and formatting
+  # are platform-independent and run on Linux only.
+  other-os:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      # Checked out byte for byte: the golden replay and map data must not gain CRLFs.
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v5
+
+      - name: Fetch map sources
+        run: git submodule update --init --depth 1 vendor/ea/CnC_Modding_Support
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --workspace --release

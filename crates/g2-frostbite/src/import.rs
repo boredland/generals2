@@ -381,16 +381,28 @@ fn crc32(bytes: &[u8]) -> u32 {
     !c
 }
 
-/// Where the client looks for the cache: `$G2_ALPHA_CACHE`, else
-/// `$XDG_DATA_HOME/generals2/alpha`, else `~/.local/share/generals2/alpha`.
+/// Where the client looks for the cache: `$G2_ALPHA_CACHE`, else `alpha` in [`data_dir`].
 pub fn default_cache() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("G2_ALPHA_CACHE") {
         return Some(PathBuf::from(p));
     }
-    let data = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))?;
-    Some(data.join("generals2/alpha"))
+    Some(data_dir()?.join("alpha"))
+}
+
+/// This game's folder for what it keeps on the player's machine (the alpha cache, the
+/// profile), where each OS keeps such data: `%APPDATA%\generals2` on Windows,
+/// `~/Library/Application Support/generals2` on macOS, else `$XDG_DATA_HOME/generals2` or
+/// `~/.local/share/generals2`.
+pub fn data_dir() -> Option<PathBuf> {
+    let home = || std::env::var_os("HOME").map(PathBuf::from);
+    let base = if cfg!(windows) {
+        std::env::var_os("APPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        home().map(|h| h.join("Library/Application Support"))
+    } else {
+        std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| home().map(|h| h.join(".local/share")))
+    };
+    Some(base?.join("generals2"))
 }
 
 #[cfg(test)]

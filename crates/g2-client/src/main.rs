@@ -22,9 +22,13 @@
 //! joiner as player 1 with `--enemy`/`--enemy-general`, on the host's map and seed. Both run
 //! the same build. The game runs at one shared speed: no pause and no fast-forward.
 //!
-//! With an imported 2013 alpha (`g2-tools alpha DIR import`, found in `$G2_ALPHA_CACHE` or
-//! `~/.local/share/generals2/alpha`), the client draws its models and plays its sounds,
-//! voices and menu music (`alpha.rs`); the match itself is the same either way.
+//! With an imported 2013 alpha (`g2-tools alpha DIR import`, found in `$G2_ALPHA_CACHE` or the
+//! game's data folder: `~/.local/share/generals2/alpha` on Linux), the client draws its models
+//! and plays its sounds, voices and menu music (`alpha.rs`); the match itself is the same either way.
+
+// A release build on Windows is a window, not a console program, so starting it from Explorer
+// opens no console beside the game; its messages (headless runs included) are then not shown.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod alpha;
 mod alpha_hud;

@@ -45,18 +45,7 @@ strip "$APPDIR/usr/bin/g2-client"
 cp README.md "$APPDIR/usr/share/generals2/"
 
 if [ "$MAPS" = 1 ]; then
-    SRC=vendor/ea/CnC_Modding_Support
-    [ -d "$SRC/Zero Hour/Maps/official" ] || { echo "map sources missing: git submodule update --init $SRC" >&2; exit 1; }
-    DST="$APPDIR/usr/share/generals2/maps"
-    # Only the .map files the client reads, in the layout g2_maps::catalogue expects.
-    for game in Generals "Zero Hour"; do
-        (cd "$SRC/$game/Maps/official" && find . -name '*.map' -print0) | while IFS= read -r -d '' f; do
-            mkdir -p "$DST/$game/Maps/official/$(dirname "$f")"
-            cp "$SRC/$game/Maps/official/$f" "$DST/$game/Maps/official/$f"
-        done
-    done
-    # EA's GPL-3.0 release with its section 7 additional terms must travel with the data.
-    cp "$SRC/LICENSE.md" "$DST/LICENSE-EA.md"
+    scripts/copy-maps.sh "$APPDIR/usr/share/generals2/maps"
 fi
 
 cat > "$APPDIR/AppRun" <<'EOF'
