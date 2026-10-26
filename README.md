@@ -6,7 +6,7 @@ Open-source recreation of the cancelled *Command & Conquer: Generals 2*, as a ne
 
 The engine needs no game files. EA's GPL release of *Generals/Zero Hour* in `vendor/` is reference for the engine: no code from it is ported or copied into `crates/`. The one runtime use of `vendor/` is map data: the original Generals and Zero Hour **maps** can be played, read at runtime from EA's GPL map sources (`vendor/ea/CnC_Modding_Support`, a git submodule) and never copied into this repository. All art is original and procedural: meshes built from primitives, generated terrain and textures, our own HUD design. The archived 2013 footage sets the target mood (warm hard light, steep camera, savanna ground); `docs/STYLE.md` describes it as requirements, not as elements to copy.
 
-## Status: milestone 8, skirmish, the alpha's menus, systems, generals and abilities
+## Status: milestone 9, skirmish on Linux, Windows and macOS, Generals' menus, the alpha's systems, generals and abilities
 
 What works:
 
