@@ -29,6 +29,7 @@ fn main() -> ExitCode {
         Some("record") => record_cmd(&args[1..]),
         Some("bench") => bench(&args[1..]),
         Some("survey") => survey(&args[1..]),
+        Some("generals") => generals(&args[1..]),
         Some("summary") => summary(&args[1..]),
         Some("artillery") => artillery(&args[1..]),
         Some("maps") => maps(),
@@ -44,7 +45,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] [--ai L] [--map NAME] | bench [--ticks N] [--ai L] [--map NAME] | survey A B [--seeds N] [--map NAME] | summary FILE | maps | alpha DIR [import [OUT]]>";
+const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] [--ai L] [--map NAME] | bench [--ticks N] [--ai L] [--map NAME] | survey A B [--seeds N] [--map NAME] | generals [--map NAME]... | summary FILE | maps | alpha DIR [import [OUT]]>";
 
 fn level(s: &str) -> Result<AiLevel, String> {
     match s.to_ascii_lowercase().as_str() {
@@ -174,6 +175,63 @@ fn survey(args: &[String]) -> Result<(), String> {
         lengths.first().unwrap_or(&0),
         lengths.last().unwrap_or(&0)
     );
+    Ok(())
+}
+
+/// Every general against no general, Normal against Normal at rank 3 (where the AI plays), on
+/// `--map` (repeatable; default the three survey maps): the general's side against each
+/// faction, from both starts. Prints each general's wins and losses, then the totals.
+fn generals(args: &[String]) -> Result<(), String> {
+    let mut names = Vec::new();
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--map" => names.push(it.next().ok_or("--map needs a name")?.clone()),
+            _ => return Err(USAGE.to_owned()),
+        }
+    }
+    if names.is_empty() {
+        names = ["Crater Ridge", "zh:Tournament Desert", "gen:Alpine Assault"].map(str::to_owned).to_vec();
+    }
+    let maps = names.iter().map(|n| resolve(n)).collect::<Result<Vec<_>, _>>()?;
+    let rank = g2_sim::ai::ai_rank(AiLevel::Normal);
+    let (mut with, mut without, mut undecided) = (0, 0, 0);
+    for (i, g) in rules().generals.iter().enumerate() {
+        let (mut won, mut lost) = (0, 0);
+        for map in &maps {
+            for enemy in Faction::ALL {
+                for swap in [false, true] {
+                    let player = |faction, general| PlayerSetup {
+                        faction,
+                        starting_credits: 5_000,
+                        ai: Some(AiLevel::Normal),
+                        general,
+                        perks: g2_sim::ai::ai_perks(rules(), general, AiLevel::Normal),
+                        rank: if general.is_some() { rank } else { 1 },
+                    };
+                    let mut players =
+                        vec![player(g.faction, Some(g2_sim::defs::GeneralId(i as u16))), player(enemy, None)];
+                    if swap {
+                        players.swap(0, 1);
+                    }
+                    let mut w = World::new(&MatchSetup { map: map.clone(), seed: 1, players }, rules());
+                    while w.winner().is_none() && w.tick() < 20 * 60 * TICKS_PER_SECOND {
+                        w.step();
+                    }
+                    match w.winner() {
+                        // The general's side is slot 0 unless swapped.
+                        Some(p) if (p.0 == 0) != swap => won += 1,
+                        Some(_) => lost += 1,
+                        None => undecided += 1,
+                    }
+                }
+            }
+        }
+        println!("{:<13} {:<22} {won}-{lost}", g.name, g.faction.name());
+        with += won;
+        without += lost;
+    }
+    println!("with a general {with}, without {without}, undecided {undecided}");
     Ok(())
 }
 

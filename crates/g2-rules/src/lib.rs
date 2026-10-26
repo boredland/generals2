@@ -1169,8 +1169,9 @@ static DEFS: [Def; 79] = [
         ),
         2,
     ),
-    // Shock Troopers (eu_shocktroopersquad): hp 240, $375, 10 s; 23, 25, 1.2 s. Replaces the
-    // Recon Squad for its generals.
+    // Shock Troopers (eu_shocktroopersquad): hp 240, $375, 10 s; two guns of 23, 25, every 1.2 s
+    // and 1.05 s. A unit has one weapon here, so it is both together: 49 (23 + 23 × 1.2 / 1.05)
+    // every 1.2 s. Replaces the Recon Squad for its generals.
     ranked(
         soldier(
             "EU Shock Troopers",
@@ -1181,7 +1182,7 @@ static DEFS: [Def; 79] = [
             secs(10),
             10,
             2,
-            weapon(23, [0, 0, 0, 0], 25, 12),
+            weapon(49, [0, 0, 0, 0], 25, 12),
         ),
         21,
         94,
