@@ -608,7 +608,7 @@ fn update_fields(
     mut fields: Query<(&Field, &mut Text, Option<&mut Node>), Without<QueueRow>>,
     mut queue_row: Query<&mut Node, With<QueueRow>>,
 ) {
-    let aim = aim.is_some_and(|a| a.0);
+    let aim = aim.and_then(|a| a.0);
     let world = &sim.world;
     let rules = world.rules;
     let me = world.player(sim.local);
@@ -635,12 +635,24 @@ fn update_fields(
             }
             Field::Money => t.0 = format!("${}", me.credits),
             Field::GeneralPower => {
-                t.0 = match (sim.power(), sim.power_ready_in()) {
-                    (Some(p), _) if aim => format!("{}: click to aim", p.name.to_uppercase()),
-                    (Some(p), Some(0)) => format!("G  {}  READY", p.name.to_uppercase()),
-                    (Some(p), Some(t)) => format!("{}  {}", p.name.to_uppercase(), clock(t)),
-                    _ => String::new(),
-                }
+                // One line per power, its key first: ready, recharging, or being aimed.
+                let keys = ["G", "F1", "F2", "F3"];
+                let lines: Vec<String> = sim
+                    .powers()
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(slot, p)| {
+                        let (p, key) = (p.as_ref()?, keys.get(slot)?);
+                        let name = p.name.to_uppercase();
+                        Some(match sim.power_wait(slot as u8) {
+                            _ if aim == Some(slot as u8) => format!("{name}: click to aim"),
+                            Some(0) => format!("{key}  {name}  READY"),
+                            Some(t) => format!("{key}  {name}  {}", clock(t)),
+                            None => return None,
+                        })
+                    })
+                    .collect();
+                t.0 = lines.join("\n");
             }
             Field::Waves => t.0 = onslaught_status(world).unwrap_or_default(),
             Field::Status => {

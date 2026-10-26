@@ -66,8 +66,10 @@ pub enum CommandKind {
         units: Vec<EntityId>,
         deployed: bool,
     },
-    /// Use the player's general's power at `at`.
+    /// Use the player's power in `slot` at `at`: slot 0 their general's, 1 and up their
+    /// faction's support powers (`World::powers_of`).
     Power {
+        slot: u8,
         at: Vec2,
     },
     /// Infantry walk to `container` (a building or vehicle of theirs, or an empty neutral one)
@@ -100,9 +102,10 @@ pub enum Reject {
     QueueFull,
     /// None of the units can deploy.
     CannotDeploy,
-    /// The player's general has no power, or it is still recharging.
+    /// The player has no power in that slot, or it is still recharging.
     PowerNotReady,
-    /// The point is unexplored or (for an ambush) not open ground.
+    /// The point is unexplored (except for a recon), off the map, or (for an ambush) not open
+    /// ground.
     InvalidTarget,
     /// The upgrade is already researched, or queued somewhere.
     AlreadyResearched,

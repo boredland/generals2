@@ -463,7 +463,7 @@ pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
             }
             Event::Completed { player, .. } if player == me => out.push((Cue::Built, None)),
             // Ours always, the enemy's where it lands in sight: a power is a big moment.
-            Event::PowerUsed { player, at } if player == me || seen(at) => out.push((Cue::Launch, Some(at))),
+            Event::PowerUsed { player, at, .. } if player == me || seen(at) => out.push((Cue::Launch, Some(at))),
             Event::Delivered { player, depot, .. } if player == me => {
                 out.push((Cue::Cash, world.entity(depot).map(|d| d.pos)));
             }

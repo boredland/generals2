@@ -58,19 +58,23 @@ fn powers_charge_and_aim_at_explored_ground() {
     let mut w = World::new(&setup(Faction::Eu, BULLDOG), rules());
     let home = crater_ridge().spawns[0];
     let enemy_base = crater_ridge().spawns[1];
-    assert_eq!(order(&mut w, CommandKind::Power { at: home }), vec![Reject::PowerNotReady]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: home }), vec![Reject::PowerNotReady]);
     run_until(&mut w, ready_at(BULLDOG));
-    assert_eq!(order(&mut w, CommandKind::Power { at: enemy_base }), vec![Reject::InvalidTarget], "unexplored");
+    assert_eq!(
+        order(&mut w, CommandKind::Power { slot: 0, at: enemy_base }),
+        vec![Reject::InvalidTarget],
+        "unexplored"
+    );
     let used = w.tick();
     // The start sees about 30 around itself.
     let near = home + Vec2::from_int(25, 0);
-    assert_eq!(order(&mut w, CommandKind::Power { at: near }), vec![]);
-    assert_eq!(order(&mut w, CommandKind::Power { at: home }), vec![Reject::PowerNotReady]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: near }), vec![]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: home }), vec![Reject::PowerNotReady]);
     let cooldown = rules().general(BULLDOG).power.unwrap().cooldown_ticks;
     run_until(&mut w, used + cooldown + INPUT_DELAY + 1);
-    assert_eq!(order(&mut w, CommandKind::Power { at: near }), vec![]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: near }), vec![]);
     // A player without a general has no power at all.
-    w.submit(P1, CommandKind::Power { at: enemy_base });
+    w.submit(P1, CommandKind::Power { slot: 0, at: enemy_base });
     let mut refused = false;
     for _ in 0..=INPUT_DELAY {
         w.step();
@@ -94,7 +98,7 @@ fn a_barrage_hits_enemies_at_the_point_only() {
     let hp = |w: &World, id| w.entity(id).map_or(0, |e| e.hp);
     let (own_before, enemy_before) = (hp(&w, own_dozer), hp(&w, enemy_dozer));
     let before = w.state_hash();
-    assert_eq!(order(&mut w, CommandKind::Power { at: spot }), vec![]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: spot }), vec![]);
     assert!(w.shells().len() >= 6, "shells in flight: {}", w.shells().len());
     let mut landed = 0;
     for _ in 0..30 * 10 {
@@ -139,12 +143,12 @@ fn field_repair_restores_nearby_units() {
     let eu_dozer = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_DOZER).unwrap().id;
     w.submit(P1, CommandKind::Move { units: vec![eu_dozer], target: cc_pos + Vec2::from_int(18, 0) });
     run_until(&mut w, ready_at(BULLDOG).max(ready_at(TASKMASTER)));
-    w.submit(P1, CommandKind::Power { at: cc_pos });
+    w.submit(P1, CommandKind::Power { slot: 0, at: cc_pos });
     run_for(&mut w, 30 * 8);
     let full = rules().def(APA_CC).hp;
     let damaged = w.entity(cc).unwrap().hp;
     assert!(damaged < full, "the barrage hit the command center");
-    assert_eq!(order(&mut w, CommandKind::Power { at: cc_pos }), vec![]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: cc_pos }), vec![]);
     let repair = 400;
     assert_eq!(w.entity(cc).unwrap().hp, (damaged + repair).min(full));
     // Out of range: the crane scouts 50 east, and a repair there leaves the command center be.
@@ -154,7 +158,7 @@ fn field_repair_restores_nearby_units() {
     run_for(&mut w, rules().general(TASKMASTER).power.unwrap().cooldown_ticks);
     let now = w.entity(cc).unwrap().hp;
     assert!(now < full, "still damaged, so a repair in range would show");
-    assert_eq!(order(&mut w, CommandKind::Power { at: far }), vec![]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: far }), vec![]);
     assert_eq!(w.entity(cc).unwrap().hp, now);
 }
 
@@ -173,14 +177,18 @@ fn an_ambush_brings_squads_onto_open_ground() {
         .collect();
     let mut w = World::new(&s, rules());
     run_until(&mut w, ready_at(JUNKYARD));
-    assert_eq!(order(&mut w, CommandKind::Power { at: lake }), vec![Reject::InvalidTarget]);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: lake }), vec![Reject::InvalidTarget]);
     // The ring's first spot is 4 east (twice the squad's radius): back into the lake from here.
     let shore = lake + Vec2::from_int(-11, 0);
     assert!(w.map.walkable(shore) && !w.map.terrain_within(shore, g2_sim::Fx::from_int(0)));
-    assert_eq!(order(&mut w, CommandKind::Power { at: shore }), vec![Reject::InvalidTarget], "ring in the water");
+    assert_eq!(
+        order(&mut w, CommandKind::Power { slot: 0, at: shore }),
+        vec![Reject::InvalidTarget],
+        "ring in the water"
+    );
     let spot = start + Vec2::from_int(25, 25);
     let before = w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count();
-    assert_eq!(order(&mut w, CommandKind::Power { at: spot }), vec![], "still ready after the refusal");
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: spot }), vec![], "still ready after the refusal");
     let squads: Vec<_> = w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).collect();
     assert_eq!(squads.len(), before + 4);
     assert!(squads.iter().all(|e| e.pos.distance(spot) < g2_sim::Fx::from_int(10) && w.map.walkable(e.pos)));
@@ -195,11 +203,11 @@ fn matches_with_powers_replay_exactly() {
         let at = ready_at(g);
         let (end, replay) = record(World::new(&s, rules()), &s, at + 30 * 20, |w| {
             if w.tick() == at {
-                w.submit(P0, CommandKind::Power { at: home });
+                w.submit(P0, CommandKind::Power { slot: 0, at: home });
             }
         });
         let decoded = g2_sim::Replay::decode(&replay.encode()).unwrap();
-        assert!(decoded.commands.iter().any(|c| c.kind == CommandKind::Power { at: home }), "{g:?}");
+        assert!(decoded.commands.iter().any(|c| c.kind == CommandKind::Power { slot: 0, at: home }), "{g:?}");
         assert_eq!(verify_replay(&decoded, crater_ridge(), rules()), Ok(end.state_hash()), "{g:?}");
     }
 }
@@ -221,7 +229,7 @@ fn the_ai_uses_its_generals_power() {
         let mut w = World::new(&s, rules());
         while w.winner().is_none() && w.tick() < 30 * 60 * 15 {
             w.step();
-            used += w.events().iter().filter(|e| matches!(e, Event::PowerUsed { player: P0, .. })).count();
+            used += w.events().iter().filter(|e| matches!(e, Event::PowerUsed { player: P0, slot: 0, .. })).count();
         }
         assert!(used >= 1, "{g:?}: power never used");
         let mut easy = s.clone();
@@ -229,7 +237,7 @@ fn the_ai_uses_its_generals_power() {
         let mut e = World::new(&easy, rules());
         while e.winner().is_none() && e.tick() < 30 * 60 * 15 {
             e.step();
-            let easy_used = e.events().iter().any(|e| matches!(e, Event::PowerUsed { player: P0, .. }));
+            let easy_used = e.events().iter().any(|e| matches!(e, Event::PowerUsed { player: P0, slot: 0, .. }));
             assert!(!easy_used, "{g:?}: Easy used a power");
         }
         let (end, replay) = record(World::new(&s, rules()), &s, w.tick(), |_| {});

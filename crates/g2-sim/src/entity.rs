@@ -46,6 +46,14 @@ pub enum Order {
     Garrison {
         container: EntityId,
     },
+    /// A support power's jet: flies straight to `aim`, does its power slot `slot`'s work there
+    /// (an airstrike's bombs), then flies on to `exit` and leaves the map. Takes no orders.
+    Sortie {
+        aim: Vec2,
+        exit: Vec2,
+        slot: u8,
+        dropped: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

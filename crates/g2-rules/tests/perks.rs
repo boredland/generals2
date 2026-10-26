@@ -40,16 +40,16 @@ fn cost_and_build_time_perks_change_only_their_owner() {
 /// Power perks shorten the wait and strengthen the power; tunings of the same kind add up.
 #[test]
 fn power_perks_tune_the_generals_power() {
-    let plain = World::new(&setup(Faction::Gla, JUNKYARD, &[]), rules()).power_of(P0).unwrap();
+    let plain = World::new(&setup(Faction::Gla, JUNKYARD, &[]), rules()).power_in(P0, 0).unwrap();
     let w = World::new(&setup(Faction::Gla, JUNKYARD, &[JY_DISCIPLINE, JY_LEVERAGE]), rules());
-    let tuned = w.power_of(P0).unwrap();
+    let tuned = w.power_in(P0, 0).unwrap();
     assert_eq!(tuned.cooldown_ticks, plain.cooldown_ticks * 80 / 100);
     assert_eq!(tuned.first_ticks, plain.first_ticks * 80 / 100);
     let (PowerKind::Ambush { count: a, .. }, PowerKind::Ambush { count: b, .. }) = (plain.kind, tuned.kind) else {
         panic!("Junkyard's power is the ambush")
     };
     assert_eq!((a, b), (4, 6));
-    assert_eq!(w.power_of(P1), Some(plain), "the other player's power is untouched");
+    assert_eq!(w.power_in(P1, 0), Some(plain), "the other player's power is untouched");
 
     // The shorter first wait is real: the power works before the untuned one could.
     let mut w = w;
@@ -58,7 +58,7 @@ fn power_perks_tune_the_generals_power() {
         w.step();
     }
     let before = w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count();
-    w.submit(P0, CommandKind::Power { at: spot });
+    w.submit(P0, CommandKind::Power { slot: 0, at: spot });
     for _ in 0..=INPUT_DELAY {
         w.step();
     }
@@ -120,11 +120,11 @@ fn unit_perks_apply_from_the_start() {
 #[test]
 fn matches_with_perks_replay_exactly() {
     let s = setup(Faction::Gla, JUNKYARD, &[JY_DISCIPLINE, JY_LEVERAGE, JY_SCAVENGER]);
-    let at = World::new(&s, rules()).power_of(P0).unwrap().first_ticks;
+    let at = World::new(&s, rules()).power_in(P0, 0).unwrap().first_ticks;
     let home = s.map.spawns[0] + Vec2::from_int(30, 20);
     let (end, replay) = record(World::new(&s, rules()), &s, at + 30 * 20, |w| {
         if w.tick() == at {
-            w.submit(P0, CommandKind::Power { at: home });
+            w.submit(P0, CommandKind::Power { slot: 0, at: home });
         }
     });
     let mut decoded = g2_sim::Replay::decode(&replay.encode()).unwrap();

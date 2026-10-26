@@ -13,8 +13,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI), v5 the
 /// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3), v7 the `Research` command
 /// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14), v9 each player's slotted
-/// perks. Older replays still decode.
-pub const VERSION: u16 = 9;
+/// perks, v10 the power slot (`Power` is tag 15; tag 11 still decodes, as slot 0). Older
+/// replays still decode.
+pub const VERSION: u16 = 10;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -284,8 +285,9 @@ impl Writer {
                 self.ids(units);
                 self.u8(*deployed as u8);
             }
-            CommandKind::Power { at } => {
-                self.u8(11);
+            CommandKind::Power { slot, at } => {
+                self.u8(15);
+                self.u8(*slot);
                 self.pos(*at);
             }
             CommandKind::Research { producer, upgrade } => {
@@ -364,10 +366,11 @@ impl Reader<'_> {
             8 => CommandKind::Attack { units: self.ids()?, target: self.id()? },
             9 => CommandKind::AttackMove { units: self.ids()?, target: self.pos()? },
             10 => CommandKind::Deploy { units: self.ids()?, deployed: self.u8()? != 0 },
-            11 => CommandKind::Power { at: self.pos()? },
+            11 => CommandKind::Power { slot: 0, at: self.pos()? },
             12 => CommandKind::Research { producer: self.id()?, upgrade: crate::defs::UpgradeId(self.u16()?) },
             13 => CommandKind::Garrison { units: self.ids()?, container: self.id()? },
             14 => CommandKind::Evacuate { container: self.id()? },
+            15 => CommandKind::Power { slot: self.u8()?, at: self.pos()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

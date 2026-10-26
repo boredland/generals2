@@ -65,6 +65,9 @@ pub mod ids {
     pub const EU_GUN_TURRET: DefId = DefId(50);
     pub const APA_FLAME_TURRET: DefId = DefId(51);
     pub const GLA_ROCKET_SITE: DefId = DefId(52);
+    pub const EU_BOMBER: DefId = DefId(53);
+    pub const APA_BOMBER: DefId = DefId(54);
+    pub const APA_FIGHTER: DefId = DefId(55);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -391,7 +394,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 53] = [
+static DEFS: [Def; 56] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -935,6 +938,101 @@ static DEFS: [Def; 53] = [
         anti_air(weapon(40, [0, 0, 28, 0], 47, 23), 57),
         45,
     ),
+    // ---- Support jets --------------------------------------------------------------------
+    // Delivery aircraft for the factions' support powers: never built or ordered, they fly one
+    // pass and leave (the wiki: "It cannot be built nor directly controlled in-game"). src: the
+    // alpha's eu_airbomber (MaxHealth 300, ArmorRating 4) for the Air Raid and the Fuel Air
+    // Bomb, au_airbomber (400, armour 0) for Carpet Bombing, au_airfighter_spysortie2 (90,
+    // armour 0) for Spy Sorties. Armour 4 and 0 map to our Heavy and Light. Speed is a
+    // placeholder: fast enough to cross a map in a few seconds, slow enough for anti-air to
+    // get a few shots in.
+    support_jet("EU Bomber", Faction::Eu, 300, Armour::Heavy),
+    support_jet("APA Bomber", Faction::Apa, 400, Armour::Light),
+    support_jet("APA Fighter", Faction::Apa, 90, Armour::Light),
+];
+
+/// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
+/// usual 1 experience to whoever shoots it down.
+const fn support_jet(name: &'static str, faction: Faction, hp: i32, armour: Armour) -> Def {
+    flying(with_armour(unit(name, faction, hp, credits(0), 0, 45, false, None, NONE), armour))
+}
+
+/// Every faction's support powers, in slot order (slot 1 first). src: the alpha's
+/// `RtsPlayer*Ability` assets:
+/// - EU_PlayerAbility_AirRaid: 3 bombers, 320 base damage in a 25 radius (the AOE's 20, full
+///   damage to 75% of it), recharge 360 s, 4 s before activation.
+/// - EU_PlayerAbility_FuelAirBomb: 600 damage in a 35 radius, recharge 420 s, 3.5 s.
+/// - APA_PlayerAbility_CarpetBombing: radius 35, recharge 420 s, 3.5 s; no damage figure.
+/// - APA_PlayerAbility_SpySorties: radius 30, recharge 90 s, no delay, `ShroudBlocksActivation`
+///   false (aimed into the fog).
+///
+/// The first use waits one recharge, as the generals' powers do. How the alpha splits a strike
+/// into bombs isn't archived: the bomb counts and spacing are ours, chosen so each strike's
+/// total over its area matches the alpha's figure. Carpet Bombing's damage is a placeholder.
+static SUPPORT: [(Faction, Power); 4] = [
+    (
+        Faction::Eu,
+        Power {
+            name: "Air Raid",
+            kind: PowerKind::Airstrike {
+                def: EU_BOMBER,
+                jets: 3,
+                spread: Fx::from_int(10),
+                bombs: 2,
+                spacing: Fx::from_int(12),
+                damage: 160,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(10),
+            },
+            first_ticks: secs(360),
+            cooldown_ticks: secs(360),
+        },
+    ),
+    (
+        Faction::Eu,
+        Power {
+            name: "Fuel Air Bomb",
+            kind: PowerKind::Airstrike {
+                def: EU_BOMBER,
+                jets: 1,
+                spread: Fx::ZERO,
+                bombs: 1,
+                spacing: Fx::ZERO,
+                damage: 600,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(35),
+            },
+            first_ticks: secs(420),
+            cooldown_ticks: secs(420),
+        },
+    ),
+    (
+        Faction::Apa,
+        Power {
+            name: "Carpet Bombing",
+            kind: PowerKind::Airstrike {
+                def: APA_BOMBER,
+                jets: 1,
+                spread: Fx::ZERO,
+                bombs: 7,
+                spacing: Fx::from_int(10),
+                damage: 150,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(8),
+            },
+            first_ticks: secs(420),
+            cooldown_ticks: secs(420),
+        },
+    ),
+    (
+        Faction::Apa,
+        Power {
+            name: "Spy Sorties",
+            kind: PowerKind::Recon { def: APA_FIGHTER },
+            first_ticks: secs(90),
+            cooldown_ticks: secs(90),
+        },
+    ),
 ];
 
 /// A neutral civilian building infantry can garrison: `capacity` places, firing out with the
@@ -964,7 +1062,8 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
 const HARVEST_WORKER: CollectorSpec = CollectorSpec { capacity: 40, load_ticks: secs(2), unload_ticks: secs(1) };
 
-pub static RULES: Rules = Rules { defs: &DEFS, generals: &GENERALS, upgrades: &UPGRADES, perks: &PERKS };
+pub static RULES: Rules =
+    Rules { defs: &DEFS, generals: &GENERALS, upgrades: &UPGRADES, perks: &PERKS, support: &SUPPORT };
 
 /// Zero Hour's player weapon upgrades are all +25% damage (96 of 97 `PLAYER_UPGRADE` bonuses in
 /// its `Weapon.ini`, e.g. AP Bullets, Uranium Shells).
@@ -1523,6 +1622,9 @@ mod tests {
             (EU_GUN_TURRET, "EU Gun Turret"),
             (APA_FLAME_TURRET, "APA Flame Turret"),
             (GLA_ROCKET_SITE, "GLA Rocket Site"),
+            (EU_BOMBER, "EU Bomber"),
+            (APA_BOMBER, "APA Bomber"),
+            (APA_FIGHTER, "APA Fighter"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

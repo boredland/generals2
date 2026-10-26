@@ -272,6 +272,12 @@ impl Def {
         matches!(self.class, Class::Unit { flies: true, .. })
     }
 
+    /// A support power's aircraft: flies and is never built (no build time), only launched by
+    /// a power for one pass.
+    pub fn is_support_jet(&self) -> bool {
+        self.flies() && self.build_ticks == 0
+    }
+
     /// Armed infantry, the only units that enter garrisons (the alpha's `IncludeInfantry`;
     /// constructors and collectors stay out).
     pub fn can_garrison(&self) -> bool {
@@ -336,7 +342,8 @@ pub enum PowerTuning {
     Strength { percent: u32 },
 }
 
-/// A general's active power: aimed at a point the player has explored, then unavailable for
+/// An active power: a general's, or one of its faction's support powers. Aimed at a point the
+/// player has explored (a recon may look at unexplored ground), then unavailable for
 /// `cooldown_ticks`. The first use is possible `first_ticks` into the match.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Power {
@@ -356,6 +363,14 @@ pub enum PowerKind {
     /// `count` units of `def` appear at and around the point, each on open ground (else the
     /// power is refused).
     Ambush { def: DefId, count: u32 },
+    /// `jets` aircraft of `def` fly in from the map edge behind the player's start, side by
+    /// side `spread` apart, and fly out the far edge. Each drops `bombs` bombs `spacing` apart
+    /// along its path, centred on its aim point; a bomb bursts like an artillery shell. Enemy
+    /// anti-air can shoot the jets down, and a jet lost before its drop drops nothing.
+    Airstrike { def: DefId, jets: u32, spread: Fx, bombs: u32, spacing: Fx, damage: i32, bonus: [i32; 4], radius: Fx },
+    /// One aircraft of `def` flies over the point and out, seeing what it passes like any
+    /// unit. It may be aimed at unexplored ground.
+    Recon { def: DefId },
 }
 
 /// A per-def change, in whole percent; several for one def multiply.
@@ -406,6 +421,9 @@ pub struct Rules {
     pub generals: &'static [General],
     pub upgrades: &'static [Upgrade],
     pub perks: &'static [Perk],
+    /// Each faction's support powers, in slot order: every player of the faction has them,
+    /// after their general's power (slot 0), as slots 1, 2, ...
+    pub support: &'static [(Faction, Power)],
 }
 
 impl Rules {
@@ -427,6 +445,11 @@ impl Rules {
 
     pub fn perk(&self, id: PerkId) -> &Perk {
         &self.perks[id.0 as usize]
+    }
+
+    /// `faction`'s support powers, in slot order (the first is slot 1).
+    pub fn support_powers(&self, faction: Faction) -> impl Iterator<Item = &Power> + '_ {
+        self.support.iter().filter(move |(f, _)| *f == faction).map(|(_, p)| p)
     }
 
     pub fn find_general(&self, name: &str) -> Option<GeneralId> {
@@ -454,10 +477,17 @@ impl Rules {
     }
 }
 
-/// `general`'s power with `perks`' tunings: cooldown percentages and strength percentages each
-/// add up (two -10% cooldown perks make -20%), as upgrade effects do.
-pub fn tuned_power(rules: &Rules, general: Option<GeneralId>, perks: &[PerkId]) -> Option<Power> {
-    let mut power = general.and_then(|g| rules.general(g).power)?;
+/// Every power a player has, by slot: `general`'s first (slot 0, tuned by `perks`), or `None`
+/// in slot 0 without a general power, then `faction`'s support powers. Perk tunings add up
+/// (two -10% cooldown perks make -20%), as upgrade effects do; they apply to the general's
+/// power only.
+pub fn powers(rules: &Rules, faction: Faction, general: Option<GeneralId>, perks: &[PerkId]) -> Vec<Option<Power>> {
+    let mut out = vec![general.and_then(|g| rules.general(g).power).map(|p| tuned(rules, p, perks))];
+    out.extend(rules.support_powers(faction).map(|&p| Some(p)));
+    out
+}
+
+fn tuned(rules: &Rules, mut power: Power, perks: &[PerkId]) -> Power {
     let (mut cooldown, mut strength) = (0i64, 0i64);
     for t in perks.iter().filter_map(|&k| rules.perk(k).power) {
         match t {
@@ -468,17 +498,29 @@ pub fn tuned_power(rules: &Rules, general: Option<GeneralId>, perks: &[PerkId]) 
     let scale = |v: i64, d: i64| (v * (100 + d) / 100).max(1);
     power.cooldown_ticks = scale(power.cooldown_ticks as i64, cooldown) as u32;
     power.first_ticks = scale(power.first_ticks as i64, cooldown) as u32;
+    let bonus = |b: [i32; 4]| b.map(|b| (b as i64 * (100 + strength) / 100) as i32);
     power.kind = match power.kind {
-        PowerKind::Barrage { shells, delay_ticks, every_ticks, damage, bonus, radius } => PowerKind::Barrage {
+        PowerKind::Barrage { shells, delay_ticks, every_ticks, damage, bonus: b, radius } => PowerKind::Barrage {
             shells,
             delay_ticks,
             every_ticks,
             damage: scale(damage as i64, strength) as i32,
-            bonus: bonus.map(|b| (b as i64 * (100 + strength) / 100) as i32),
+            bonus: bonus(b),
             radius,
         },
         PowerKind::Repair { radius, hp } => PowerKind::Repair { radius, hp: scale(hp as i64, strength) as i32 },
         PowerKind::Ambush { def, count } => PowerKind::Ambush { def, count: scale(count as i64, strength) as u32 },
+        PowerKind::Airstrike { def, jets, spread, bombs, spacing, damage, bonus: b, radius } => PowerKind::Airstrike {
+            def,
+            jets,
+            spread,
+            bombs,
+            spacing,
+            damage: scale(damage as i64, strength) as i32,
+            bonus: bonus(b),
+            radius,
+        },
+        PowerKind::Recon { def } => PowerKind::Recon { def },
     };
-    Some(power)
+    power
 }

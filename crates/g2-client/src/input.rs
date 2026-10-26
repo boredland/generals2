@@ -8,9 +8,10 @@
 //! Clicking a build-grid button is pressing its key; clicking the minimap moves the camera
 //! there. A click on any HUD panel stays with the HUD: it never selects or orders in the world.
 //! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
-//! collector and centres the camera on it. G arms the general's power: the next left click
-//! aims it (right click or Esc disarms). Esc is handled by `menu` alone, so it cancels a
-//! placement or an armed power before it opens the pause menu. M (mute) is handled by `audio`.
+//! collector and centres the camera on it. G arms the general's power, F1-F3 the faction's
+//! support powers: the next left click aims it (right click or Esc disarms). Esc is handled by
+//! `menu` alone, so it cancels a placement or an armed power before it opens the pause menu.
+//! M (mute) is handled by `audio`.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -25,9 +26,13 @@ pub struct Selection(pub Vec<EntityId>);
 #[derive(Resource, Default)]
 pub struct Placement(pub Option<DefId>);
 
-/// The general's power is armed: the next left click on the ground uses it there.
+/// A power is armed, by slot (0 the general's, 1-3 support): the next left click on the
+/// ground uses it there.
 #[derive(Resource, Default)]
-pub struct PowerAim(pub bool);
+pub struct PowerAim(pub Option<u8>);
+
+/// The key that arms each power slot.
+pub const POWER_KEYS: [KeyCode; 4] = [KeyCode::KeyG, KeyCode::F1, KeyCode::F2, KeyCode::F3];
 
 #[derive(Resource, Default)]
 struct Drag(Option<Vec2>);
@@ -164,9 +169,11 @@ pub(crate) fn keyboard(
     if keys.just_pressed(KeyCode::F10) {
         sim.order(CommandKind::Surrender);
     }
-    if keys.just_pressed(KeyCode::KeyG) && sim.power_ready_in().is_some_and(|t| t == 0) {
-        aim.0 = true;
-        placing.0 = None;
+    for (slot, key) in POWER_KEYS.into_iter().enumerate() {
+        if keys.just_pressed(key) && sim.power_wait(slot as u8) == Some(0) {
+            aim.0 = Some(slot as u8);
+            placing.0 = None;
+        }
     }
     let rules = sim.world.rules;
     // T: deployable units in the selection set up, or pack up if every one is already set up.
@@ -294,7 +301,7 @@ fn mouse(
     // drag that started in the world still ends normally over the HUD.
     let pressed = buttons.get_just_pressed().next().is_some();
     if pressed && crate::hud::over_hud(&hud.panels, cursor) {
-        if buttons.just_pressed(MouseButton::Left) && !aim.0 {
+        if buttons.just_pressed(MouseButton::Left) && aim.0.is_none() {
             hud_click(cursor, &mut sim, &sel, &mut placing, &hud, &mut rts);
         }
         return;
@@ -303,13 +310,13 @@ fn mouse(
     let Some(ground) = cursor_ground(&sim, window, cam) else { return };
     let here = to_sim(ground);
 
-    if aim.0 {
+    if let Some(slot) = aim.0 {
         if buttons.just_pressed(MouseButton::Left) {
-            sim.order(CommandKind::Power { at: here });
-            aim.0 = false;
+            sim.order(CommandKind::Power { slot, at: here });
+            aim.0 = None;
         }
         if buttons.just_pressed(MouseButton::Right) {
-            aim.0 = false;
+            aim.0 = None;
         }
         return;
     }
@@ -340,13 +347,15 @@ fn mouse(
         if !additive {
             sel.0.clear();
         }
+        // Support jets fly their pass on their own: they can't be selected.
+        let selectable = |e: &g2_sim::Entity| e.owner == Some(me) && !sim.world.rules.def(e.def).is_support_jet();
         if start.distance(end) < 6.0 {
-            if let Some(id) = pick(&sim, here, |e| e.owner == Some(me)) {
+            if let Some(id) = pick(&sim, here, selectable) {
                 sel.0.push(id);
             }
         } else {
             let (lo, hi) = (start.min(end), start.max(end));
-            for e in sim.world.entities().filter(|e| e.owner == Some(me) && sim.world.rules.def(e.def).is_unit()) {
+            for e in sim.world.entities().filter(|e| selectable(e) && sim.world.rules.def(e.def).is_unit()) {
                 if let Ok(p) = cam.0.world_to_viewport(cam.1, sim.to_world(e.pos))
                     && p.cmpge(lo).all()
                     && p.cmple(hi).all()
@@ -505,11 +514,12 @@ mod tests {
         assert!(relief.1 - relief.0 > 10.0, "Defcon6 should have relief, got {relief:?}");
     }
 
-    /// G arms the general's power only once it is ready, and never for a player without one.
+    /// G arms the general's power only once it is ready, and never for a player without one;
+    /// F1 arms the faction's first support power, on its own timer.
     #[test]
-    fn g_arms_the_power_only_when_ready() {
+    fn power_keys_arm_only_ready_powers() {
         use bevy::ecs::system::RunSystemOnce;
-        let armed = |general: Option<g2_sim::GeneralId>, ticks: u32| {
+        let armed = |general: Option<g2_sim::GeneralId>, key: KeyCode, ticks: u32| {
             let mut players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false);
             players[0].general = general;
             let mut sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
@@ -518,7 +528,7 @@ mod tests {
             }
             let mut world = World::new();
             let mut keys = ButtonInput::<KeyCode>::default();
-            keys.press(KeyCode::KeyG);
+            keys.press(key);
             world.insert_resource(keys);
             world.insert_resource(sim);
             world.init_resource::<Selection>();
@@ -529,9 +539,12 @@ mod tests {
         };
         let bulldog = g2_rules::generals::BULLDOG;
         let ready = g2_rules::rules().general(bulldog).power.unwrap().first_ticks;
-        assert!(!armed(Some(bulldog), ready - 30), "still charging");
-        assert!(armed(Some(bulldog), ready), "ready");
-        assert!(!armed(None, ready), "no general, no power");
+        assert_eq!(armed(Some(bulldog), KeyCode::KeyG, ready - 30), None, "still charging");
+        assert_eq!(armed(Some(bulldog), KeyCode::KeyG, ready), Some(0), "ready");
+        assert_eq!(armed(None, KeyCode::KeyG, ready), None, "no general, no power");
+        let raid = g2_rules::rules().support_powers(g2_sim::Faction::Eu).next().unwrap().first_ticks;
+        assert_eq!(armed(None, KeyCode::F1, raid - 30), None, "support still charging");
+        assert_eq!(armed(None, KeyCode::F1, raid), Some(1), "support ready without a general");
     }
 
     /// A click on the HUD is the HUD's: on a build-grid button it trains that slot's unit as

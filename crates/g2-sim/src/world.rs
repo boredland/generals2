@@ -36,8 +36,9 @@ pub struct Player {
     pub power_supply: i32,
     pub power_drain: i32,
     pub defeated: bool,
-    /// First tick the general's power can be used again; `None` without a power.
-    pub power_ready: Option<u32>,
+    /// Per power slot (see `defs::powers`): the first tick it can be used again; `None` for an
+    /// empty slot (slot 0 without a general power).
+    pub power_ready: Vec<Option<u32>>,
     /// Researched upgrades, in ascending id order.
     pub upgrades: Vec<UpgradeId>,
     /// A stealth unit has hit one of this player's entities: they know stealth is in play.
@@ -115,9 +116,10 @@ pub enum Event {
         def: DefId,
         at: Vec2,
     },
-    /// `player` used their general's power at `at`. Output only.
+    /// `player` used their power in `slot` at `at`. Output only.
     PowerUsed {
         player: PlayerId,
+        slot: u8,
         at: Vec2,
     },
     /// `player` finished researching `upgrade` at the building standing at `at`. Output only.
@@ -250,7 +252,10 @@ impl World {
                 power_supply: 0,
                 power_drain: 0,
                 defeated: false,
-                power_ready: crate::defs::tuned_power(rules, p.general, &p.perks).map(|pw| pw.first_ticks),
+                power_ready: crate::defs::powers(rules, p.faction, p.general, &p.perks)
+                    .iter()
+                    .map(|pw| pw.map(|pw| pw.first_ticks))
+                    .collect(),
                 upgrades: Vec::new(),
                 hit_by_stealth: false,
                 perks: p.perks.clone(),
@@ -410,10 +415,22 @@ impl World {
         upgrades.chain(perks).filter(move |&&(d, _)| d == def).map(|&(_, e)| e)
     }
 
-    /// `player`'s general's power as their perks tune it; `None` without one.
-    pub fn power_of(&self, player: PlayerId) -> Option<crate::defs::Power> {
+    /// `player`'s powers by slot: their general's (as their perks tune it; `None` without one),
+    /// then their faction's support powers.
+    pub fn powers_of(&self, player: PlayerId) -> Vec<Option<crate::defs::Power>> {
         let p = self.player(player);
-        crate::defs::tuned_power(self.rules, p.general, &p.perks)
+        crate::defs::powers(self.rules, p.faction, p.general, &p.perks)
+    }
+
+    /// `player`'s power in `slot`, if they have one there.
+    pub fn power_in(&self, player: PlayerId, slot: u8) -> Option<crate::defs::Power> {
+        self.powers_of(player).get(slot as usize).copied().flatten()
+    }
+
+    /// Ticks until `player` can use `slot` (0: now); `None` for an empty slot.
+    pub fn power_wait(&self, player: PlayerId, slot: u8) -> Option<u32> {
+        let ready = self.player(player).power_ready.get(slot as usize).copied().flatten()?;
+        Some(ready.saturating_sub(self.tick))
     }
 
     /// Maximum hit points: the def's, plus any health upgrades its owner researched and its
@@ -937,7 +954,7 @@ impl World {
                 }
                 Ok(())
             }
-            CommandKind::Power { at } => self.use_power(player, *at),
+            CommandKind::Power { slot, at } => self.use_power(player, *slot, *at),
             CommandKind::Garrison { units, container } => {
                 if !self.enterable(player, *container) {
                     return Err(Reject::CannotGarrison);
@@ -1045,7 +1062,8 @@ impl World {
             .filter(|&id| {
                 self.entities.get(id).is_some_and(|e| {
                     let d = self.rules.def(e.def);
-                    e.owner == Some(player) && d.is_unit() && filter(d)
+                    // A support jet flies its one pass and takes no orders.
+                    e.owner == Some(player) && d.is_unit() && !d.is_support_jet() && filter(d)
                 })
             })
             .collect();
@@ -1339,6 +1357,10 @@ impl World {
 
     fn update_unit(&mut self, id: EntityId) {
         let e = self.entities.get(id).unwrap();
+        if let Order::Sortie { aim, exit, slot, dropped } = e.order {
+            self.fly_sortie(id, aim, exit, slot, dropped);
+            return;
+        }
         let d = self.rules.def(e.def);
         let (pos, speed, radius, owner, order) = (e.pos, d.speed(), d.radius, e.owner.unwrap(), e.order);
         let deploy = d.deploy.map(|mut dep| {
@@ -1514,6 +1536,7 @@ impl World {
                 }
                 _ => (pos, Order::Idle),
             },
+            Order::Sortie { .. } => unreachable!("flown by fly_sortie"),
         };
         let e = self.entities.get_mut(id).unwrap();
         e.pos = self.map.clamp(new_pos);
@@ -1734,15 +1757,17 @@ impl World {
         if bonus != 0 && self.entities.iter().any(|e| e.inside == Some(target)) { bonus } else { 0 }
     }
 
-    /// The player's general's power at `at`. A power aims only at ground the player has
-    /// explored, so it can't be used to scout. Barrage shells fly like artillery shells, with no
-    /// shooter entity (`POWER_SOURCE`), and are hashed with every other shell.
-    fn use_power(&mut self, player: PlayerId, at: Vec2) -> Result<(), Reject> {
-        let power = self.power_of(player).ok_or(Reject::PowerNotReady)?;
-        if self.players[player.0 as usize].power_ready.is_none_or(|t| self.tick < t) {
+    /// `player`'s power in `slot` at `at`. A power aims only at ground the player has explored,
+    /// so it can't be used to scout (a recon is the exception: scouting is what it is for).
+    /// Barrage shells and airstrike bombs fly like artillery shells, with no shooter entity
+    /// (`POWER_SOURCE`), and are hashed with every other shell.
+    fn use_power(&mut self, player: PlayerId, slot: u8, at: Vec2) -> Result<(), Reject> {
+        let power = self.power_in(player, slot).ok_or(Reject::PowerNotReady)?;
+        if self.power_wait(player, slot).is_none_or(|t| t > 0) {
             return Err(Reject::PowerNotReady);
         }
-        if !self.map.contains(at) || !self.visions[player.0 as usize].is_explored(at) {
+        let scouts = matches!(power.kind, PowerKind::Recon { .. });
+        if !self.map.contains(at) || (!scouts && !self.visions[player.0 as usize].is_explored(at)) {
             return Err(Reject::InvalidTarget);
         }
         match power.kind {
@@ -1790,10 +1815,89 @@ impl World {
                     self.events.push(Event::Produced { player, def, at: pos });
                 }
             }
+            PowerKind::Airstrike { def, jets, spread, .. } => {
+                let (entry, exit) = self.flight_line(player, at);
+                let side = perpendicular(exit - entry, spread);
+                for k in 0..jets {
+                    // Side by side, centred on the line: 0, +1, -1, +2, -2, ... spreads.
+                    let n = Fx::from_int((k as i64 + 1) / 2 * if k % 2 == 1 { 1 } else { -1 });
+                    let offset = side.scale(n);
+                    self.launch(def, player, entry + offset, at + offset, exit + offset, slot);
+                }
+            }
+            PowerKind::Recon { def } => {
+                let (entry, exit) = self.flight_line(player, at);
+                self.launch(def, player, entry, at, exit, slot);
+            }
         }
-        self.players[player.0 as usize].power_ready = Some(self.tick + power.cooldown_ticks);
-        self.events.push(Event::PowerUsed { player, at });
+        self.players[player.0 as usize].power_ready[slot as usize] = Some(self.tick + power.cooldown_ticks);
+        self.events.push(Event::PowerUsed { player, slot, at });
         Ok(())
+    }
+
+    /// Where `player`'s jets enter and leave for a pass over `at`: in from the map edge behind
+    /// their start, along the line from the start through `at`, and out the edge beyond. With
+    /// `at` on the start itself, they come in from the map's left edge.
+    fn flight_line(&self, player: PlayerId, at: Vec2) -> (Vec2, Vec2) {
+        let home = self.map.spawns.get(player.0 as usize).copied().unwrap_or(at);
+        let delta = at - home;
+        let dir =
+            if delta.length() < Fx::ONE { Vec2::new(Fx::ONE, Fx::ZERO) } else { delta.scale(Fx::ONE / delta.length()) };
+        // Far enough to clear the map from any point on it.
+        let far = (self.map.width + self.map.height) * Fx::from_int(2);
+        (edge_point(&self.map, at, dir.scale(-Fx::ONE), far), edge_point(&self.map, at, dir, far))
+    }
+
+    /// A support jet appears at `entry` on its way to `aim`.
+    fn launch(&mut self, def: DefId, player: PlayerId, entry: Vec2, aim: Vec2, exit: Vec2, slot: u8) {
+        let (aim, exit) = (self.map.clamp(aim), self.map.clamp(exit));
+        let id = self.spawn_owned(def, player, self.map.clamp(entry));
+        self.entities.get_mut(id).unwrap().order = Order::Sortie { aim, exit, slot, dropped: false };
+    }
+
+    /// A jet's pass: straight at full speed to its aim point, where an airstrike's jet drops
+    /// its bombs (a line along its heading, centred on the point, landing a tick apart), then
+    /// on to the exit, where it leaves the map without counting as lost.
+    fn fly_sortie(&mut self, id: EntityId, aim: Vec2, exit: Vec2, slot: u8, dropped: bool) {
+        let e = self.entities.get(id).unwrap();
+        let (pos, owner, speed) = (e.pos, e.owner.unwrap(), self.rules.def(e.def).speed());
+        if !dropped {
+            let next = pos.step_toward(aim, speed);
+            self.entities.get_mut(id).unwrap().pos = next;
+            if next == aim {
+                if let Some(PowerKind::Airstrike { bombs, spacing, damage, bonus, radius, .. }) =
+                    self.power_in(owner, slot).map(|p| p.kind)
+                {
+                    let heading = exit - aim;
+                    let step =
+                        if heading.length() < Fx::ONE { Vec2::ZERO } else { heading.scale(spacing / heading.length()) };
+                    for k in 0..bombs {
+                        let along = Fx::from_int(k as i64) - Fx::from_ratio(bombs as i64 - 1, 2);
+                        self.shells.push(ShellInFlight {
+                            shooter: POWER_SOURCE,
+                            owner,
+                            from: aim,
+                            at: self.map.clamp(aim + step.scale(along)),
+                            fired: self.tick,
+                            lands: self.tick + 1 + k,
+                            damage,
+                            bonus,
+                            radius,
+                            garrison_bonus: 0,
+                        });
+                    }
+                }
+                self.entities.get_mut(id).unwrap().order = Order::Sortie { aim, exit, slot, dropped: true };
+            }
+            return;
+        }
+        let next = pos.step_toward(exit, speed);
+        let e = self.entities.get_mut(id).unwrap();
+        e.pos = next;
+        if next == exit {
+            // Gone home: removed now, so nothing counts it as a loss.
+            self.entities.despawn(id);
+        }
     }
 
     /// Applies this tick's shots together, so every unit alive at the start of the tick fires
@@ -2179,6 +2283,41 @@ fn around(k: u32, r: Fx) -> Vec2 {
     let (x, y) = DIRS[k as usize % 8];
     let lap = Fx::from_int(1 + k as i64 / 8);
     Vec2::new(r * lap * Fx::from_ratio(x, 10), r * lap * Fx::from_ratio(y, 10))
+}
+
+/// Where the ray from `from` along unit vector `dir` leaves `map`: `from` moved along `dir`
+/// until it first reaches the map edge (at most `far`). Fixed point throughout; the axis it
+/// leaves by is set exactly to the edge, so rounding never stops it a hair short.
+fn edge_point(map: &crate::map::MapDef, from: Vec2, dir: Vec2, far: Fx) -> Vec2 {
+    // Distance to the edge along each axis the ray moves on, and that edge; the nearer one is
+    // where it exits.
+    let reach = |p: Fx, d: Fx, size: Fx| {
+        if d > Fx::ZERO {
+            ((size - p) / d, size)
+        } else if d < Fx::ZERO {
+            (p / -d, Fx::ZERO)
+        } else {
+            (far, p)
+        }
+    };
+    let ((tx, ex), (ty, ey)) = (reach(from.x, dir.x, map.width), reach(from.y, dir.y, map.height));
+    let p = map.clamp(from + dir.scale(tx.min(ty).min(far)));
+    if tx.min(ty) > far {
+        p
+    } else if tx <= ty {
+        Vec2::new(ex, p.y)
+    } else {
+        Vec2::new(p.x, ey)
+    }
+}
+
+/// `v` turned a quarter left and scaled to length `len`; zero for a zero `v`.
+fn perpendicular(v: Vec2, len: Fx) -> Vec2 {
+    let l = v.length();
+    if l == Fx::ZERO {
+        return Vec2::ZERO;
+    }
+    Vec2::new(-v.y, v.x).scale(len / l)
 }
 
 /// Whether segments `a`–`b` and `c`–`d` properly cross (touching ends and collinear overlap

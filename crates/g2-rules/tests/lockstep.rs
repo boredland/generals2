@@ -202,7 +202,7 @@ fn messages_round_trip_and_garbage_is_refused() {
         Message::Turn(Turn { turn: 9, commands: vec![], check: None }),
         Message::Turn(Turn {
             turn: 12,
-            commands: vec![CommandKind::Surrender, CommandKind::Power { at: Vec2::from_int(3, 4) }],
+            commands: vec![CommandKind::Surrender, CommandKind::Power { slot: 0, at: Vec2::from_int(3, 4) }],
             check: Some((30, 0xdead_beef)),
         }),
     ];
@@ -231,6 +231,7 @@ fn the_build_id_follows_the_rules() {
             generals: base.generals,
             upgrades: Box::leak(upgrades.into_boxed_slice()),
             perks: base.perks,
+            support: base.support,
         }))
     };
     let mut defs = base.defs.to_vec();

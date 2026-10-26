@@ -297,7 +297,7 @@ fn interact(
     if keys.just_pressed(KeyCode::Escape) {
         // Esc closes whatever is open: a placement or an armed power first, then a menu.
         let placed = placing.as_mut().is_some_and(|p| p.0.take().is_some());
-        let aimed = aim.as_mut().is_some_and(|a| std::mem::take(&mut a.0));
+        let aimed = aim.as_mut().is_some_and(|a| a.0.take().is_some());
         if !placed && !aimed {
             pending.0.push(match (ui.screen, ui.paused) {
                 (Screen::Setup | Screen::Controls | Screen::Generals, _) => Act::BackToMain,
@@ -699,6 +699,7 @@ fn controls(root: &mut ChildSpawnerCommands) {
             "B, then 1-9 - build; 1-9 on a factory - queue units",
             "Backspace - cancel the queued item",
             "T - deploy / pack up artillery",
+            "G - general's power; F1-F3 - faction support powers",
             "Tab - select the next collector",
             "Space - pause; + / - - game speed; Esc - menu",
             "M - mute / unmute sound",
@@ -1103,9 +1104,9 @@ mod tests {
                 app.world_mut().resource_mut::<ButtonInput<KeyCode>>().reset_all();
             };
             let paused = |app: &App| app.world().resource::<Ui>().paused;
-            app.world_mut().resource_mut::<crate::input::PowerAim>().0 = true;
+            app.world_mut().resource_mut::<crate::input::PowerAim>().0 = Some(0);
             esc(&mut app);
-            assert!(!app.world().resource::<crate::input::PowerAim>().0, "Esc disarms ({input_first})");
+            assert_eq!(app.world().resource::<crate::input::PowerAim>().0, None, "Esc disarms ({input_first})");
             assert!(!paused(&app), "and opens no menu ({input_first})");
             app.world_mut().resource_mut::<crate::input::Placement>().0 = Some(g2_rules::ids::EU_BARRACKS);
             esc(&mut app);
@@ -1116,10 +1117,10 @@ mod tests {
         }
         let (mut app, _) = app();
         act(&mut app, Act::Start);
-        app.world_mut().resource_mut::<crate::input::PowerAim>().0 = true;
+        app.world_mut().resource_mut::<crate::input::PowerAim>().0 = Some(0);
         act(&mut app, Act::Surrender);
         act(&mut app, Act::Start);
-        assert!(!app.world().resource::<crate::input::PowerAim>().0, "the new match starts unarmed");
+        assert_eq!(app.world().resource::<crate::input::PowerAim>().0, None, "the new match starts unarmed");
     }
 
     /// The Generals screen promotes, buys and slots on the general it shows; refusals are

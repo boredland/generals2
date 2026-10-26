@@ -54,7 +54,8 @@ fn stats_agree_with_the_match() {
                 if seen.insert(e.id) {
                     let o = e.owner.unwrap();
                     owner_of.insert(e.id, o);
-                    if rules().def(e.def).is_unit() {
+                    // A support power's jets are launched, not built.
+                    if rules().def(e.def).is_unit() && !rules().def(e.def).is_support_jet() {
                         seen_units[o.0 as usize] += 1;
                     }
                 }

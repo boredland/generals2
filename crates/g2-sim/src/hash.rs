@@ -73,9 +73,11 @@ impl World {
             if let Some(g) = p.general {
                 h.u64(0x6e6e_0000 | g.0 as u64);
             }
-            // Only for generals with a power, so matches without one hash as before.
-            if let Some(t) = p.power_ready {
-                h.u64(0x7077_0000_0000 | t as u64);
+            // Every filled power slot, tagged with its index (a general's is slot 0).
+            for (slot, t) in p.power_ready.iter().enumerate() {
+                if let Some(t) = t {
+                    h.u64(0x7077_0000_0000 | (slot as u64) << 32 | *t as u64);
+                }
             }
             // Only once something is researched, so matches without upgrades hash as before.
             for u in &p.upgrades {
@@ -231,6 +233,14 @@ fn hash_order(h: &mut Fnv, o: Order) {
         Order::Garrison { container } => {
             h.u64(6);
             id(h, container);
+        }
+        Order::Sortie { aim, exit, slot, dropped } => {
+            h.u64(7);
+            h.i64(aim.x.0);
+            h.i64(aim.y.0);
+            h.i64(exit.x.0);
+            h.i64(exit.y.0);
+            h.u64(((slot as u64) << 1) | dropped as u64);
         }
     }
 }

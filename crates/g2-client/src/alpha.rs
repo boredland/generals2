@@ -117,6 +117,9 @@ fn model_for(def: &str) -> Option<&'static str> {
         "EU Valkyrie" => "_eur/eu_heavyrockethelo/eu_heavyrockethelo_skn_mesh",
         "APA Mantis" => "_asia/au_lightgunhelo/au_lightgunhelo_skn_mesh",
         "GLA Toxin Chopper" => "_gla/gu_lightchemicalhelo/gu_lightchemicalhelo_skn_mesh",
+        "EU Bomber" => "_eur/eu_airbomber/eu_airbomber_airraid_mesh",
+        "APA Bomber" => "_asia/au_airbomber/au_airbomber_mesh",
+        "APA Fighter" => "_asia/au_airfighter/au_airfighter_spysortie2_mesh",
         "Shanty" => "civilian/africa/afri_cb_shanty/afri_cb_shanty_05_mesh",
         "Town House" => "civilian/africa/afri_cb_town/afri_cb_town_09_mesh",
         "Urban Block" => "civilian/africa/afri_cb_urban/afri_cb_urban_03_mesh",
@@ -335,7 +338,8 @@ mod tests {
                 continue;
             }
             assert!(model_for(def.name).is_some(), "{} has no alpha model", def.name);
-            if !def.is_building() {
+            // Support jets are never selected or ordered, so they have nothing to answer.
+            if !def.is_building() && !def.is_support_jet() {
                 assert!(voice_for(def.name).is_some(), "{} has no alpha voice", def.name);
             }
         }

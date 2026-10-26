@@ -62,15 +62,14 @@ impl Sim {
         crate::models::TEAM_PALETTE[self.teams[player.0 as usize]]
     }
 
-    /// Ticks until the local player's general's power can be used (0: now); `None` without
-    /// a power.
-    pub fn power_ready_in(&self) -> Option<u32> {
-        self.world.player(self.local).power_ready.map(|t| t.saturating_sub(self.world.tick()))
+    /// The local player's powers by slot, as their perks tune them (`World::powers_of`).
+    pub fn powers(&self) -> Vec<Option<g2_sim::defs::Power>> {
+        self.world.powers_of(self.local)
     }
 
-    /// The local player's general's power as their perks tune it, if any.
-    pub fn power(&self) -> Option<g2_sim::defs::Power> {
-        self.world.power_of(self.local)
+    /// Ticks until the local player can use `slot` (0: now); `None` for an empty slot.
+    pub fn power_wait(&self, slot: u8) -> Option<u32> {
+        self.world.power_wait(self.local, slot)
     }
 
     /// Whether the local player sees `e` right now: own entities always, neutral resources once

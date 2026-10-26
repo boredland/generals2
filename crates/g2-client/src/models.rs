@@ -877,6 +877,21 @@ fn helicopter(p: &mut Vec<Part>, faction: Faction, r: f32) {
     }
 }
 
+/// A support power's fixed-wing jet: a long fuselage, swept wings (forward-swept for APA, as
+/// the alpha's fighter), twin tail fins carrying the team colour and a glowing exhaust.
+fn jet(p: &mut Vec<Part>, faction: Faction, r: f32) {
+    let l = r * 3.0;
+    p.push(block(Slot::Hull, 0.0, 0.0, -0.4, r * 0.45, 0.7, l));
+    p.push(block(Slot::Glow, 0.0, l * 0.32, -0.05, r * 0.3, 0.35, l * 0.16));
+    p.push(block(Slot::Glow, 0.0, -l * 0.52, -0.3, r * 0.3, 0.35, 0.3));
+    let sweep = if faction == Faction::Apa { 0.12 } else { -0.12 };
+    for x in [-1.0, 1.0] {
+        p.push(block(Slot::Panel, x * r * 0.75, l * sweep, -0.35, r * 1.1, 0.12, l * 0.28));
+        p.push(block(Slot::Team, x * r * 0.18, -l * 0.42, 0.1, 0.1, 0.8, l * 0.14));
+    }
+    p.push(block(Slot::Dark, 0.0, -l * 0.42, -0.25, r * 1.2, 0.1, l * 0.1));
+}
+
 /// Infantry squads (several small figures) and tanks (hull, tracks, turret, barrel). Our own
 /// silhouettes: helmets and a roof band carry the team colour so sides read at game zoom; EU
 /// tanks are long and flat, APA tanks twin-barrelled, GLA tanks small and boxy.
@@ -898,6 +913,10 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
                 p.push(block(Slot::Dark, x + 0.25, z + 0.3, 0.75, 0.12, 0.12, 0.8));
             }
         }
+        return;
+    }
+    if def.is_support_jet() {
+        jet(p, faction, r);
         return;
     }
     if def.flies() {

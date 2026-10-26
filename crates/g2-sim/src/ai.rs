@@ -10,7 +10,7 @@
 //! piles run low.
 
 use crate::command::CommandKind;
-use crate::defs::{Armour, BuildingRole, Class, DefId, GeneralId, PerkId, PowerKind, Rules, Weapon};
+use crate::defs::{Armour, BuildingRole, Class, DefId, GeneralId, PerkId, Power, PowerKind, Rules, Weapon};
 use crate::entity::{DeployState, Entity, EntityId, Order, PlayerId};
 use crate::fixed::{Fx, Vec2};
 use crate::map::AiLevel;
@@ -115,27 +115,22 @@ impl Ai {
         })
     }
 
-    /// Where to use the general's power now, if it is ready and worth it: a barrage on the
-    /// visible enemy army's strongest spot; a repair on the spot where our own units and
-    /// buildings have lost the most hit points (at least 600); an ambush beside the nearest
-    /// visible enemy building, else in front of our own base. `Easy`, the original AI, never
-    /// uses one.
-    fn power_target(&self, world: &World, mine: &[&Entity]) -> Option<Vec2> {
-        if self.level == AiLevel::Easy {
-            return None;
-        }
+    /// Where to use `power` now, if it is worth it: a barrage or an airstrike on the visible
+    /// enemy army's strongest spot; a repair on the spot where our own units and buildings have
+    /// lost the most hit points (at least 600); an ambush beside the nearest visible enemy
+    /// building, else in front of our own base. Never a recon: flown over the enemy start, its
+    /// early look sent Normal's waves at the base too soon (Normal won 36 of 54 against Easy
+    /// with it, 40 without, and lost 12 of 15 field guns instead of under two thirds).
+    fn power_target(&self, world: &World, mine: &[&Entity], power: Power) -> Option<Vec2> {
         let player = world.player(self.player);
-        let power = world.power_of(self.player)?;
-        if player.power_ready.is_none_or(|t| world.tick() < t) {
-            return None;
-        }
         let vision = world.vision(self.player);
         // The best of `points` by the sum of `weight` within `r` of each.
         let best = |points: &[Vec2], weight: &dyn Fn(Vec2) -> i64| {
             points.iter().map(|&p| (weight(p), p)).filter(|&(w, _)| w > 0).max_by_key(|&(w, p)| (w, p.x, p.y))
         };
         match power.kind {
-            PowerKind::Barrage { radius, .. } => {
+            PowerKind::Recon { .. } => None,
+            PowerKind::Barrage { radius, .. } | PowerKind::Airstrike { radius, .. } => {
                 let enemies: Vec<&Entity> = world
                     .entities()
                     .filter(|e| e.owner.is_some_and(|o| o != self.player) && world.sees(self.player, e))
@@ -216,9 +211,19 @@ impl Ai {
         let count =
             |role: fn(BuildingRole) -> bool| mine.iter().filter(|e| rules.def(e.def).role().is_some_and(role)).count();
 
-        // Before anything that may return early: a ready power is used at once.
-        if let Some(at) = self.power_target(world, &mine) {
-            out.push(CommandKind::Power { at });
+        // Before anything that may return early: ready powers are used at once, one a think.
+        // `Easy`, the original AI, never uses one.
+        if self.level != AiLevel::Easy {
+            let ready = world.powers_of(me).into_iter().enumerate().filter_map(|(slot, p)| {
+                let p = p.filter(|_| world.power_wait(me, slot as u8) == Some(0))?;
+                Some((slot as u8, p))
+            });
+            for (slot, p) in ready {
+                if let Some(at) = self.power_target(world, &mine, p) {
+                    out.push(CommandKind::Power { slot, at });
+                    break;
+                }
+            }
         }
         // 0. Never be left without a constructor: one lost (or never built) is retrained, and
         //    until it is queued the army waits, so its credits can't keep the rebuild away.
