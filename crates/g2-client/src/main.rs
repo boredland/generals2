@@ -30,6 +30,7 @@ mod alpha;
 mod alpha_hud;
 mod audio;
 mod camera;
+mod front;
 mod fx;
 mod hud;
 mod input;

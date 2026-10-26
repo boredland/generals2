@@ -1,6 +1,6 @@
 # Visual style
 
-Target mood: the 2013 alpha gameplay footage of the cancelled game: a warm, hard-lit military RTS seen from a steep angle, on dry savanna ground, with a spotlit centre. We match the **mood and readability**, not the content. Every model, texture and UI element is designed here and generated procedurally; no shapes, icons or layouts are traced from the footage.
+Target mood: the 2013 alpha gameplay footage of the cancelled game: a warm, hard-lit military RTS seen from a steep angle, on dry savanna ground, with a spotlit centre. We match the **mood and readability**, not the content. Every model, texture and UI element is designed here and generated procedurally; no shapes, icons or layouts are traced from the footage. The one exception is the menus' layout (see Menus), by choice.
 
 Reference footage (local-only):
 
@@ -50,6 +50,16 @@ Requirements: every element shows live sim data, nothing is decorative, there ar
 - **Top centre**: a compact match bar with both factions' tags around the clock. Top left: menu label. Top right: neutral project label.
 - **World overlays**: `COLLECTORS n/cap` over own supply centers (red at the faction cap), and health bars over the selection and damaged entities.
 - Not shown until the systems exist: generals and perks, abilities, experience.
+
+## Menus (`menu.rs`, `front.rs`)
+
+The front end follows the alpha's as its skirmish footage shows it (`archive/videos/alpha/…[3tlbDYSUboc].mkv`, the first 25 s): the layout is recreated on purpose, the content is ours.
+
+- A black screen under a centred, letter-spaced silver title and a small red build tag top right, where the alpha had "ALPHA PREVIEW". No EA or Command & Conquer marks.
+- **Main**: a commander card (total XP), the general's portrait with a cycler, a big blue PLAY over a SKIRMISH / ONSLAUGHT mode bar, then LIVE / PROFILE / LEARN / QUIT tabs. Under them a banner with the general's loading-screen art and what this build holds (counted from the rules and maps), and the player's generals with rank and XP where the alpha had its social panel.
+- **Lobby**: a map banner (the official map's own `.tga` preview, sharp at the banner's height over a dimmed stretched copy; Crater Ridge drawn from its map), the name bar as "Name (1v1)" opening the paged map list, TEAM 1 VS TEAM 2 player cards with portrait, faction mark, general, faction and the AI's EASY / NORMAL / ONSLAUGHT pills, match options in the right column, and a big green START BATTLE.
+- Pause, controls and the end screen are centred dialogs; the full screens hang from the title.
+- With the player's import, the alpha's Eurostile fonts, portraits, faction logos and loading-screen art are used; without it, the same layout falls back to bevy's font and faction-coloured tiles. Features the alpha's front end had and this game doesn't (currencies, friends, chat, store) are left out rather than faked.
 
 ## Combat effects (`fx.rs`)
 

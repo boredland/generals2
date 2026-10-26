@@ -239,6 +239,7 @@ mod tests {
             )
             .add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
             .init_asset::<Image>()
+            .init_asset::<Font>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(33)))
             .insert_resource(cache.clone())
             .insert_resource(crate::menu::Ui::default())

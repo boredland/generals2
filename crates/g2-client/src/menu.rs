@@ -1,4 +1,5 @@
-//! Menus: main menu, controls, skirmish setup, in-match pause and the end screen.
+//! Menus: main menu, controls, skirmish lobby, in-match pause and the end screen, laid out like
+//! the 2013 alpha's front end (docs/STYLE.md, "Menus"; its art comes from `front.rs`).
 //!
 //! The menu is UI drawn over the battlefield: the `Sim` resource always exists and is frozen
 //! (`speed = 0`) while a menu covers it, so opening or closing a menu needs no scene teardown.
@@ -19,7 +20,7 @@ use bevy::ui::RelativeCursorPosition;
 use g2_sim::defs::PerkId;
 use g2_sim::{AiLevel, CommandKind, Faction, GeneralId, PlayerId, PlayerSetup};
 
-use crate::hud::{DIM, PANEL, PANEL_EDGE, SLOT, TEAL, TEXT, clock, text};
+use crate::hud::{DIM, TEXT, clock};
 use g2_sim::ai::{ai_perks, ai_rank};
 
 use crate::profile::{MAX_RANK, Profile, Refused, match_experience, promotion_cost};
@@ -62,7 +63,12 @@ pub enum Act {
     RemoveSlot,
     CycleFaction(usize),
     CycleGeneral(usize),
-    CycleAi(usize),
+    /// Sets an AI slot's level (the lobby's EASY / NORMAL / ONSLAUGHT pills).
+    SetAi(usize, AiLevel),
+    /// Opens or closes the lobby's map list over the map preview.
+    ToggleMapList,
+    /// The main screen's mode bar: every AI slot plays Onslaught, or back to Normal.
+    ToggleMode,
     CycleCredits,
     ToggleFog,
     NextSeed,
@@ -187,6 +193,8 @@ pub struct Ui {
     pub paused: bool,
     pub config: SkirmishConfig,
     pub map_page: usize,
+    /// The lobby's map list is open over the preview.
+    pub map_list_open: bool,
     /// The general the Generals screen shows.
     pub shown_general: GeneralId,
     /// The last Generals screen refusal, shown until the next action there.
@@ -202,6 +210,7 @@ impl Default for Ui {
             paused: false,
             config: SkirmishConfig::default(),
             map_page: 0,
+            map_list_open: false,
             shown_general: GeneralId(0),
             refused: None,
             earned: None,
@@ -263,6 +272,7 @@ impl Plugin for MenuPlugin {
             .init_resource::<Pending>()
             .init_resource::<MatchEpoch>()
             .insert_resource(MapListChannel(std::sync::Mutex::new(rx)))
+            .add_systems(Startup, crate::front::load_fonts)
             .add_systems(
                 Update,
                 (poll_maps, interact, apply, watch_winner, award_experience, rebuild, hover, hide_hud)
@@ -320,9 +330,9 @@ fn interact(
 }
 
 /// Hover feedback: a button under the cursor lights up.
-fn hover(mut buttons: Query<(&Btn, &RelativeCursorPosition, &mut BackgroundColor)>) {
-    for (_, cur, mut bg) in &mut buttons {
-        bg.set_if_neq(BackgroundColor(if cur.cursor_over() { Color::srgba(0.16, 0.34, 0.38, 0.98) } else { SLOT }));
+fn hover(mut buttons: Query<(&Look, &RelativeCursorPosition, &mut BackgroundColor)>) {
+    for (look, cur, mut bg) in &mut buttons {
+        bg.set_if_neq(BackgroundColor(look.fill(cur.cursor_over())));
     }
 }
 
@@ -380,7 +390,11 @@ fn apply_one(world: &mut World, act: Act) {
         _ => match act {
             Act::ShowControls => world.resource_mut::<Ui>().screen = Screen::Controls,
             Act::OpenSetup => world.resource_mut::<Ui>().screen = Screen::Setup,
-            Act::BackToMain => world.resource_mut::<Ui>().screen = Screen::Main,
+            Act::BackToMain => {
+                let mut ui = world.resource_mut::<Ui>();
+                ui.screen = Screen::Main;
+                ui.map_list_open = false;
+            }
             Act::ChangeSetup => {
                 world.resource_mut::<Ui>().screen = Screen::Setup;
                 world.resource_mut::<Sim>().speed = 0;
@@ -426,6 +440,7 @@ fn apply_one(world: &mut World, act: Act) {
                     ui.config.map = m.name;
                     ui.config.clamp_slots(m.starts);
                     ui.map_page = i / MAPS_PER_PAGE;
+                    ui.map_list_open = false;
                 }
             }
             Act::AddSlot => {
@@ -453,15 +468,23 @@ fn apply_one(world: &mut World, act: Act) {
                     s.general = next_general(s.faction, s.general);
                 }
             }
-            Act::CycleAi(i) => {
+            Act::SetAi(i, level) => {
                 // Slot 0 is the player at the keyboard and has no level to set.
                 if let Some(s) = world.resource_mut::<Ui>().config.slots.get_mut(i).filter(|_| i > 0) {
-                    s.ai = Some(match s.ai {
-                        Some(AiLevel::Easy) => AiLevel::Normal,
-                        Some(AiLevel::Normal) => AiLevel::Onslaught,
-                        _ => AiLevel::Easy,
-                    });
+                    s.ai = Some(level);
                 }
+            }
+            Act::ToggleMode => {
+                let mut ui = world.resource_mut::<Ui>();
+                let onslaught = ui.config.slots.iter().skip(1).any(|s| s.ai == Some(AiLevel::Onslaught));
+                let level = if onslaught { AiLevel::Normal } else { AiLevel::Onslaught };
+                for s in ui.config.slots.iter_mut().skip(1) {
+                    s.ai = Some(level);
+                }
+            }
+            Act::ToggleMapList => {
+                let mut ui = world.resource_mut::<Ui>();
+                ui.map_list_open = !ui.map_list_open;
             }
             Act::CycleCredits => {
                 let mut ui = world.resource_mut::<Ui>();
@@ -586,18 +609,89 @@ fn next_general(faction: Faction, current: Option<GeneralId>) -> Option<GeneralI
 
 // ---- drawing ----------------------------------------------------------------------------------
 //
-// `rebuild` replaces the whole menu overlay whenever `Ui` changes. Screens are centred columns
-// over the frozen battlefield, in the HUD's gunmetal-and-teal panel language (docs/STYLE.md).
+// `rebuild` replaces the whole menu overlay whenever `Ui` changes. The screens follow the 2013
+// alpha's front end as its footage shows it (docs/STYLE.md, "Menus"): a black screen under a
+// wide silver title, a big blue PLAY with the mode under it and a tab row on the main screen,
+// and a lobby of map preview, team cards and a green START BATTLE. With an imported alpha they
+// use its Eurostile fonts and its general, faction and loading-screen art; without one, the
+// same layout in plain fills.
 
+/// The alpha's blues and greens, picked from its front end in the footage.
+const BLUE: Color = Color::srgb(0.10, 0.38, 0.78);
+const BLUE_TOP: Color = Color::srgb(0.20, 0.52, 0.92);
+const GREEN: Color = Color::srgb(0.22, 0.58, 0.10);
+const GREEN_TOP: Color = Color::srgb(0.40, 0.78, 0.22);
+const STEEL: Color = Color::srgba(0.10, 0.11, 0.12, 0.96);
+const STEEL_EDGE: Color = Color::srgb(0.22, 0.24, 0.26);
+const SILVER: Color = Color::srgb(0.80, 0.82, 0.84);
+const ALPHA_RED: Color = Color::srgb(0.85, 0.12, 0.10);
+
+/// What a button looks like and how it lights up under the cursor.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum Look {
+    /// Steel with a thin edge; blue when hovered or `on`.
+    Plain { on: bool },
+    /// The big blue PLAY.
+    Play,
+    /// The big green START BATTLE.
+    Go,
+    /// A tab of the main screen's row; filled blue when `on`.
+    Tab { on: bool },
+}
+
+impl Look {
+    fn fill(self, hover: bool) -> Color {
+        match self {
+            Look::Plain { on } | Look::Tab { on } if on => BLUE,
+            Look::Plain { .. } if hover => Color::srgb(0.13, 0.27, 0.45),
+            Look::Tab { .. } if hover => Color::srgba(0.13, 0.27, 0.45, 0.9),
+            Look::Plain { .. } => STEEL,
+            Look::Tab { .. } => Color::srgba(0.06, 0.07, 0.08, 0.85),
+            Look::Play if hover => BLUE_TOP,
+            Look::Play => BLUE,
+            Look::Go if hover => GREEN_TOP,
+            Look::Go => GREEN,
+        }
+    }
+}
+
+/// Fonts and art for this rebuild: the alpha's when imported.
+struct Kit<'a> {
+    fonts: Option<&'a crate::front::Fonts>,
+    server: Option<&'a AssetServer>,
+    images: Option<&'a mut Assets<Image>>,
+}
+
+impl Kit<'_> {
+    fn text(&self, s: &str, size: f32, color: Color, wide: bool) -> impl Bundle {
+        let mut font = TextFont { font_size: FontSize::Px(size), ..default() };
+        if let Some(f) = self.fonts {
+            font.font = (if wide { f.wide.clone() } else { f.body.clone() }).into();
+        }
+        (Text::new(s), font, TextColor(color))
+    }
+
+    /// An image from the import, or `None` without one.
+    fn art(&self, rel: &str) -> Option<Handle<Image>> {
+        let server = self.server.filter(|_| self.fonts.is_some())?;
+        Some(crate::alpha_hud::image(server, rel))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn rebuild(
     mut commands: Commands,
     ui: Res<Ui>,
     sim: Res<Sim>,
     profile: Res<Profile>,
     maps: Option<Res<MapList>>,
+    fonts: Option<Res<crate::front::Fonts>>,
+    server: Option<Res<AssetServer>>,
+    mut images: Option<ResMut<Assets<Image>>>,
+    mut preview: Local<Option<(String, Option<Handle<Image>>)>>,
     old: Query<Entity, With<MenuUi>>,
 ) {
-    if !ui.is_changed() && !profile.is_changed() {
+    if !ui.is_changed() && !profile.is_changed() && !fonts.as_ref().is_some_and(|f| f.is_added()) {
         return;
     }
     for e in &old {
@@ -607,67 +701,163 @@ fn rebuild(
     if ui.screen == Screen::Match && !ui.paused {
         return;
     }
-    commands
-        .spawn((
-            MenuUi,
-            GlobalZIndex(10),
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, if ui.screen == Screen::Match { 0.45 } else { 0.62 })),
+    // The map preview is decoded once per map, not on every rebuild.
+    if ui.screen == Screen::Setup && preview.as_ref().is_none_or(|(m, _)| *m != ui.config.map) {
+        let handle = crate::front::map_preview(&ui.config.map).and_then(|img| images.as_mut().map(|i| i.add(img)));
+        *preview = Some((ui.config.map.clone(), handle));
+    }
+    let map_image = preview.as_ref().and_then(|(_, h)| h.clone());
+    let mut kit = Kit { fonts: fonts.as_deref(), server: server.as_deref(), images: images.as_deref_mut() };
+    // Full-screen menus hide the battlefield behind the alpha's black; pause and the end screen
+    // dim it instead, so the match stays in view.
+    let over_match = matches!(ui.screen, Screen::Match | Screen::End);
+    let backdrop = if over_match { Color::srgba(0.0, 0.0, 0.0, 0.55) } else { Color::BLACK };
+    let mut root = commands.spawn((
+        MenuUi,
+        GlobalZIndex(10),
+        BackgroundColor(backdrop),
+        Node { width: percent(100), height: percent(100), flex_direction: FlexDirection::Column, ..default() },
+    ));
+    root.with_children(|root| {
+        if !over_match {
+            // The alpha's dark battlefield art behind its menus, faint.
+            if let Some(bg) = kit.art("LoadingScreen/LoadingScreen_Background") {
+                root.spawn((
+                    ImageNode::new(bg).with_color(Color::srgba(1.0, 1.0, 1.0, 0.45)),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: percent(100),
+                        height: percent(100),
+                        ..default()
+                    },
+                ));
+            }
+        }
+        top_bar(root, &kit);
+        // The alpha's pages hang from the title rather than sitting centred; the small dialogs
+        // (pause, controls, the end screen) stay in the middle.
+        let dialog = matches!(ui.screen, Screen::Match | Screen::Controls | Screen::End);
+        root.spawn(Node {
+            width: percent(100),
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            justify_content: if dialog { JustifyContent::Center } else { JustifyContent::FlexStart },
+            padding: UiRect::top(px(if dialog { 0.0 } else { 14.0 })),
+            row_gap: px(14),
+            ..default()
+        })
+        .with_children(|body| match ui.screen {
+            Screen::Main => main_menu(body, &kit, &ui, &profile),
+            Screen::Controls => controls(body, &kit),
+            Screen::Setup => setup(body, &mut kit, &ui, maps.as_ref().map(|m| m.0.as_slice()), map_image),
+            Screen::Match => pause(body, &kit),
+            Screen::End => end_screen(body, &kit, &sim, &ui),
+            Screen::Generals => generals(body, &kit, &ui, &profile),
+        });
+    });
+}
+
+/// The wide silver title across the top and the red build tag in the corner, as on every
+/// alpha screen (ours names this project, not EA's game).
+fn top_bar(root: &mut ChildSpawnerCommands, kit: &Kit) {
+    root.spawn(Node {
+        width: percent(100),
+        height: px(64),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        ..default()
+    })
+    .with_children(|bar| {
+        bar.spawn(kit.text("O P E N   R T S", 34.0, SILVER, true));
+        bar.spawn((
             Node {
-                width: percent(100),
-                height: percent(100),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
+                position_type: PositionType::Absolute,
+                right: px(14),
+                top: px(6),
                 flex_direction: FlexDirection::Column,
-                row_gap: px(14),
+                align_items: AlignItems::FlexEnd,
                 ..default()
             },
-        ))
-        .with_children(|root| match ui.screen {
-            Screen::Main => main_menu(root),
-            Screen::Controls => controls(root),
-            Screen::Setup => setup(root, &ui, maps.as_ref().map(|m| m.0.as_slice())),
-            Screen::Match => pause(root),
-            Screen::End => end_screen(root, &sim, &ui),
-            Screen::Generals => generals(root, &ui, &profile),
-        });
+            children![
+                kit.text("ALPHA LOOK", 14.0, ALPHA_RED, true),
+                kit.text("an open-source RTS", 11.0, ALPHA_RED, false),
+            ],
+        ));
+    });
 }
 
 /// A clickable button: `hover` lights it up, a click queues its `Act`.
-fn button(parent: &mut ChildSpawnerCommands, label: &str, act: Act, width: f32) {
-    pick(parent, label, act, width, false);
+fn button(parent: &mut ChildSpawnerCommands, kit: &Kit, label: &str, act: Act, width: f32) {
+    styled(parent, kit, label, act, width, 34.0, 14.0, Look::Plain { on: false });
 }
 
-/// As `button`, but drawn selected: the current map in the list.
-fn pick(parent: &mut ChildSpawnerCommands, label: &str, act: Act, width: f32, selected: bool) {
+/// As `button`, but drawn selected (the current map, the active AI level).
+fn pick(parent: &mut ChildSpawnerCommands, kit: &Kit, label: &str, act: Act, width: f32, selected: bool) {
+    styled(parent, kit, label, act, width, 34.0, 14.0, Look::Plain { on: selected });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn styled(
+    parent: &mut ChildSpawnerCommands,
+    kit: &Kit,
+    label: &str,
+    act: Act,
+    width: f32,
+    height: f32,
+    size: f32,
+    look: Look,
+) {
+    let big = matches!(look, Look::Play | Look::Go);
+    let edge = match look {
+        Look::Plain { on: false } => STEEL_EDGE,
+        Look::Tab { .. } => Color::NONE,
+        _ => SILVER.with_alpha(0.35),
+    };
     parent
         .spawn((
             Btn(act),
+            look,
             RelativeCursorPosition::default(),
             Node {
                 width: px(width),
-                height: px(34),
+                height: px(height),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 border: UiRect::all(px(1)),
                 ..default()
             },
-            BackgroundColor(SLOT),
-            BorderColor::all(if selected { TEAL } else { PANEL_EDGE }),
+            BackgroundColor(look.fill(false)),
+            BorderColor::all(edge),
         ))
         .with_children(|b| {
-            b.spawn(text(label, 14.0, if selected { TEAL } else { TEXT }));
+            // The big buttons' lighter upper half, as the alpha's glossy PLAY and START BATTLE.
+            if big {
+                b.spawn((
+                    Node {
+                        position_type: PositionType::Absolute,
+                        top: px(0),
+                        left: px(0),
+                        width: percent(100),
+                        height: percent(45),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.12)),
+                ));
+            }
+            b.spawn(kit.text(label, size, Color::WHITE.with_alpha(if big { 1.0 } else { 0.92 }), big));
         });
 }
 
-fn title(parent: &mut ChildSpawnerCommands, s: &str) {
-    parent.spawn(text(s, 28.0, TEAL));
+fn title(parent: &mut ChildSpawnerCommands, kit: &Kit, s: &str) {
+    parent.spawn(kit.text(s, 26.0, Color::WHITE, true));
 }
 
-fn caption(parent: &mut ChildSpawnerCommands, s: &str) {
-    parent.spawn(text(s, 13.0, DIM));
+fn caption(parent: &mut ChildSpawnerCommands, kit: &Kit, s: &str) {
+    parent.spawn(kit.text(s, 13.0, DIM, false));
 }
 
-/// A panel body the caller fills through `fill`.
+/// A dark panel body the caller fills through `fill`.
 fn panel(parent: &mut ChildSpawnerCommands, width: f32, fill: impl FnOnce(&mut ChildSpawnerCommands)) {
     parent
         .spawn((
@@ -680,26 +870,197 @@ fn panel(parent: &mut ChildSpawnerCommands, width: f32, fill: impl FnOnce(&mut C
                 border: UiRect::all(px(1)),
                 ..default()
             },
-            BackgroundColor(PANEL),
-            BorderColor::all(PANEL_EDGE),
+            BackgroundColor(Color::srgba(0.03, 0.035, 0.04, 0.88)),
+            BorderColor::all(STEEL_EDGE),
         ))
         .with_children(fill);
 }
 
-fn main_menu(root: &mut ChildSpawnerCommands) {
-    panel(root, 380.0, |p| {
-        title(p, "OPEN RTS");
-        caption(p, "an original RTS engine");
-        button(p, "SKIRMISH", Act::OpenSetup, 260.0);
-        button(p, "GENERALS", Act::OpenGenerals, 260.0);
-        button(p, "CONTROLS", Act::ShowControls, 260.0);
-        button(p, "QUIT", Act::QuitGame, 260.0);
+/// A strip header like the alpha's "TEAM 1" and "Feeds / Friends / Chat" bars.
+fn header(parent: &mut ChildSpawnerCommands, kit: &Kit, s: &str, width: Val) {
+    parent
+        .spawn((
+            Node {
+                width,
+                height: px(22),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.12, 0.13, 0.14, 0.95)),
+        ))
+        .with_children(|h| {
+            h.spawn(kit.text(s, 13.0, Color::WHITE, false));
+        });
+}
+
+/// A general's picture: the alpha portrait when imported, else a tile in the faction's colour
+/// with its tag.
+fn portrait_tile(
+    parent: &mut ChildSpawnerCommands,
+    kit: &Kit,
+    faction: Faction,
+    general: Option<GeneralId>,
+    w: f32,
+    h: f32,
+) {
+    let node = Node {
+        width: px(w),
+        height: px(h),
+        justify_content: JustifyContent::Center,
+        align_items: AlignItems::Center,
+        ..default()
+    };
+    match kit.art(&crate::front::portrait(faction, general)) {
+        Some(img) => {
+            parent.spawn((ImageNode::new(img), node, BackgroundColor(Color::srgb(0.08, 0.09, 0.10))));
+        }
+        None => {
+            let colour = crate::models::TEAM_PALETTE[faction as usize];
+            parent.spawn((node, BackgroundColor(colour.with_alpha(0.55)))).with_children(|t| {
+                t.spawn(kit.text(faction_tag(faction), 20.0, Color::WHITE, true));
+            });
+        }
+    }
+}
+
+/// The faction's small logo from the alpha, or a colour square.
+fn faction_mark(parent: &mut ChildSpawnerCommands, kit: &Kit, faction: Faction) {
+    match kit.art(crate::front::logo(faction)) {
+        Some(img) => {
+            parent.spawn((ImageNode::new(img), Node { width: px(30), height: px(23), ..default() }));
+        }
+        None => {
+            parent.spawn((
+                Node { width: px(14), height: px(14), ..default() },
+                BackgroundColor(crate::models::TEAM_PALETTE[faction as usize]),
+            ));
+        }
+    }
+}
+
+/// The main screen, laid out like the alpha's LIVE page: the player's card, the general tile
+/// beside a big PLAY with the mode under it, the tab row, then the general's loading art and
+/// what this build holds, with the player's generals down the right.
+fn main_menu(body: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile) {
+    let me = &ui.config.slots[0];
+    let rules = g2_rules::rules();
+    let onslaught = ui.config.slots.iter().skip(1).any(|s| s.ai == Some(AiLevel::Onslaught));
+    // Player card, general tile, PLAY and the mode bar.
+    body.spawn(Node { column_gap: px(18), align_items: AlignItems::Center, ..default() }).with_children(|row| {
+        row.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(4), width: px(230), ..default() })
+            .with_children(|card| {
+                card.spawn(kit.text("COMMANDER", 14.0, Color::WHITE, true));
+                let total: u32 = profile.generals.values().map(|p| p.xp).sum();
+                let best = profile.generals.iter().max_by_key(|(g, p)| (p.rank, p.xp, std::cmp::Reverse(**g)));
+                card.spawn(kit.text(&format!("{total} XP earned"), 12.0, DIM, false));
+                if let Some((g, p)) = best {
+                    card.spawn(kit.text(&format!("{} - rank {}", rules.general(*g).name, p.rank), 12.0, DIM, false));
+                }
+            });
+        row.spawn(Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, ..default() })
+            .with_children(|g| {
+                portrait_tile(g, kit, me.faction, me.general, 80.0, 68.0);
+                styled(g, kit, "v", Act::CycleGeneral(0), 80.0, 16.0, 11.0, Look::Plain { on: true });
+            });
+        row.spawn(Node { flex_direction: FlexDirection::Column, ..default() }).with_children(|p| {
+            styled(p, kit, "PLAY", Act::OpenSetup, 300.0, 64.0, 40.0, Look::Play);
+            let mode = if onslaught { "ONSLAUGHT   v" } else { "SKIRMISH   v" };
+            styled(p, kit, mode, Act::ToggleMode, 300.0, 22.0, 13.0, Look::Plain { on: true });
+        });
+        row.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(4), width: px(230), ..default() })
+            .with_children(|side| {
+                let general = me.general.map_or("No general".to_owned(), |g| rules.general(g).name.to_owned());
+                side.spawn(kit.text(&format!("{}  {general}", faction_tag(me.faction)), 13.0, Color::WHITE, false));
+                styled(side, kit, "FACTION   >", Act::CycleFaction(0), 150.0, 24.0, 12.0, Look::Plain { on: false });
+            });
+    });
+    // The tab row.
+    body.spawn(Node { column_gap: px(2), ..default() }).with_children(|tabs| {
+        for (label, act, on) in [
+            ("LIVE", Act::BackToMain, true),
+            ("PROFILE", Act::OpenGenerals, false),
+            ("LEARN", Act::ShowControls, false),
+            ("QUIT", Act::QuitGame, false),
+        ] {
+            styled(tabs, kit, label, act, 150.0, 34.0, 18.0, Look::Tab { on });
+        }
+    });
+    // The banner: loading art and what this build holds; the player's generals on the right.
+    body.spawn(Node { column_gap: px(16), align_items: AlignItems::Stretch, ..default() }).with_children(|row| {
+        row.spawn((
+            Node {
+                width: px(700),
+                height: px(300),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                padding: UiRect::left(px(400)),
+                row_gap: px(6),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.04, 0.05, 0.06, 0.9)),
+        ))
+        .with_children(|banner| {
+            // The loading art is a 16:9 frame with the general on one side: shown whole at
+            // the banner's height, the text over its darker side.
+            if let Some(art) = kit.art(&crate::front::loading_art(me.faction, me.general)) {
+                banner.spawn((
+                    ImageNode::new(art),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: px(-60),
+                        top: px(0),
+                        width: px(533),
+                        height: px(300),
+                        ..default()
+                    },
+                ));
+            }
+            banner.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: px(0),
+                    top: px(0),
+                    width: px(330),
+                    height: percent(100),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
+            ));
+            banner.spawn(kit.text("IN THIS BUILD", 24.0, Color::WHITE, true));
+            for line in [
+                format!("{} GENERALS, {} PERKS", rules.generals.len(), rules.perks.len()),
+                "EU, APA AND GLA".to_owned(),
+                "SKIRMISH AND ONSLAUGHT".to_owned(),
+                "THE ORIGINAL MAPS".to_owned(),
+                "REPLAYS, ONLINE LOCKSTEP".to_owned(),
+            ] {
+                banner.spawn(kit.text(&format!("- {line}"), 13.0, SILVER, false));
+            }
+        });
+        row.spawn((
+            Node { width: px(280), flex_direction: FlexDirection::Column, row_gap: px(6), ..default() },
+            BackgroundColor(Color::srgba(0.04, 0.05, 0.06, 0.9)),
+        ))
+        .with_children(|col| {
+            header(col, kit, "YOUR GENERALS", percent(100));
+            for (i, g) in rules.generals.iter().enumerate().filter(|(_, g)| g.faction == me.faction) {
+                let p = profile.progress(GeneralId(i as u16));
+                col.spawn(Node { column_gap: px(8), padding: UiRect::horizontal(px(10)), ..default() }).with_children(
+                    |r| {
+                        r.spawn((kit.text(g.name, 13.0, Color::WHITE, false), Node { width: px(140), ..default() }));
+                        r.spawn(kit.text(&format!("R{}  {} XP", p.rank, p.xp), 12.0, DIM, false));
+                    },
+                );
+            }
+        });
     });
 }
 
-fn controls(root: &mut ChildSpawnerCommands) {
-    panel(root, 560.0, |p| {
-        title(p, "CONTROLS");
+fn controls(body: &mut ChildSpawnerCommands, kit: &Kit) {
+    panel(body, 620.0, |p| {
+        title(p, kit, "LEARN: CONTROLS");
         for line in [
             "Left click / drag - select units and buildings",
             "Right click - context order: attack, gather, build, move",
@@ -713,98 +1074,282 @@ fn controls(root: &mut ChildSpawnerCommands) {
             "Space - pause; + / - - game speed; Esc - menu",
             "M - mute / unmute sound",
         ] {
-            p.spawn(text(line, 14.0, TEXT));
+            p.spawn(kit.text(line, 14.0, TEXT, false));
         }
-        button(p, "BACK", Act::BackToMain, 200.0);
+        button(p, kit, "BACK", Act::BackToMain, 200.0);
     });
 }
 
-fn pause(root: &mut ChildSpawnerCommands) {
-    panel(root, 320.0, |p| {
-        title(p, "PAUSED");
-        button(p, "RESUME", Act::Resume, 220.0);
-        button(p, "SURRENDER", Act::Surrender, 220.0);
-        button(p, "QUIT TO MENU", Act::QuitToMenu, 220.0);
+fn pause(body: &mut ChildSpawnerCommands, kit: &Kit) {
+    panel(body, 340.0, |p| {
+        title(p, kit, "PAUSED");
+        button(p, kit, "RESUME", Act::Resume, 240.0);
+        button(p, kit, "SURRENDER", Act::Surrender, 240.0);
+        button(p, kit, "QUIT TO MENU", Act::QuitToMenu, 240.0);
     });
 }
 
-/// Skirmish setup: map list on the left, players and match options on the right.
-fn setup(root: &mut ChildSpawnerCommands, ui: &Ui, maps: Option<&[g2_maps::SkirmishMap]>) {
-    root.spawn(Node {
-        flex_direction: FlexDirection::Row,
-        column_gap: px(16),
-        align_items: AlignItems::FlexStart,
-        ..default()
-    })
-    .with_children(|row| {
-        panel(row, 380.0, |p| map_list_panel(p, ui, maps));
-        panel(row, 440.0, |p| options_panel(p, ui));
+/// The lobby, like the alpha's custom skirmish: the map preview with its name bar (its list
+/// opens over the preview), TEAM 1 against TEAM 2, match options down the right, and a big
+/// green START BATTLE.
+fn setup(
+    body: &mut ChildSpawnerCommands,
+    kit: &mut Kit,
+    ui: &Ui,
+    maps: Option<&[g2_maps::SkirmishMap]>,
+    preview: Option<Handle<Image>>,
+) {
+    let _ = &mut kit.images;
+    body.spawn(Node { column_gap: px(20), align_items: AlignItems::FlexStart, ..default() }).with_children(|row| {
+        row.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(12),
+            ..default()
+        })
+        .with_children(|left| {
+            map_banner(left, kit, ui, maps, preview);
+            teams(left, kit, ui);
+        });
+        row.spawn((
+            Node {
+                width: px(260),
+                flex_direction: FlexDirection::Column,
+                align_items: AlignItems::Center,
+                row_gap: px(8),
+                padding: UiRect::bottom(px(10)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.04, 0.05, 0.06, 0.9)),
+        ))
+        .with_children(|col| {
+            header(col, kit, "MATCH", percent(100));
+            button(col, kit, &format!("CREDITS  ${}", ui.config.credits), Act::CycleCredits, 220.0);
+            button(col, kit, if ui.config.fog { "FOG OF WAR: ON" } else { "FOG OF WAR: OFF" }, Act::ToggleFog, 220.0);
+            button(col, kit, &format!("SEED  {}", ui.config.seed), Act::NextSeed, 220.0);
+            header(col, kit, "PLAYERS", percent(100));
+            button(col, kit, "ADD AI", Act::AddSlot, 220.0);
+            button(col, kit, "REMOVE AI", Act::RemoveSlot, 220.0);
+            button(col, kit, "BACK", Act::BackToMain, 220.0);
+        });
     });
+    styled(body, kit, "START BATTLE", Act::Start, 330.0, 50.0, 28.0, Look::Go);
 }
 
-fn map_list_panel(p: &mut ChildSpawnerCommands, ui: &Ui, maps: Option<&[g2_maps::SkirmishMap]>) {
-    title(p, "MAP");
+/// The map preview with the name bar across it; with the list open, the list replaces it.
+fn map_banner(
+    parent: &mut ChildSpawnerCommands,
+    kit: &Kit,
+    ui: &Ui,
+    maps: Option<&[g2_maps::SkirmishMap]>,
+    preview: Option<Handle<Image>>,
+) {
+    parent
+        .spawn((
+            Node {
+                width: px(820),
+                height: px(280),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                border: UiRect::all(px(6)),
+                row_gap: px(4),
+                overflow: Overflow::clip(),
+                ..default()
+            },
+            BackgroundColor(Color::srgb(0.05, 0.05, 0.05)),
+            BorderColor::all(Color::srgb(0.02, 0.02, 0.02)),
+        ))
+        .with_children(|b| {
+            if ui.map_list_open {
+                map_picker(b, kit, ui, maps);
+                return;
+            }
+            // The previews are small and square: a dimmed, stretched copy fills the wide banner
+            // behind the whole map shown sharp at the banner's height.
+            if let Some(img) = preview {
+                b.spawn((
+                    ImageNode::new(img.clone())
+                        .with_color(Color::srgba(0.45, 0.45, 0.45, 1.0))
+                        .with_mode(bevy::ui::widget::NodeImageMode::Stretch),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        width: percent(100),
+                        height: percent(100),
+                        ..default()
+                    },
+                ));
+                b.spawn((
+                    ImageNode::new(img),
+                    Node { position_type: PositionType::Absolute, width: px(268), height: px(268), ..default() },
+                ));
+            }
+            // As the alpha's "Red Zone (1v1)": the map's name without its game prefix, and its
+            // size as players a side.
+            let starts = maps.and_then(|m| m.iter().find(|m| m.name == ui.config.map)).map(|m| m.starts);
+            let name = ui.config.map.split_once(':').map_or(ui.config.map.as_str(), |(_, n)| n);
+            let size = starts.map_or(String::new(), |n| format!(" ({}v{})", n / 2, n - n / 2));
+            styled(
+                b,
+                kit,
+                &format!("{name}{size}     v"),
+                Act::ToggleMapList,
+                420.0,
+                40.0,
+                16.0,
+                Look::Plain { on: false },
+            );
+        });
+}
+
+fn map_picker(p: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, maps: Option<&[g2_maps::SkirmishMap]>) {
     let Some(maps) = maps else {
-        caption(p, "loading map list...");
+        caption(p, kit, "loading map list...");
         return;
     };
     let pages = maps.len().div_ceil(MAPS_PER_PAGE).max(1);
     let page = ui.map_page.min(pages - 1);
-    for (i, m) in maps.iter().enumerate().skip(page * MAPS_PER_PAGE).take(MAPS_PER_PAGE) {
-        pick(p, &format!("{}  ({} starts)", m.name, m.starts), Act::MapPick(i), 340.0, m.name == ui.config.map);
-    }
+    p.spawn(Node {
+        flex_wrap: FlexWrap::Wrap,
+        width: px(740),
+        column_gap: px(6),
+        row_gap: px(4),
+        justify_content: JustifyContent::Center,
+        ..default()
+    })
+    .with_children(|grid| {
+        for (i, m) in maps.iter().enumerate().skip(page * MAPS_PER_PAGE).take(MAPS_PER_PAGE) {
+            let label = format!("{}  ({})", m.name, m.starts);
+            pick(grid, kit, &label, Act::MapPick(i), 360.0, m.name == ui.config.map);
+        }
+    });
     p.spawn(Node { column_gap: px(8), align_items: AlignItems::Center, ..default() }).with_children(|nav| {
-        button(nav, "<", Act::MapPage(-1), 44.0);
-        nav.spawn(text(&format!("{}/{}", page + 1, pages), 13.0, DIM));
-        button(nav, ">", Act::MapPage(1), 44.0);
+        button(nav, kit, "<", Act::MapPage(-1), 44.0);
+        nav.spawn(kit.text(&format!("{}/{}", page + 1, pages), 13.0, DIM, false));
+        button(nav, kit, ">", Act::MapPage(1), 44.0);
+        button(nav, kit, "CLOSE", Act::ToggleMapList, 100.0);
     });
 }
 
-fn options_panel(p: &mut ChildSpawnerCommands, ui: &Ui) {
-    title(p, "PLAYERS");
-    let teams = crate::models::team_slots(&ui.config.slots.iter().map(|s| s.faction).collect::<Vec<_>>());
-    for (i, slot) in ui.config.slots.iter().enumerate() {
-        let general = slot.general.map_or("No general".to_owned(), |g| g2_rules::rules().general(g).name.to_owned());
-        let level = if i == 0 { "YOU".to_owned() } else { slot.ai.unwrap_or_default().name().to_owned() };
-        p.spawn(Node { column_gap: px(6), align_items: AlignItems::Center, ..default() }).with_children(|r| {
-            r.spawn((
-                Node { width: px(12), height: px(12), ..default() },
-                BackgroundColor(crate::models::TEAM_PALETTE[teams[i]]),
-            ));
-            button(r, faction_tag(slot.faction), Act::CycleFaction(i), 70.0);
-            button(r, &general, Act::CycleGeneral(i), 130.0);
-            button(r, &level, Act::CycleAi(i), 90.0);
+/// TEAM 1 (the player) VS TEAM 2 (every AI), one card per player.
+fn teams(parent: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui) {
+    let colours = crate::models::team_slots(&ui.config.slots.iter().map(|s| s.faction).collect::<Vec<_>>());
+    parent.spawn(Node { column_gap: px(20), align_items: AlignItems::Center, ..default() }).with_children(|row| {
+        row.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(6), ..default() }).with_children(|team| {
+            header(team, kit, "TEAM 1", px(380));
+            player_card(team, kit, ui, 0, colours[0]);
         });
-    }
-    p.spawn(Node { column_gap: px(8), ..default() }).with_children(|r| {
-        button(r, "+ ADD", Act::AddSlot, 110.0);
-        button(r, "REMOVE", Act::RemoveSlot, 110.0);
-    });
-    title(p, "MATCH");
-    p.spawn(Node { column_gap: px(8), ..default() }).with_children(|r| {
-        button(r, &format!("${}", ui.config.credits), Act::CycleCredits, 110.0);
-        button(r, if ui.config.fog { "Fog: on" } else { "Fog: off" }, Act::ToggleFog, 110.0);
-        button(r, &format!("Seed {}", ui.config.seed), Act::NextSeed, 130.0);
-    });
-    p.spawn(Node { column_gap: px(8), ..default() }).with_children(|r| {
-        button(r, "BACK", Act::BackToMain, 150.0);
-        button(r, "START", Act::Start, 150.0);
+        row.spawn(kit.text("VS", 44.0, SILVER, true));
+        row.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(6), ..default() }).with_children(|team| {
+            header(team, kit, "TEAM 2", px(380));
+            for (i, &colour) in colours.iter().enumerate().skip(1) {
+                player_card(team, kit, ui, i, colour);
+            }
+        });
     });
 }
 
-fn end_screen(root: &mut ChildSpawnerCommands, sim: &Sim, ui: &Ui) {
+/// One player's card: portrait, faction mark, general and name, then the faction and (for an
+/// AI) its level as the alpha's EASY / MEDIUM / HARD pills.
+fn player_card(parent: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, i: usize, colour: usize) {
+    let slot = &ui.config.slots[i];
+    let rules = g2_rules::rules();
+    parent
+        .spawn((
+            Node {
+                width: px(380),
+                height: px(76),
+                column_gap: px(8),
+                padding: UiRect::all(px(4)),
+                border: UiRect::bottom(px(3)),
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.06, 0.07, 0.08, 0.95)),
+            BorderColor::all(crate::models::TEAM_PALETTE[colour]),
+        ))
+        .with_children(|card| {
+            portrait_tile(card, kit, slot.faction, slot.general, 78.0, 66.0);
+            card.spawn(Node { flex_direction: FlexDirection::Column, row_gap: px(3), ..default() }).with_children(
+                |info| {
+                    info.spawn(Node { column_gap: px(6), align_items: AlignItems::Center, ..default() }).with_children(
+                        |r| {
+                            faction_mark(r, kit, slot.faction);
+                            let general =
+                                slot.general.map_or("NO GENERAL".to_owned(), |g| rules.general(g).name.to_uppercase());
+                            styled(
+                                r,
+                                kit,
+                                &general,
+                                Act::CycleGeneral(i),
+                                150.0,
+                                22.0,
+                                13.0,
+                                Look::Plain { on: false },
+                            );
+                            styled(
+                                r,
+                                kit,
+                                faction_tag(slot.faction),
+                                Act::CycleFaction(i),
+                                50.0,
+                                22.0,
+                                12.0,
+                                Look::Plain { on: false },
+                            );
+                        },
+                    );
+                    if i == 0 {
+                        info.spawn(kit.text("YOU", 12.0, DIM, false));
+                    } else {
+                        info.spawn(Node { column_gap: px(4), align_items: AlignItems::Center, ..default() })
+                            .with_children(|r| {
+                                r.spawn(kit.text("AI", 12.0, DIM, false));
+                                // Sized to their labels: the alpha's wide font clips ONSLAUGHT in
+                                // an even third.
+                                for (level, w) in
+                                    [(AiLevel::Easy, 56.0), (AiLevel::Normal, 72.0), (AiLevel::Onslaught, 96.0)]
+                                {
+                                    let on = slot.ai == Some(level);
+                                    styled(
+                                        r,
+                                        kit,
+                                        &level.name().to_uppercase(),
+                                        Act::SetAi(i, level),
+                                        w,
+                                        20.0,
+                                        10.0,
+                                        Look::Plain { on },
+                                    );
+                                }
+                            });
+                    }
+                },
+            );
+        });
+}
+
+fn end_screen(body: &mut ChildSpawnerCommands, kit: &Kit, sim: &Sim, ui: &Ui) {
     let world = &sim.world;
     let winner = world.winner();
-    panel(root, 660.0, |p| {
-        // Watching two AIs play (the local player is one of them) has no victory to claim.
-        let headline = match winner {
-            _ if world.is_ai(sim.local) => "MATCH OVER",
-            Some(w) if w == sim.local => "VICTORY",
-            Some(_) => "DEFEAT",
-            None => "MATCH OVER",
-        };
-        title(p, headline);
-        caption(p, &format!("{} | seed {} | {}", ui.config.map, ui.config.seed, clock(world.tick())));
+    // Watching two AIs play (the local player is one of them) has no victory to claim.
+    let watched = world.is_ai(sim.local);
+    let won = winner == Some(sim.local);
+    let headline = match winner {
+        _ if watched => "MATCH OVER",
+        Some(_) if won => "VICTORY",
+        Some(_) => "DEFEAT",
+        None => "MATCH OVER",
+    };
+    if !watched
+        && winner.is_some()
+        && let Some(art) = kit.art(&crate::front::outcome_art(world.player(sim.local).faction, won))
+    {
+        body.spawn((ImageNode::new(art), Node { width: px(390), height: px(286), ..default() }));
+    }
+    panel(body, 700.0, |p| {
+        p.spawn(kit.text(headline, 40.0, Color::WHITE, true));
+        caption(p, kit, &format!("{} | seed {} | {}", ui.config.map, ui.config.seed, clock(world.tick())));
         for i in 0..world.players().len() {
             let id = PlayerId(i as u8);
             let s = world.stats(id);
@@ -818,7 +1363,7 @@ fn end_screen(root: &mut ChildSpawnerCommands, sim: &Sim, ui: &Ui) {
                 .or_else(|| (winner == Some(id)).then(|| "winner".to_owned()))
                 .unwrap_or_default();
             p.spawn(Node {
-                width: px(610),
+                width: px(650),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 column_gap: px(10),
@@ -826,95 +1371,111 @@ fn end_screen(root: &mut ChildSpawnerCommands, sim: &Sim, ui: &Ui) {
             })
             .with_children(|r| {
                 r.spawn((Node { width: px(10), height: px(10), ..default() }, BackgroundColor(sim.team_color(id))));
-                r.spawn((text(&name, 14.0, TEXT), Node { width: px(160), ..default() }));
+                r.spawn((kit.text(&name, 14.0, TEXT, false), Node { width: px(170), ..default() }));
                 let totals = format!(
                     "built {} | lost {} | kills {}",
                     s.units_built + s.buildings_built,
                     s.units_lost + s.buildings_lost,
                     s.kills
                 );
-                r.spawn((text(&totals, 13.0, DIM), Node { width: px(240), ..default() }));
-                r.spawn((text(&format!("${}", s.earned), 13.0, DIM), Node { width: px(70), ..default() }));
-                r.spawn((text(&out, 13.0, TEAL), Node { width: px(110), ..default() }));
+                r.spawn((kit.text(&totals, 13.0, DIM, false), Node { width: px(250), ..default() }));
+                r.spawn((kit.text(&format!("${}", s.earned), 13.0, DIM, false), Node { width: px(70), ..default() }));
+                r.spawn((kit.text(&out, 13.0, BLUE_TOP, false), Node { width: px(110), ..default() }));
             });
         }
         if let Some((g, xp)) = ui.earned {
-            caption(p, &format!("{} earned {xp} XP", world.rules.general(g).name));
+            caption(p, kit, &format!("{} earned {xp} XP", world.rules.general(g).name));
         }
-        button(p, "PLAY AGAIN", Act::Start, 320.0);
-        button(p, "CHANGE SETUP", Act::ChangeSetup, 320.0);
-        button(p, "MAIN MENU", Act::QuitToMenu, 320.0);
+        styled(p, kit, "PLAY AGAIN", Act::Start, 320.0, 44.0, 22.0, Look::Go);
+        button(p, kit, "CHANGE SETUP", Act::ChangeSetup, 320.0);
+        button(p, kit, "MAIN MENU", Act::QuitToMenu, 320.0);
     });
 }
 
-/// The Generals screen: one general's rank, experience, perk slots and perks. Each perk shows
-/// its rank, price and state, and its button the one thing it can do now.
-fn generals(root: &mut ChildSpawnerCommands, ui: &Ui, profile: &Profile) {
+/// The Generals screen (the main screen's PROFILE tab): one general's portrait, rank,
+/// experience, perk slots and perks. Each perk shows its rank, price and state, and its
+/// button the one thing it can do now.
+fn generals(body: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile) {
     let rules = g2_rules::rules();
     let g = ui.shown_general;
     let general = rules.general(g);
     let me = profile.progress(g);
-    panel(root, 720.0, |p| {
-        p.spawn(Node { column_gap: px(8), align_items: AlignItems::Center, ..default() }).with_children(|r| {
-            button(r, "<", Act::CycleShownGeneral(-1), 44.0);
-            r.spawn((
-                text(&format!("{} {}", faction_tag(general.faction), general.name), 28.0, TEAL),
-                Node { width: px(340), justify_content: JustifyContent::Center, ..default() },
-            ));
-            button(r, ">", Act::CycleShownGeneral(1), 44.0);
+    body.spawn(Node { column_gap: px(16), align_items: AlignItems::FlexStart, ..default() }).with_children(|row| {
+        row.spawn(Node {
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::Center,
+            row_gap: px(8),
+            ..default()
+        })
+        .with_children(|left| {
+            portrait_tile(left, kit, general.faction, Some(g), 247.0, 210.0);
+            left.spawn(Node { column_gap: px(8), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                button(r, kit, "<", Act::CycleShownGeneral(-1), 44.0);
+                faction_mark(r, kit, general.faction);
+                button(r, kit, ">", Act::CycleShownGeneral(1), 44.0);
+            });
         });
-        let next = if me.rank < MAX_RANK {
-            format!("promote: {} XP", promotion_cost(me.rank))
-        } else {
-            "highest rank".to_owned()
-        };
-        p.spawn(Node { column_gap: px(10), align_items: AlignItems::Center, ..default() }).with_children(|r| {
-            r.spawn(text(
-                &format!(
-                    "Rank {} of {MAX_RANK} | {} XP | slots {}/{} | {next}",
-                    me.rank,
-                    me.xp,
-                    me.slotted.len(),
-                    me.rank
-                ),
-                13.0,
-                DIM,
+        panel(row, 720.0, |p| {
+            p.spawn(kit.text(
+                &format!("{} {}", faction_tag(general.faction), general.name.to_uppercase()),
+                28.0,
+                Color::WHITE,
+                true,
             ));
-            if me.rank < MAX_RANK {
-                button(r, "PROMOTE", Act::Promote, 110.0);
-            }
-        });
-        if let Some(power) = general.power {
-            caption(p, &format!("Power: {}", power.name));
-        }
-        for &k in general.perks {
-            let perk = rules.perk(k);
-            let (state, act, label) = if me.slotted.contains(&k) {
-                ("slotted", Act::UnslotPerk(k), "UNSLOT")
-            } else if me.bought.contains(&k) {
-                ("owned", Act::SlotPerk(k), "SLOT")
-            } else if me.rank < perk.rank {
-                ("locked", Act::BuyPerk(k), "BUY")
+            let next = if me.rank < MAX_RANK {
+                format!("promote: {} XP", promotion_cost(me.rank))
             } else {
-                ("", Act::BuyPerk(k), "BUY")
+                "highest rank".to_owned()
             };
-            p.spawn(Node { width: px(680), column_gap: px(10), align_items: AlignItems::Center, ..default() })
-                .with_children(|r| {
-                    r.spawn((text(perk.name, 14.0, TEXT), Node { width: px(150), ..default() }));
-                    r.spawn((text(perk.description, 12.0, DIM), Node { width: px(300), ..default() }));
-                    r.spawn((
-                        text(&format!("R{} {} XP", perk.rank, perk.price), 12.0, DIM),
-                        Node { width: px(90), ..default() },
-                    ));
-                    r.spawn((text(state, 12.0, TEAL), Node { width: px(50), ..default() }));
-                    button(r, label, act, 70.0);
-                });
-        }
-        if let Some(why) = ui.refused {
-            p.spawn(text(refusal(why), 13.0, TEAL));
-        }
-        caption(p, "Play a skirmish as this general to earn XP; slotted perks apply in every match.");
-        button(p, "BACK", Act::BackToMain, 200.0);
+            p.spawn(Node { column_gap: px(10), align_items: AlignItems::Center, ..default() }).with_children(|r| {
+                r.spawn(kit.text(
+                    &format!(
+                        "Rank {} of {MAX_RANK} | {} XP | slots {}/{} | {next}",
+                        me.rank,
+                        me.xp,
+                        me.slotted.len(),
+                        me.rank
+                    ),
+                    13.0,
+                    DIM,
+                    false,
+                ));
+                if me.rank < MAX_RANK {
+                    button(r, kit, "PROMOTE", Act::Promote, 110.0);
+                }
+            });
+            if let Some(power) = general.power {
+                caption(p, kit, &format!("Power: {}", power.name));
+            }
+            for &k in general.perks {
+                let perk = rules.perk(k);
+                let (state, act, label) = if me.slotted.contains(&k) {
+                    ("slotted", Act::UnslotPerk(k), "UNSLOT")
+                } else if me.bought.contains(&k) {
+                    ("owned", Act::SlotPerk(k), "SLOT")
+                } else if me.rank < perk.rank {
+                    ("locked", Act::BuyPerk(k), "BUY")
+                } else {
+                    ("", Act::BuyPerk(k), "BUY")
+                };
+                p.spawn(Node { width: px(680), column_gap: px(10), align_items: AlignItems::Center, ..default() })
+                    .with_children(|r| {
+                        r.spawn((kit.text(perk.name, 14.0, TEXT, false), Node { width: px(150), ..default() }));
+                        r.spawn((kit.text(perk.description, 12.0, DIM, false), Node { width: px(244), ..default() }));
+                        r.spawn((
+                            kit.text(&format!("R{} {} XP", perk.rank, perk.price), 12.0, DIM, false),
+                            Node { width: px(116), ..default() },
+                        ));
+                        r.spawn((kit.text(state, 12.0, BLUE_TOP, false), Node { width: px(56), ..default() }));
+                        button(r, kit, label, act, 70.0);
+                    });
+            }
+            if let Some(why) = ui.refused {
+                p.spawn(kit.text(refusal(why), 13.0, BLUE_TOP, false));
+            }
+            caption(p, kit, "Play a skirmish as this general to earn XP; slotted perks apply in every match.");
+            button(p, kit, "BACK", Act::BackToMain, 200.0);
+        });
     });
 }
 
@@ -1052,7 +1613,7 @@ mod tests {
         assert_eq!(app.world().resource::<Ui>().config.slots.len(), 2, "Crater Ridge has two starts");
         act(&mut app, Act::RemoveSlot);
         assert_eq!(app.world().resource::<Ui>().config.slots.len(), 2, "never fewer than two players");
-        act(&mut app, Act::CycleAi(0));
+        act(&mut app, Act::SetAi(0, AiLevel::Easy));
         assert_eq!(app.world().resource::<Ui>().config.slots[0].ai, None, "the human has no level");
         act(&mut app, Act::CycleGeneral(0));
         let cfg = app.world().resource::<Ui>().config.clone();
