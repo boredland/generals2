@@ -13,7 +13,7 @@ jobs:
     timeout-minutes: 90
     steps:
       # The AppImage bundles the original maps from vendor/ea/CnC_Modding_Support.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Fetch map sources
         run: git submodule update --init --depth 1 vendor/ea/CnC_Modding_Support

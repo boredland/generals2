@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 60
     steps:
       # g2-maps and g2-rules tests read map sources from vendor/ea/CnC_Modding_Support.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Fetch map sources
         run: git submodule update --init --depth 1 vendor/ea/CnC_Modding_Support
