@@ -123,6 +123,8 @@ pub struct Entity {
     pub inside: Option<EntityId>,
     /// Stealthy units: the tick until which firing keeps them revealed. `None` when not set.
     pub revealed_until: Option<u32>,
+    /// Hidden as a stealth unit by a cloaking power until this tick (or until it fires).
+    pub cloaked_until: Option<u32>,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -275,6 +277,7 @@ mod tests {
             experience: 0,
             inside: None,
             revealed_until: None,
+            cloaked_until: None,
             route: Route::default(),
         }
     }

@@ -715,6 +715,8 @@ fn update_fields(
                     }
                     if d.stealth {
                         s += if world.hidden(e) { "  -  stealthed" } else { "  -  REVEALED" };
+                    } else if world.hidden(e) {
+                        s += "  -  cloaked";
                     }
                     s
                 })

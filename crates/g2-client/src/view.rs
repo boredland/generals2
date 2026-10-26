@@ -90,6 +90,8 @@ struct Assets3d {
     /// Charred ground and rubble left where something died.
     scorch: Handle<StandardMaterial>,
     rubble: Handle<StandardMaterial>,
+    /// A toxin cloud's low green haze.
+    toxin: Handle<StandardMaterial>,
     /// Imported alpha models by def name: scene, scale that fits it to its footprint, and
     /// the offset (already scaled) that puts its footprint's centre on the entity.
     alpha: BTreeMap<&'static str, (Handle<WorldAsset>, f32, Vec3)>,
@@ -132,6 +134,7 @@ impl Plugin for ViewPlugin {
                 spawn_effects,
                 age_effects,
                 age_wrecks,
+                sync_clouds,
             )
                 .chain()
                 .after(crate::menu::MenuSet),
@@ -199,6 +202,12 @@ fn setup_scene(
         rubble: materials.add(StandardMaterial {
             base_color: Color::srgb(0.16, 0.14, 0.12),
             perceptual_roughness: 0.95,
+            ..default()
+        }),
+        toxin: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.4, 0.75, 0.15, 0.22),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
             ..default()
         }),
         alpha: cache.map_or_else(BTreeMap::new, |c| alpha_models(&c, &server)),
@@ -289,9 +298,9 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
             c.spawn((Outriggers, Transform::default(), Visibility::Hidden))
                 .with_children(|s| spawn_parts(s, assets, faction, team, &legs));
         }
-        // Stealth units: a dark ring on the ground while hidden, so their owner sees which
-        // ones the enemy can't.
-        if def.stealth {
+        // Stealth units, and any unit a cloaking power may cover: a dark ring on the ground
+        // while hidden, so their owner sees which ones the enemy can't.
+        if def.is_unit() && !def.is_support_jet() {
             let r = def.radius.to_f32() * 1.6;
             c.spawn((
                 StealthHalo,
@@ -602,6 +611,45 @@ fn spawn_wreck(commands: &mut Commands, assets: &Assets3d, sim: &Sim, at: g2_sim
                 ))
                 .with_scale(size),
             wreck(life, size.y + 0.4),
+        ));
+    }
+}
+
+/// A drawn toxin cloud, by its centre.
+#[derive(Component)]
+struct CloudHaze(g2_sim::Vec2);
+
+/// One flat green haze per active toxin cloud the local player can see, rebuilt whenever the
+/// set of active clouds changes.
+fn sync_clouds(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    assets: Option<Res<Assets3d>>,
+    drawn: Query<(Entity, &CloudHaze)>,
+) {
+    let Some(assets) = assets else { return };
+    let world = &sim.world;
+    let vision = world.vision(sim.local);
+    let active: Vec<_> =
+        world.clouds().iter().filter(|c| c.from <= world.tick() && (!sim.fog || vision.is_visible(c.at))).collect();
+    if active.len() == drawn.iter().count() && drawn.iter().all(|(_, h)| active.iter().any(|c| c.at == h.0)) {
+        return;
+    }
+    for (e, _) in &drawn {
+        commands.entity(e).despawn();
+    }
+    for c in active {
+        let r = c.radius.to_f32();
+        commands.spawn((
+            crate::menu::MatchEntity,
+            CloudHaze(c.at),
+            Mesh3d(assets.cylinder.clone()),
+            MeshMaterial3d(assets.toxin.clone()),
+            Transform::from_translation(sim.to_world(c.at) + Vec3::Y * 0.6).with_scale(Vec3::new(
+                r * 2.0,
+                1.2,
+                r * 2.0,
+            )),
         ));
     }
 }

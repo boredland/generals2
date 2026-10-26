@@ -126,6 +126,10 @@ impl World {
             if let Some(t) = e.revealed_until {
                 h.u64(0x7276_0000_0000 | t as u64);
             }
+            // Only while cloaked by a power, so matches without one hash as before.
+            if let Some(t) = e.cloaked_until {
+                h.u64(0x636c_0000_0000 | t as u64);
+            }
             // Only for units inside something, so matches without garrisons hash as before.
             if let Some(c) = e.inside {
                 h.u64(0x6761_7272);
@@ -177,6 +181,15 @@ impl World {
             if s.garrison_bonus != 0 {
                 h.i64(0x6762_0000 + s.garrison_bonus as i64);
             }
+        }
+        // Only once there are clouds, so matches without them hash as before.
+        for c in &self.clouds {
+            h.u64(0x636c_6f75 | (c.owner.0 as u64) << 32);
+            h.i64(c.at.x.0);
+            h.i64(c.at.y.0);
+            h.i64(c.radius.0);
+            h.i64(c.damage as i64);
+            h.u64(((c.from as u64) << 32) | c.until as u64);
         }
         h.0
     }

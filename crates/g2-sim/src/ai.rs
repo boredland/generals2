@@ -118,9 +118,10 @@ impl Ai {
     /// Where to use `power` now, if it is worth it: a barrage or an airstrike on the visible
     /// enemy army's strongest spot; a repair on the spot where our own units and buildings have
     /// lost the most hit points (at least 600); an ambush beside the nearest visible enemy
-    /// building, else in front of our own base. Never a recon: flown over the enemy start, its
-    /// early look sent Normal's waves at the base too soon (Normal won 36 of 54 against Easy
-    /// with it, 40 without, and lost 12 of 15 field guns instead of under two thirds).
+    /// building, else in front of our own base; a missile strike on the remembered enemy base.
+    /// Never a recon: flown over the enemy start, its early look sent Normal's waves at the
+    /// base too soon (Normal won 36 of 54 against Easy with it, 40 without, and lost 12 of 15
+    /// field guns instead of under two thirds). Never a cloak: Normal has no plan for sneaking.
     fn power_target(&self, world: &World, mine: &[&Entity], power: Power) -> Option<Vec2> {
         let player = world.player(self.player);
         let vision = world.vision(self.player);
@@ -129,7 +130,21 @@ impl Ai {
             points.iter().map(|&p| (weight(p), p)).filter(|&(w, _)| w > 0).max_by_key(|&(w, p)| (w, p.x, p.y))
         };
         match power.kind {
-            PowerKind::Recon { .. } => None,
+            PowerKind::Recon { .. } | PowerKind::Cloak { .. } => None,
+            // The superweapon: on the enemy base, at the remembered building with the most
+            // building hit points around it within the cloud.
+            PowerKind::Missiles { cloud_radius, .. } => {
+                let seen: Vec<(Vec2, i64)> = vision
+                    .memory
+                    .values()
+                    .filter(|s| s.owner != self.player)
+                    .map(|s| (s.pos, world.rules.def(s.def).hp as i64))
+                    .collect();
+                let points: Vec<Vec2> = seen.iter().map(|&(p, _)| p).collect();
+                let weight =
+                    |p: Vec2| seen.iter().filter(|&&(q, _)| q.distance(p) <= cloud_radius).map(|&(_, hp)| hp).sum();
+                best(&points, &weight).map(|(_, p)| p)
+            }
             PowerKind::Barrage { radius, .. } | PowerKind::Airstrike { radius, .. } => {
                 let enemies: Vec<&Entity> = world
                     .entities()
@@ -286,6 +301,14 @@ impl Ai {
             // Normal: one airfield, once credits pile up with the core factories standing.
             let airfield =
                 builder_def.builds.iter().copied().filter(|&b| air_only(b)).find(|&b| !mine.iter().any(|e| e.def == b));
+            // Normal: one superweapon, last of all, from a surplus well above its price.
+            let superweapon = builder_def
+                .builds
+                .iter()
+                .copied()
+                .find(|&b| rules.def(b).role() == Some(BuildingRole::Superweapon))
+                .filter(|&b| !mine.iter().any(|e| e.def == b))
+                .filter(|&b| world.player(me).credits >= rules.def(b).cost.credits + 2_000);
             let missing_factory = factories.iter().copied().find(|&f| !mine.iter().any(|e| e.def == f));
             let depots: Vec<&&Entity> = mine
                 .iter()
@@ -355,6 +378,8 @@ impl Ai {
                 turret
             } else if smart && airfield.is_some() && world.player(me).credits >= 3_000 {
                 airfield
+            } else if smart && superweapon.is_some() {
+                superweapon
             } else {
                 derrick
             };

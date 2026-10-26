@@ -120,6 +120,7 @@ fn model_for(def: &str) -> Option<&'static str> {
         "EU Bomber" => "_eur/eu_airbomber/eu_airbomber_airraid_mesh",
         "APA Bomber" => "_asia/au_airbomber/au_airbomber_mesh",
         "APA Fighter" => "_asia/au_airfighter/au_airfighter_spysortie2_mesh",
+        "GLA Scud Storm" => "_gla/gs_scudstorm/gs_scudstorm_mesh",
         "Shanty" => "civilian/africa/afri_cb_shanty/afri_cb_shanty_05_mesh",
         "Town House" => "civilian/africa/afri_cb_town/afri_cb_town_09_mesh",
         "Urban Block" => "civilian/africa/afri_cb_urban/afri_cb_urban_03_mesh",

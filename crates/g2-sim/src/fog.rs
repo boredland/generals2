@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use crate::defs::{BuildingRole, DefId, Rules};
-use crate::entity::{Entities, EntityId, PlayerId};
+use crate::entity::{Entities, Entity, EntityId, PlayerId};
 use crate::fixed::{Fx, Vec2};
 
 /// Fog cell edge in world units.
@@ -144,9 +144,16 @@ pub fn sight(rules: &Rules, def: DefId, complete: bool, acquire: Fx) -> Fx {
     }
 }
 
+/// Whether `e` is stealthed at `tick`: a stealth unit that hasn't fired in the last
+/// `STEALTH_REVEAL_TICKS`, or a unit under a cloaking power (which firing ends).
+pub fn hidden(rules: &Rules, e: &Entity, tick: u32) -> bool {
+    let quiet = e.revealed_until.is_none_or(|t| tick >= t);
+    quiet && (rules.def(e.def).stealth || e.cloaked_until.is_some_and(|t| tick < t))
+}
+
 /// Recomputes every player's visible cells, the enemy stealth units their detectors reveal,
 /// and updates explored cells and building memory.
-pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquire: Fx) {
+pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquire: Fx, tick: u32) {
     for v in visions.iter_mut() {
         v.visible.fill(false);
         v.detected.clear();
@@ -167,7 +174,9 @@ pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquir
         .filter_map(|e| Some((e.owner?, e.pos, rules.def(e.def).detection)))
         .filter(|&(_, _, r)| r > Fx::ZERO)
         .collect();
-    for e in entities.iter().filter(|e| e.hp > 0 && rules.def(e.def).stealth) {
+    for e in
+        entities.iter().filter(|e| e.hp > 0 && (rules.def(e.def).stealth || e.cloaked_until.is_some_and(|t| tick < t)))
+    {
         let Some(owner) = e.owner else { continue };
         for &(p, at, r) in &detectors {
             if p != owner

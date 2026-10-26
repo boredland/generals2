@@ -3,6 +3,7 @@
 
 use g2_rules::ids::*;
 use g2_rules::{crater_ridge, rules};
+use g2_sim::defs::PowerKind;
 use g2_sim::world::{Event, INPUT_DELAY};
 use g2_sim::{
     CommandKind, EntityId, Faction, Fx, MatchSetup, Order, PlayerId, PlayerSetup, Reject, Vec2, World, record,
@@ -54,7 +55,7 @@ fn support_powers_have_their_own_slots_and_timers() {
     let w = World::new(&setup(Faction::Eu, Faction::Gla), rules());
     let names = |p: PlayerId| w.powers_of(p).iter().map(|p| p.map(|p| p.name)).collect::<Vec<_>>();
     assert_eq!(names(P0), vec![None, Some("Air Raid"), Some("Fuel Air Bomb")]);
-    assert_eq!(names(P1), vec![None]);
+    assert_eq!(names(P1), vec![None, Some("Scud Storm"), Some("GPS Scrambler")]);
     let w = World::new(&setup(Faction::Apa, Faction::Eu), rules());
     assert_eq!(
         w.powers_of(P0).iter().map(|p| p.map(|p| p.name)).collect::<Vec<_>>(),
@@ -285,4 +286,165 @@ fn the_normal_ai_uses_airstrikes() {
             }
         }
     }
+}
+
+/// Builds `def` for `who` with their first constructor at `pos` and steps until it is done.
+fn build(w: &mut World, who: PlayerId, def: g2_sim::DefId, pos: Vec2) -> EntityId {
+    let builder = w.entities().find(|e| e.owner == Some(who) && w.rules.def(e.def).is_constructor()).unwrap().id;
+    w.submit(who, CommandKind::Build { builder, def, pos });
+    for _ in 0..30 * 240 {
+        w.step();
+        if let Some(e) = w.entities().find(|e| e.owner == Some(who) && e.def == def && e.is_complete()) {
+            return e.id;
+        }
+    }
+    panic!("{} not built by tick {}", w.rules.def(def).name, w.tick())
+}
+
+/// The Scud Storm power needs the building: unavailable until one is finished, then it charges
+/// from that moment. Destroyed by the enemy's own Scud Storm, the last silo takes the power
+/// away; a new one charges it from the start again.
+#[test]
+fn the_scud_storm_needs_its_building() {
+    let s = setup(Faction::Gla, Faction::Gla);
+    let mut w = World::new(&s, rules());
+    let recharge = rules().support_powers(Faction::Gla).next().unwrap().first_ticks;
+    assert_eq!(w.power_wait(P0, 1), None, "no Scud Storm, no power");
+    assert_eq!(w.power_wait(P0, 2), Some(rules().support_powers(Faction::Gla).nth(1).unwrap().first_ticks));
+    // Far from P0's base, so the strikes on it spare the command center and the worker.
+    let spot = s.map.spawns[0] + Vec2::from_int(110, 0);
+    let silo = build(&mut w, P0, GLA_SCUD_STORM, spot);
+    let worker = w.entities().find(|e| e.owner == Some(P0) && e.def == GLA_WORKER).unwrap().id;
+    w.submit(P0, CommandKind::Move { units: vec![worker], target: s.map.spawns[0] + Vec2::from_int(-20, -20) });
+    let wait = w.power_wait(P0, 1).expect("the finished silo charges the power");
+    assert!(wait + 2 >= recharge && wait <= recharge, "charging from completion: {wait} of {recharge}");
+    assert_eq!(order(&mut w, P0, CommandKind::Power { slot: 1, at: s.map.spawns[1] }), vec![Reject::PowerNotReady]);
+    // P1 builds its own and, once charged, fires it at P0's silo until it falls.
+    build(&mut w, P1, GLA_SCUD_STORM, s.map.spawns[1] + Vec2::from_int(25, -25));
+    while w.entity(silo).is_some() {
+        let ready = w.tick() + w.power_wait(P1, 1).unwrap();
+        run_until(&mut w, ready);
+        assert_eq!(order(&mut w, P1, CommandKind::Power { slot: 1, at: spot }), vec![]);
+        let later = w.tick() + 30 * 20;
+        run_until(&mut w, later);
+    }
+    assert_eq!(w.power_wait(P0, 1), None, "the silo is gone, and the power with it");
+    build(&mut w, P0, GLA_SCUD_STORM, spot + Vec2::from_int(-20, 0));
+    let wait = w.power_wait(P0, 1).expect("a new silo");
+    assert!(wait + 2 >= recharge, "charging from the start again: {wait}");
+}
+
+/// A Scud Storm aimed into the fog launches eight missiles from the silo 6 s later; they land
+/// on and around the point (together the alpha's 2000 damage: the command center there falls),
+/// then the cloud poisons enemy ground units and buildings within 65 for 9 s, a hit each
+/// second, and goes.
+#[test]
+fn a_scud_storm_strikes_and_poisons() {
+    let s = setup(Faction::Gla, Faction::Eu);
+    let mut w = World::new(&s, rules());
+    let silo = build(&mut w, P0, GLA_SCUD_STORM, s.map.spawns[0] + Vec2::from_int(-25, 25));
+    let wait = w.power_wait(P0, 1).unwrap();
+    let ready = w.tick() + wait;
+    let target = s.map.spawns[1];
+    // The EU dozer waits in the cloud's reach, beyond every missile's blast.
+    let dozer = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_DOZER).unwrap().id;
+    let edge = target - Vec2::from_int(60, 0);
+    w.submit(P1, CommandKind::Move { units: vec![dozer], target: edge });
+    run_until(&mut w, ready);
+    assert!(w.entity(dozer).unwrap().pos.distance(edge) < Fx::from_int(3));
+    let cc = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_CC).unwrap().id;
+    assert!(!w.vision(P0).is_explored(target), "aimed into the fog");
+    assert_eq!(order(&mut w, P0, CommandKind::Power { slot: 1, at: target }), vec![]);
+    let (mut fired, mut landed, mut dozer_hits, mut first_fired) = (0, 0, 0, None);
+    let silo_at = w.entity(silo).unwrap().pos;
+    for _ in 0..30 * 40 {
+        w.step();
+        for e in w.events() {
+            match e {
+                Event::Fired { from, .. } if *from == silo_at => {
+                    fired += 1;
+                    first_fired.get_or_insert(w.tick());
+                }
+                Event::Landed { at, .. } if at.distance(target) <= Fx::from_int(65) => landed += 1,
+                Event::Hit { target, damage, .. } if *target == dozer => {
+                    assert_eq!(*damage, 20, "only the cloud reaches the dozer");
+                    dozer_hits += 1;
+                }
+                _ => {}
+            }
+        }
+    }
+    assert_eq!((fired, landed), (8, 8), "eight missiles from the silo, all at the point");
+    assert!(first_fired.unwrap() >= ready + g2_sim::TICKS_PER_SECOND * 6, "6 s before launch");
+    assert!(w.entity(cc).is_none(), "the command center fell");
+    assert!((8..=10).contains(&dozer_hits), "a cloud hit each second for 9 s: {dozer_hits}");
+    assert!(w.clouds().is_empty(), "the cloud is gone");
+}
+
+/// The GPS Scrambler hides the player's units at the point from the enemy, who can neither see
+/// nor target them; firing gives a unit away, and the cloak wears off.
+#[test]
+fn the_gps_scrambler_cloaks_units() {
+    let s = setup(Faction::Gla, Faction::Eu);
+    let mut w = World::new(&s, rules());
+    let worker = w.entities().find(|e| e.owner == Some(P0) && e.def == GLA_WORKER).unwrap().id;
+    let power = *rules().support_powers(Faction::Gla).nth(1).unwrap();
+    let PowerKind::Cloak { ticks, .. } = power.kind else { panic!("the scrambler cloaks") };
+    run_until(&mut w, power.first_ticks);
+    // The EU dozer walks over to watch the worker.
+    let at = w.entity(worker).unwrap().pos;
+    let dozer = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_DOZER).unwrap().id;
+    w.submit(P1, CommandKind::Move { units: vec![dozer], target: at + Vec2::from_int(15, 0) });
+    for _ in 0..30 * 120 {
+        w.step();
+        if w.sees(P1, w.entity(worker).unwrap()) {
+            break;
+        }
+    }
+    assert!(w.sees(P1, w.entity(worker).unwrap()), "in plain view");
+    let at = w.entity(worker).unwrap().pos;
+    assert_eq!(order(&mut w, P0, CommandKind::Power { slot: 2, at }), vec![]);
+    assert!(!w.sees(P1, w.entity(worker).unwrap()), "cloaked");
+    assert!(w.sees(P0, w.entity(worker).unwrap()), "its owner still sees it");
+    let until = w.entity(worker).unwrap().cloaked_until.unwrap();
+    assert!(until > w.tick() && until <= w.tick() + ticks);
+    run_until(&mut w, until);
+    assert!(w.sees(P1, w.entity(worker).unwrap()), "worn off");
+}
+
+/// Firing ends a cloak at once, even for a unit that isn't a stealth unit.
+#[test]
+fn firing_ends_a_cloak() {
+    let s = setup(Faction::Gla, Faction::Gla);
+    let mut w = World::new(&s, rules());
+    let power = *rules().support_powers(Faction::Gla).nth(1).unwrap();
+    let barracks = build(&mut w, P0, GLA_BARRACKS, s.map.spawns[0] + Vec2::from_int(30, 0));
+    w.submit(P0, CommandKind::Train { producer: barracks, def: GLA_RABBLE });
+    let mut rabble = None;
+    for _ in 0..30 * 60 {
+        w.step();
+        rabble = w.entities().find(|e| e.owner == Some(P0) && e.def == GLA_RABBLE).map(|e| e.id);
+        if rabble.is_some() {
+            break;
+        }
+    }
+    let rabble = rabble.unwrap();
+    let ready = power.first_ticks.max(w.tick());
+    run_until(&mut w, ready);
+    let at = w.entity(rabble).unwrap().pos;
+    assert_eq!(order(&mut w, P0, CommandKind::Power { slot: 2, at }), vec![]);
+    assert!(w.hidden(w.entity(rabble).unwrap()));
+    // P1's worker comes close; the rabble's guard fires at it.
+    let worker = w.entities().find(|e| e.owner == Some(P1) && e.def == GLA_WORKER).unwrap().id;
+    w.submit(P1, CommandKind::Move { units: vec![worker], target: at + Vec2::from_int(10, 0) });
+    let mut fired = false;
+    for _ in 0..30 * 60 {
+        w.step();
+        if w.events().iter().any(|e| matches!(e, Event::Hit { shooter, .. } if *shooter == rabble)) {
+            fired = true;
+            break;
+        }
+    }
+    assert!(fired, "the rabble fired");
+    assert!(!w.hidden(w.entity(rabble).unwrap()), "firing ended the cloak");
 }

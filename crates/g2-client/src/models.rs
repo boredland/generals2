@@ -330,6 +330,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
     match (faction, role) {
         (_, BuildingRole::Civilian) => civilian(&mut p, r),
         (_, BuildingRole::Defense) => turret(&mut p, faction, r),
+        (_, BuildingRole::Superweapon) => scud_storm(&mut p, w),
         (_, BuildingRole::OilDerrick { .. }) => derrick(&mut p, faction, r),
         (Faction::Gla, BuildingRole::SupplyCenter { .. }) => stash(&mut p, w),
         (Faction::Gla, BuildingRole::CommandCenter) => fortress(&mut p, w),
@@ -676,6 +677,24 @@ fn salvage_bay(p: &mut Vec<Part>, w: f32) {
     p.push(block(Slot::Hazard, w * 0.28, -w * 0.02, 5.0, w * 0.3, 0.35, 0.35));
     sandbags(p, -w * 0.45, w * 0.44, w * 0.05, w * 0.44, 0.4, 5);
     mast(p, -w * 0.32, -w * 0.3, top);
+}
+
+/// The GLA Scud Storm: a concrete pad with a sandbagged rim and an upright rack of eight
+/// missiles on a scrap launcher frame, their warheads in the toxin glow.
+fn scud_storm(p: &mut Vec<Part>, w: f32) {
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w * 1.02, 0.4, w * 1.02));
+    sandbags(p, -w * 0.48, w * 0.48, w * 0.48, w * 0.48, 0.4, 7);
+    sandbags(p, -w * 0.48, -w * 0.48, w * 0.48, -w * 0.48, 0.4, 7);
+    p.push(block(Slot::Hull, 0.0, -w * 0.05, 0.4, w * 0.62, 1.2, w * 0.5));
+    p.push(block(Slot::Team, 0.0, w * 0.21, 1.2, w * 0.5, 0.3, 0.12));
+    for k in 0..8 {
+        let x = (k % 4) as f32 * w * 0.13 - w * 0.2;
+        let z = if k < 4 { -w * 0.1 } else { w * 0.06 };
+        p.push(cyl(Slot::Panel, Vec3::new(x, 3.2, z), Vec3::new(0.45, 3.6, 0.45)));
+        p.push(cyl(Slot::Glow, Vec3::new(x, 5.3, z), Vec3::new(0.38, 0.6, 0.38)));
+    }
+    scrap(p, w * 0.32, w * 0.3, 0.4, w * 0.22, w * 0.2, 57);
+    p.push(block(Slot::Dark, -w * 0.32, w * 0.3, 0.4, 0.5, 3.4, 0.5));
 }
 
 /// A civilian building, in no faction's colours: concrete walls, a tin or flat roof, dark

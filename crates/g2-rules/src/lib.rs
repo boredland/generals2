@@ -68,6 +68,7 @@ pub mod ids {
     pub const EU_BOMBER: DefId = DefId(53);
     pub const APA_BOMBER: DefId = DefId(54);
     pub const APA_FIGHTER: DefId = DefId(55);
+    pub const GLA_SCUD_STORM: DefId = DefId(56);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -394,7 +395,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 56] = [
+static DEFS: [Def; 57] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -550,7 +551,7 @@ static DEFS: [Def; 56] = [
         16,
         true,
         Some(HARVEST_WORKER),
-        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY, GLA_SALVAGE_BAY, GLA_ROCKET_SITE],
+        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY, GLA_SALVAGE_BAY, GLA_ROCKET_SITE, GLA_SCUD_STORM],
     ),
     // src: Supply center collector cap GLA 8.
     building(
@@ -949,6 +950,11 @@ static DEFS: [Def; 56] = [
     support_jet("EU Bomber", Faction::Eu, 300, Armour::Heavy),
     support_jet("APA Bomber", Faction::Apa, 400, Armour::Light),
     support_jet("APA Fighter", Faction::Apa, 90, Armour::Light),
+    // ---- Superweapons --------------------------------------------------------------------
+    // src: the alpha's gs_scudstorm: MaxHealth 1500, $4000, BuildTime 60 s, built by the
+    // Worker (the wiki's Dirty Scud Storm); it launches GLA_PlayerAbility_DirtyScudStorm. No
+    // power draw (GLA has none). Footprint is a placeholder.
+    building("GLA Scud Storm", Faction::Gla, BuildingRole::Superweapon, 0, 1500, credits(4000), 60, 7, NONE),
 ];
 
 /// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
@@ -969,7 +975,7 @@ const fn support_jet(name: &'static str, faction: Faction, hp: i32, armour: Armo
 /// The first use waits one recharge, as the generals' powers do. How the alpha splits a strike
 /// into bombs isn't archived: the bomb counts and spacing are ours, chosen so each strike's
 /// total over its area matches the alpha's figure. Carpet Bombing's damage is a placeholder.
-static SUPPORT: [(Faction, Power); 4] = [
+static SUPPORT: [(Faction, Power); 6] = [
     (
         Faction::Eu,
         Power {
@@ -986,6 +992,8 @@ static SUPPORT: [(Faction, Power); 4] = [
             },
             first_ticks: secs(360),
             cooldown_ticks: secs(360),
+            blind: false,
+            requires: None,
         },
     ),
     (
@@ -1004,6 +1012,8 @@ static SUPPORT: [(Faction, Power); 4] = [
             },
             first_ticks: secs(420),
             cooldown_ticks: secs(420),
+            blind: false,
+            requires: None,
         },
     ),
     (
@@ -1022,6 +1032,8 @@ static SUPPORT: [(Faction, Power); 4] = [
             },
             first_ticks: secs(420),
             cooldown_ticks: secs(420),
+            blind: false,
+            requires: None,
         },
     ),
     (
@@ -1031,6 +1043,51 @@ static SUPPORT: [(Faction, Power); 4] = [
             kind: PowerKind::Recon { def: APA_FIGHTER },
             first_ticks: secs(90),
             cooldown_ticks: secs(90),
+            blind: true,
+            requires: None,
+        },
+    ),
+    // src: GLA_PlayerAbility_DirtyScudStorm (RtsPlayerSuperweaponAbility): MainDamage 2000 over
+    // radius 65, eight missiles 0.1 s apart (its weapon container), launched 6 s after the
+    // order, a toxic cloud of 20 damage a second for 9 s, recharge 420 s, aimed into the fog
+    // (`ShroudBlocksActivation` false). The 2000 is split over the eight missiles (250 each,
+    // radius 22, spread around the point to cover the 65); missile speed 60 is the projectile's
+    // `InitialSpeed`.
+    (
+        Faction::Gla,
+        Power {
+            name: "Scud Storm",
+            kind: PowerKind::Missiles {
+                missiles: 8,
+                delay_ticks: secs(6),
+                every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                speed: Fx::from_ratio(60, g2_sim::TICKS_PER_SECOND as i64),
+                spread: Fx::from_int(30),
+                damage: 250,
+                radius: Fx::from_int(22),
+                cloud_radius: Fx::from_int(65),
+                cloud_damage: 20,
+                cloud_ticks: secs(9),
+            },
+            first_ticks: secs(420),
+            cooldown_ticks: secs(420),
+            blind: true,
+            requires: Some(GLA_SCUD_STORM),
+        },
+    ),
+    // src: GLA_PlayerAbility_GPSScrambler: radius 50, recharge 90 s, 0.5 s delay, aimed into
+    // the fog; its sphere effect hides the player's units in the area (an awareness change).
+    // The alpha's effect lasts 4 s after leaving the sphere; ours lasts a flat 20 s, a
+    // placeholder long enough to cross open ground.
+    (
+        Faction::Gla,
+        Power {
+            name: "GPS Scrambler",
+            kind: PowerKind::Cloak { radius: Fx::from_int(50), ticks: secs(20) },
+            first_ticks: secs(90),
+            cooldown_ticks: secs(90),
+            blind: true,
+            requires: None,
         },
     ),
 ];
@@ -1450,6 +1507,8 @@ static GENERALS: [General; 3] = [
             },
             first_ticks: secs(240),
             cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
         }),
         perks: &[
             BD_DOUBLE_SHIFTS,
@@ -1477,6 +1536,8 @@ static GENERALS: [General; 3] = [
             kind: PowerKind::Repair { radius: Fx::from_int(30), hp: 400 },
             first_ticks: secs(180),
             cooldown_ticks: secs(180),
+            blind: false,
+            requires: None,
         }),
         perks: &[
             TM_SPY_EFFICIENCY,
@@ -1503,6 +1564,8 @@ static GENERALS: [General; 3] = [
             kind: PowerKind::Ambush { def: GLA_RPG, count: 4 },
             first_ticks: secs(240),
             cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
         }),
         perks: &[
             JY_DISCIPLINE,
@@ -1625,6 +1688,7 @@ mod tests {
             (EU_BOMBER, "EU Bomber"),
             (APA_BOMBER, "APA Bomber"),
             (APA_FIGHTER, "APA Fighter"),
+            (GLA_SCUD_STORM, "GLA Scud Storm"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

@@ -179,6 +179,8 @@ pub enum BuildingRole {
     Civilian,
     /// A base defence: fires its weapon from where it stands, while powered.
     Defense,
+    /// Launches its faction's superweapon power (`Power::requires`); nothing else.
+    Superweapon,
 }
 
 #[derive(Clone, Debug)]
@@ -343,14 +345,19 @@ pub enum PowerTuning {
 }
 
 /// An active power: a general's, or one of its faction's support powers. Aimed at a point the
-/// player has explored (a recon may look at unexplored ground), then unavailable for
-/// `cooldown_ticks`. The first use is possible `first_ticks` into the match.
+/// player has explored, unless it is `blind` (the alpha's `ShroudBlocksActivation` false: may
+/// aim into the fog), then unavailable for `cooldown_ticks`. The first use is possible
+/// `first_ticks` into the match, or, for a power that `requires` a building, `first_ticks`
+/// after the player's first one of them is finished; while none stands the power is
+/// unavailable, and a new one charges it from the start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Power {
     pub name: &'static str,
     pub kind: PowerKind,
     pub first_ticks: u32,
     pub cooldown_ticks: u32,
+    pub blind: bool,
+    pub requires: Option<DefId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -371,6 +378,26 @@ pub enum PowerKind {
     /// One aircraft of `def` flies over the point and out, seeing what it passes like any
     /// unit. It may be aimed at unexplored ground.
     Recon { def: DefId },
+    /// `missiles` missiles launch from the required building (else the player's start) after
+    /// `delay_ticks`, one every `every_ticks`, fly at `speed` and land on and around the point,
+    /// `spread` apart, each bursting like an artillery shell. Then a cloud of `cloud_radius` at
+    /// the point deals `cloud_damage` every second for `cloud_ticks` to enemy ground units and
+    /// buildings in it.
+    Missiles {
+        missiles: u32,
+        delay_ticks: u32,
+        every_ticks: u32,
+        speed: Fx,
+        spread: Fx,
+        damage: i32,
+        radius: Fx,
+        cloud_radius: Fx,
+        cloud_damage: i32,
+        cloud_ticks: u32,
+    },
+    /// Own units within `radius` of the point are hidden from the enemy for `ticks`, as
+    /// stealth units are: a detector in range sees them, and firing gives them away.
+    Cloak { radius: Fx, ticks: u32 },
 }
 
 /// A per-def change, in whole percent; several for one def multiply.
@@ -521,6 +548,15 @@ fn tuned(rules: &Rules, mut power: Power, perks: &[PerkId]) -> Power {
             radius,
         },
         PowerKind::Recon { def } => PowerKind::Recon { def },
+        PowerKind::Missiles { damage, cloud_damage, .. } => {
+            let mut kind = power.kind;
+            if let PowerKind::Missiles { damage: d, cloud_damage: c, .. } = &mut kind {
+                *d = scale(damage as i64, strength) as i32;
+                *c = scale(cloud_damage as i64, strength) as i32;
+            }
+            kind
+        }
+        PowerKind::Cloak { radius, ticks } => PowerKind::Cloak { radius, ticks: scale(ticks as i64, strength) as u32 },
     };
     power
 }

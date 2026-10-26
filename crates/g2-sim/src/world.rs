@@ -161,6 +161,19 @@ pub struct ShellInFlight {
     pub garrison_bonus: i32,
 }
 
+/// A lingering toxin cloud from a missile power. Part of the state hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Cloud {
+    pub owner: PlayerId,
+    pub at: Vec2,
+    pub radius: Fx,
+    /// Damage each second to every enemy ground unit and building within `radius`.
+    pub damage: i32,
+    /// The cloud is active from `from` and gone at `until`.
+    pub from: u32,
+    pub until: u32,
+}
+
 pub struct World {
     pub rules: &'static Rules,
     pub map: MapDef,
@@ -187,6 +200,8 @@ pub struct World {
     shots: Vec<(EntityId, PlayerId, EntityId, i32, bool)>,
     /// Shells in flight, in firing order.
     pub(crate) shells: Vec<ShellInFlight>,
+    /// Toxin clouds, in order of creation.
+    pub(crate) clouds: Vec<Cloud>,
     /// What each player sees and has explored (index = player). Updated every tick before
     /// units act, so targeting only ever uses what is visible at the start of the tick.
     pub(crate) visions: Vec<crate::fog::Vision>,
@@ -228,6 +243,7 @@ impl World {
             nav_key: u64::MAX,
             shots: Vec::new(),
             shells: Vec::new(),
+            clouds: Vec::new(),
             visions: setup.players.iter().map(|_| crate::fog::Vision::new(setup.map.width, setup.map.height)).collect(),
             stats: vec![Stats::default(); setup.players.len()],
             checkpoints: Vec::new(),
@@ -252,9 +268,10 @@ impl World {
                 power_supply: 0,
                 power_drain: 0,
                 defeated: false,
+                // A power that needs a building starts unavailable: finishing one charges it.
                 power_ready: crate::defs::powers(rules, p.faction, p.general, &p.perks)
                     .iter()
-                    .map(|pw| pw.map(|pw| pw.first_ticks))
+                    .map(|pw| pw.filter(|pw| pw.requires.is_none()).map(|pw| pw.first_ticks))
                     .collect(),
                 upgrades: Vec::new(),
                 hit_by_stealth: false,
@@ -301,6 +318,7 @@ impl World {
             experience: 0,
             inside: None,
             revealed_until: None,
+            cloaked_until: None,
             route: Route::default(),
         }
     }
@@ -352,6 +370,11 @@ impl World {
     /// Artillery shells in the air, in firing order.
     pub fn shells(&self) -> &[ShellInFlight] {
         &self.shells
+    }
+
+    /// Toxin clouds, active and still to come.
+    pub fn clouds(&self) -> &[Cloud] {
+        &self.clouds
     }
 
     /// Match totals for player `id`.
@@ -427,10 +450,33 @@ impl World {
         self.powers_of(player).get(slot as usize).copied().flatten()
     }
 
-    /// Ticks until `player` can use `slot` (0: now); `None` for an empty slot.
+    /// Ticks until `player` can use `slot` (0: now); `None` for an empty slot, or one whose
+    /// required building the player doesn't have.
     pub fn power_wait(&self, player: PlayerId, slot: u8) -> Option<u32> {
         let ready = self.player(player).power_ready.get(slot as usize).copied().flatten()?;
         Some(ready.saturating_sub(self.tick))
+    }
+
+    /// Charges or disables the powers that need a building: one whose required building
+    /// `player` now has a finished copy of, and had none before, starts charging; one whose
+    /// last copy is gone becomes unavailable.
+    fn update_power_sites(&mut self) {
+        for p in 0..self.players.len() {
+            let player = PlayerId(p as u8);
+            for (slot, power) in self.powers_of(player).into_iter().enumerate() {
+                let Some(def) = power.and_then(|pw| pw.requires) else { continue };
+                let has = self
+                    .entities
+                    .iter()
+                    .any(|e| e.owner == Some(player) && e.def == def && e.is_complete() && e.hp > 0);
+                let ready = &mut self.players[p].power_ready[slot];
+                match (has, *ready) {
+                    (true, None) => *ready = Some(self.tick + power.unwrap().first_ticks),
+                    (false, Some(_)) => *ready = None,
+                    _ => {}
+                }
+            }
+        }
     }
 
     /// Maximum hit points: the def's, plus any health upgrades its owner researched and its
@@ -598,6 +644,7 @@ impl World {
         // Shells fired on earlier ticks land before this tick's shots are applied, so their
         // damage joins the same simultaneous resolution.
         self.land_shells();
+        self.poison_clouds();
         self.resolve_shots();
         // After the shots, so a unit hit this tick has its quiet spell restart before it heals.
         self.update_repairs();
@@ -608,6 +655,8 @@ impl World {
         // Defeat first, so an eliminated player's remaining units go in the same tick.
         self.update_defeat();
         self.cleanup();
+        // After cleanup, so a superweapon destroyed this tick takes its power with it.
+        self.update_power_sites();
         // Last, so the AI and every unit next tick see the state this tick ended in.
         self.update_vision();
         self.tick += 1;
@@ -628,7 +677,7 @@ impl World {
     }
 
     fn update_vision(&mut self) {
-        crate::fog::update(&mut self.visions, &self.entities, self.rules, ACQUIRE);
+        crate::fog::update(&mut self.visions, &self.entities, self.rules, ACQUIRE, self.tick);
     }
 
     /// What `player` sees and has explored.
@@ -647,9 +696,9 @@ impl World {
     }
 
     /// Whether `e` is stealthed right now: a stealth unit that hasn't fired in the last
-    /// `STEALTH_REVEAL_TICKS`.
+    /// `STEALTH_REVEAL_TICKS`, or a unit under a cloaking power that hasn't fired since.
     pub fn hidden(&self, e: &Entity) -> bool {
-        self.rules.def(e.def).stealth && e.revealed_until.is_none_or(|t| self.tick >= t)
+        crate::fog::hidden(self.rules, e, self.tick)
     }
 
     fn apply_due_commands(&mut self) {
@@ -1692,10 +1741,11 @@ impl World {
         let stealthy = self.rules.def(self.entities.get(id).unwrap().def).stealth;
         let e = self.entities.get_mut(id).unwrap();
         e.cooldown = w.cooldown_ticks;
-        // Firing gives a stealth unit away for a while.
+        // Firing gives a stealth unit away for a while, and ends a cloaking power's cover.
         if stealthy {
             e.revealed_until = Some(tick + STEALTH_REVEAL_TICKS);
         }
+        e.cloaked_until = None;
         match w.shell {
             None => {
                 let damage = w.damage_vs(armour) + self.garrison_bonus_vs(w.garrison_bonus, target);
@@ -1727,6 +1777,10 @@ impl World {
     /// damage joins this tick's direct shots, so it applies together with them.
     fn land_shells(&mut self) {
         let tick = self.tick;
+        // A power's missiles leave their silo on a later tick than the order: shown on launch.
+        for s in self.shells.iter().filter(|s| s.fired == tick && s.shooter == POWER_SOURCE && s.from != s.at) {
+            self.events.push(Event::Fired { shooter: POWER_SOURCE, from: s.from, at: s.at, lands: s.lands });
+        }
         let (due, flying): (Vec<_>, Vec<_>) =
             core::mem::take(&mut self.shells).into_iter().partition(|s| s.lands <= tick);
         self.shells = flying;
@@ -1752,22 +1806,44 @@ impl World {
         }
     }
 
+    /// Every second, each active toxin cloud damages every enemy ground unit and building of
+    /// its owner's within its radius (aircraft and units inside something are untouched, as
+    /// with shells). Clouds past their end are dropped.
+    fn poison_clouds(&mut self) {
+        let tick = self.tick;
+        self.clouds.retain(|c| c.until > tick);
+        if !tick.is_multiple_of(TICKS_PER_SECOND) {
+            return;
+        }
+        for c in self.clouds.iter().filter(|c| c.from <= tick) {
+            for e in self.entities.iter() {
+                if !e.owner.is_some_and(|o| o != c.owner) || e.hp <= 0 || e.inside.is_some() {
+                    continue;
+                }
+                let d = self.rules.def(e.def);
+                if d.flies() || e.pos.distance(c.at) - d.radius > c.radius {
+                    continue;
+                }
+                self.shots.push((POWER_SOURCE, c.owner, e.id, c.damage, true));
+            }
+        }
+    }
+
     /// `bonus` if `target` has units inside it now, else 0.
     fn garrison_bonus_vs(&self, bonus: i32, target: EntityId) -> i32 {
         if bonus != 0 && self.entities.iter().any(|e| e.inside == Some(target)) { bonus } else { 0 }
     }
 
     /// `player`'s power in `slot` at `at`. A power aims only at ground the player has explored,
-    /// so it can't be used to scout (a recon is the exception: scouting is what it is for).
-    /// Barrage shells and airstrike bombs fly like artillery shells, with no shooter entity
-    /// (`POWER_SOURCE`), and are hashed with every other shell.
+    /// so it can't be used to scout, unless it is `blind`. Barrage shells, airstrike bombs and
+    /// missiles fly like artillery shells, with no shooter entity (`POWER_SOURCE`), and are
+    /// hashed with every other shell.
     fn use_power(&mut self, player: PlayerId, slot: u8, at: Vec2) -> Result<(), Reject> {
         let power = self.power_in(player, slot).ok_or(Reject::PowerNotReady)?;
         if self.power_wait(player, slot).is_none_or(|t| t > 0) {
             return Err(Reject::PowerNotReady);
         }
-        let scouts = matches!(power.kind, PowerKind::Recon { .. });
-        if !self.map.contains(at) || (!scouts && !self.visions[player.0 as usize].is_explored(at)) {
+        if !self.map.contains(at) || (!power.blind && !self.visions[player.0 as usize].is_explored(at)) {
             return Err(Reject::InvalidTarget);
         }
         match power.kind {
@@ -1828,6 +1904,72 @@ impl World {
             PowerKind::Recon { def } => {
                 let (entry, exit) = self.flight_line(player, at);
                 self.launch(def, player, entry, at, exit, slot);
+            }
+            PowerKind::Missiles {
+                missiles,
+                delay_ticks,
+                every_ticks,
+                speed,
+                spread,
+                damage,
+                radius,
+                cloud_radius,
+                cloud_damage,
+                cloud_ticks,
+            } => {
+                // From the building that launches them (the first standing one), else the start.
+                let site = power.requires.and_then(|d| {
+                    self.entities
+                        .iter()
+                        .find(|e| e.owner == Some(player) && e.def == d && e.is_complete())
+                        .map(|e| e.pos)
+                });
+                let from = site.unwrap_or(self.map.spawns[player.0 as usize]);
+                let flight = (from.distance(at) / speed.max(Fx::ONE)).floor_int().max(1) as u32;
+                let mut last = self.tick;
+                // A fixed pattern, not the RNG: the point first, then around it.
+                for k in 0..missiles {
+                    let spot = if k == 0 { at } else { self.map.clamp(at + around(k - 1, spread)) };
+                    let fired = self.tick + delay_ticks + k * every_ticks;
+                    last = fired + flight;
+                    self.shells.push(ShellInFlight {
+                        shooter: POWER_SOURCE,
+                        owner: player,
+                        from,
+                        at: spot,
+                        fired,
+                        lands: last,
+                        damage,
+                        bonus: [0; 4],
+                        radius,
+                        garrison_bonus: 0,
+                    });
+                }
+                if cloud_ticks > 0 {
+                    self.clouds.push(Cloud {
+                        owner: player,
+                        at,
+                        radius: cloud_radius,
+                        damage: cloud_damage,
+                        from: last,
+                        until: last + cloud_ticks,
+                    });
+                }
+            }
+            PowerKind::Cloak { radius, ticks } => {
+                let until = self.tick + ticks;
+                for id in self.entities.ids() {
+                    let e = self.entities.get(id).unwrap();
+                    let d = self.rules.def(e.def);
+                    if e.owner == Some(player)
+                        && d.is_unit()
+                        && !d.is_support_jet()
+                        && e.hp > 0
+                        && e.pos.distance(at) <= radius
+                    {
+                        self.entities.get_mut(id).unwrap().cloaked_until = Some(until);
+                    }
+                }
             }
         }
         self.players[player.0 as usize].power_ready[slot as usize] = Some(self.tick + power.cooldown_ticks);
