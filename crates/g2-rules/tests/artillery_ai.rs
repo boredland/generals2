@@ -32,6 +32,7 @@ fn normal_artillery_stands_behind_its_line() {
                         ai: Some(AiLevel::Normal),
                         general: None,
                         perks: Vec::new(),
+                        rank: 1,
                     },
                     PlayerSetup {
                         faction: fb,
@@ -39,6 +40,7 @@ fn normal_artillery_stands_behind_its_line() {
                         ai: Some(AiLevel::Easy),
                         general: None,
                         perks: Vec::new(),
+                        rank: 1,
                     },
                 ];
                 if seat == 1 {

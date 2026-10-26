@@ -23,6 +23,7 @@ fn setup(f: Faction, general: GeneralId, perks: &[PerkId]) -> MatchSetup {
         ai: None,
         general: Some(general),
         perks: perks.to_vec(),
+        rank: 1,
     };
     MatchSetup { map: crater_ridge(), seed: 1, players: vec![player(perks), player(&[])] }
 }
@@ -164,7 +165,7 @@ fn leadership_doubles_experience() {
     let mut w = World::new(&s, rules());
     let factory = build(&mut w, P0, GLA_FACTORY, crater_ridge().spawns[0] + Vec2::from_int(30, 0));
     let eu_barracks = build(&mut w, P1, EU_BARRACKS, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
-    let tank = train(&mut w, P0, factory, GLA_TANK);
+    let tank = train(&mut w, P0, factory, GLA_SHRAPNEL_TANK);
     let field = Vec2::from_int(200, 200);
     w.submit(P0, CommandKind::Move { units: vec![tank], target: field });
     step_until(&mut w, |w| w.entity(tank).unwrap().pos.distance(field) < g2_sim::Fx::from_int(5));
@@ -178,6 +179,6 @@ fn leadership_doubles_experience() {
         step_until(&mut w, |w| w.entity(squad).is_none());
         assert_eq!(w.entity(tank).unwrap().experience, 2 * kill, "two experience per kill");
     }
-    let v = rules().def(GLA_TANK).veterancy.unwrap();
+    let v = rules().def(GLA_SHRAPNEL_TANK).veterancy.unwrap();
     assert_eq!(w.rank(w.entity(tank).unwrap()), v.experience.iter().filter(|&&x| x <= 6).count() as u8);
 }

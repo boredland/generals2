@@ -25,6 +25,7 @@ fn stats_agree_with_the_match() {
                     ai: Some(if i == 0 { AiLevel::Normal } else { AiLevel::Easy }),
                     general: None,
                     perks: Vec::new(),
+                    rank: 1,
                 })
                 .collect(),
         };

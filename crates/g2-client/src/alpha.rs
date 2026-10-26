@@ -121,6 +121,28 @@ fn model_for(def: &str) -> Option<&'static str> {
         "APA Bomber" => "_asia/au_airbomber/au_airbomber_mesh",
         "APA Fighter" => "_asia/au_airfighter/au_airfighter_spysortie2_mesh",
         "GLA Scud Storm" => "_gla/gs_scudstorm/gs_scudstorm_mesh",
+        "EU Fox LRV" => "_eur/eu_lightreconvehicle/eu_lightreconvehicle_skn_mesh",
+        "EU Longbow" => "_eur/eu_lightrockethelo/eu_lightrockethelo_skn_mesh",
+        "EU Sniper Team" => "_eur/eu_elitesnipersoldier/eu_elitesnipersoldier_skn_mesh",
+        "EU Assault APC" => "_eur/eu_apcassault/eu_apcassault_skn_mesh",
+        "EU Shock Troopers" => "_eur/eu_shocktrooper/eu_shocktrooper_skn_mesh",
+        "EU Heavy Assault Laser" => "_eur/eu_heavylasertank/eu_heavylasertank_skn_mesh",
+        "EU Railgun Tank" => "_eur/eu_heavyrailguntank_exp/eu_heavyrailguntank_exp_skn_mesh",
+        "EU Railgun Turret" => "_eur/es_basedefenserailgun/es_basedefenserailgun_mesh",
+        "APA Inferno Squad" => "_asia/au_eliteflamesoldier/au_eliteflamesoldier_skn_mesh",
+        "APA Napalm Mortar Squad" => "_asia/au_elitenapalmsoldier/au_elitenapalm_shooter_skn_mesh",
+        "APA Dragon Tank" => "_asia/au_mediumflametank/au_mediumflametank_skn_mesh",
+        "APA Rocket Tank" => "_asia/au_mediumrockettank/au_mediumrockettank_skn_mesh",
+        "APA Saboteurs" => "_asia/au_saboteur/au_saboteur01_skn_mesh",
+        "APA Sunstorm" => "_asia/au_heavynukeartillery/au_heavynukeartillery_skn_mesh",
+        "APA Shadow Tank" => "_asia/au_mediumstealthtank/au_mediumstealthtank_skn_mesh",
+        "APA Urban Assault Squad" => "_asia/au_urbanassaulttrooper/au_urbanassaulttrooper_skn_mesh",
+        "GLA Battle Bus" => "_gla/gu_battlebus/gu_battlebus_mesh",
+        "GLA Black Market Artillery" => "_gla/gu_heavyrocketartillery/gu_heavyrocketartillery_skn_mesh",
+        "GLA Shrapnel Tank" => "_gla/gu_heavyshrapneltank/gu_heavyshrapneltank_skn_mesh",
+        "GLA Toxin Tank" => "_gla/gu_mediumtoxintank/gu_mediumtoxintank_skn_mesh",
+        "GLA Mobile Chemist" => "_gla/gu_lightchemicalvehicle/gu_lightchemicalvehicle_skn_mesh",
+        "GLA Bomb Truck" => "_gla/gu_lightbombvehicle/gu_lightbombvehicle_skn_mesh",
         "Shanty" => "civilian/africa/afri_cb_shanty/afri_cb_shanty_05_mesh",
         "Town House" => "civilian/africa/afri_cb_town/afri_cb_town_09_mesh",
         "Urban Block" => "civilian/africa/afri_cb_urban/afri_cb_urban_03_mesh",
@@ -158,6 +180,27 @@ fn voice_for(def: &str) -> Option<(&'static str, &'static str)> {
         "EU Valkyrie" => ("eu/eu_heavyrockethelo", "eu_heavyrockethelo"),
         "APA Mantis" => ("apa/au_lightgunhelo", "au_lightgunhelo"),
         "GLA Toxin Chopper" => ("gla/gu_lightchemicalhelo", "gu_lightchemicalhelo"),
+        "EU Fox LRV" => ("eu/eu_lightreconvehicle", "eu_lightreconvehicle"),
+        "EU Longbow" => ("eu/eu_lightrockethelo", "eu_lightrockethelo"),
+        "EU Sniper Team" => ("eu/eu_elitesniperteam", "eu_elitesniperteam"),
+        "EU Assault APC" => ("eu/eu_assaultapc", "eu_assaultapc"),
+        "EU Shock Troopers" => ("eu/eu_eliteshocktroopers", "eu_eliteshocktroopers"),
+        "EU Heavy Assault Laser" => ("eu/eu_heavylasertank", "eu_heavylasertank"),
+        "EU Railgun Tank" => ("eu/eu_experimentalrailguntank", "eu_experimentalrailguntank"),
+        "APA Inferno Squad" => ("apa/au_eliteflamesoldier", "au_eliteflamesoldier"),
+        "APA Napalm Mortar Squad" => ("apa/au_elitenapalmsoldier", "au_elitenapalmsoldier"),
+        "APA Dragon Tank" => ("apa/au_mediumflametank", "au_mediumflametank"),
+        "APA Rocket Tank" => ("apa/au_mediumrockettank", "au_mediumrockettank"),
+        "APA Saboteurs" => ("apa/au_saboteursquad", "au_saboteursquad"),
+        "APA Sunstorm" => ("apa/au_heavynukeartillery", "au_heavynukeartillery"),
+        "APA Shadow Tank" => ("apa/au_mediumstealthtank", "au_mediumstealthtank"),
+        "APA Urban Assault Squad" => ("apa/au_urbanassaultsquad", "au_urbanassaultsquad"),
+        "GLA Battle Bus" => ("gla/gu_battlebus", "gu_battlebus"),
+        "GLA Black Market Artillery" => ("gla/gu_heavyrocketartillery", "gu_heavyrocketartillery"),
+        "GLA Shrapnel Tank" => ("gla/gu_heavyshrapneltank", "gu_heavyshrapneltank"),
+        "GLA Toxin Tank" => ("gla/gu_mediumtoxintank", "gu_mediumtoxintank"),
+        "GLA Mobile Chemist" => ("gla/gu_mediumchemicalvehicles", "gu_mediumchemicalvehicles"),
+        "GLA Bomb Truck" => ("gla/gu_lightbombvehicle", "gu_lightbombvehicle"),
         _ => return None,
     })
 }
@@ -362,9 +405,11 @@ mod tests {
         for cue in Cue::ALL {
             assert!(s.effects.contains_key(&cue), "{cue:?}: effect missing");
         }
+        // Lines the alpha itself never recorded: those units stay silent for that response.
+        let alpha_lacks = [("APA Inferno Squad", Response::Select), ("GLA Shrapnel Tank", Response::Create)];
         for def in g2_rules::rules().defs.iter().filter(|d| voice_for(d.name).is_some()) {
             for r in Response::ALL {
-                if r == Response::Attack && def.weapon().is_none() {
+                if (r == Response::Attack && def.weapon().is_none()) || alpha_lacks.contains(&(def.name, r)) {
                     continue;
                 }
                 assert!(s.voices.contains_key(&(def.name, r)), "{} {r:?}: voice missing", def.name);

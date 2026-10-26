@@ -70,6 +70,9 @@ pub struct PlayerSetup {
     /// Perks slotted on that general for this match (from the player's profile); empty
     /// without a general.
     pub perks: Vec<crate::defs::PerkId>,
+    /// The player's rank with that general, 1-5 (from their profile): sets the level of its
+    /// power (`defs::POWER_LEVEL_RANKS`). 1 without a general.
+    pub rank: u8,
 }
 
 /// How strong the built-in AI plays. `Easy` is the original wave AI. `Normal` judges the battle

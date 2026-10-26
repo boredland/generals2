@@ -10,7 +10,14 @@ const JOINER: PlayerId = PlayerId(1);
 
 fn setup() -> MatchSetup {
     let players = [Faction::Eu, Faction::Gla]
-        .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None, perks: Vec::new() })
+        .map(|faction| PlayerSetup {
+            faction,
+            starting_credits: 5_000,
+            ai: None,
+            general: None,
+            perks: Vec::new(),
+            rank: 1,
+        })
         .to_vec();
     MatchSetup { map: crater_ridge(), seed: 7, players }
 }

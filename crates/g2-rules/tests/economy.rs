@@ -14,8 +14,15 @@ fn world(f0: Faction, credits: i64) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: credits, ai: None, general: None, perks: Vec::new() },
-            PlayerSetup { faction: Faction::Eu, starting_credits: credits, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: f0, starting_credits: credits, ai: None, general: None, perks: Vec::new(), rank: 1 },
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: credits,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
         ],
     };
     World::new(&setup, rules())
@@ -201,8 +208,22 @@ fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
-            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 0,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
+            PlayerSetup {
+                faction: Faction::Gla,
+                starting_credits: 0,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
         ],
     };
     // A square "lake" of terrain from (140,120) to (180,160); the target is its centre.
@@ -269,8 +290,22 @@ fn piles_deplete_and_vanish() {
         map,
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: None, general: None, perks: Vec::new() },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup {
+                faction: Faction::Gla,
+                starting_credits: 10_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 0,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
         ],
     };
     let mut w = World::new(&setup, rules());
@@ -298,8 +333,22 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
         map,
         seed: 1,
         players: vec![
-            PlayerSetup { faction: Faction::Gla, starting_credits: 10_000, ai: None, general: None, perks: Vec::new() },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup {
+                faction: Faction::Gla,
+                starting_credits: 10_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 0,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
         ],
     };
     let mut w = World::new(&setup, rules());
@@ -418,6 +467,7 @@ fn a_general_discounts_and_speeds_up_its_units() {
                         ai: None,
                         general: Some(g2_rules::generals::BULLDOG),
                         perks: Vec::new(),
+                        rank: 1,
                     },
                     PlayerSetup {
                         faction: Faction::Eu,
@@ -425,6 +475,7 @@ fn a_general_discounts_and_speeds_up_its_units() {
                         ai: None,
                         general: None,
                         perks: Vec::new(),
+                        rank: 1,
                     },
                 ],
             };
@@ -473,6 +524,7 @@ fn a_general_discounts_and_speeds_up_its_units() {
                 ai: None,
                 general: p.general,
                 perks: Vec::new(),
+                rank: 1,
             })
             .collect(),
     };
@@ -494,8 +546,16 @@ fn a_general_of_another_faction_is_refused_at_setup() {
                 ai: None,
                 general: Some(g2_rules::generals::JUNKYARD),
                 perks: Vec::new(),
+                rank: 1,
             },
-            PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup {
+                faction: Faction::Gla,
+                starting_credits: 0,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
         ],
     };
     World::new(&setup, rules());
@@ -510,8 +570,22 @@ fn the_general_is_part_of_the_state_hash() {
             map: crater_ridge(),
             seed: 1,
             players: vec![
-                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general, perks: Vec::new() },
-                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+                PlayerSetup {
+                    faction: Faction::Eu,
+                    starting_credits: 0,
+                    ai: None,
+                    general,
+                    perks: Vec::new(),
+                    rank: 1,
+                },
+                PlayerSetup {
+                    faction: Faction::Gla,
+                    starting_credits: 0,
+                    ai: None,
+                    general: None,
+                    perks: Vec::new(),
+                    rank: 1,
+                },
             ],
         };
         World::new(&setup, rules()).state_hash()
@@ -533,6 +607,7 @@ fn replays_with_invalid_generals_are_refused() {
                 ai: Some(g2_sim::AiLevel::Easy),
                 general: Some(g2_rules::generals::BULLDOG),
                 perks: Vec::new(),
+                rank: 1,
             },
             PlayerSetup {
                 faction: Faction::Gla,
@@ -540,6 +615,7 @@ fn replays_with_invalid_generals_are_refused() {
                 ai: Some(g2_sim::AiLevel::Easy),
                 general: None,
                 perks: Vec::new(),
+                rank: 1,
             },
         ],
     };
@@ -558,8 +634,22 @@ fn surrender_defeats_the_player_and_the_last_one_standing_wins() {
             map: crater_ridge(),
             seed: 1,
             players: vec![
-                PlayerSetup { faction: Faction::Eu, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
-                PlayerSetup { faction: Faction::Gla, starting_credits: 0, ai: None, general: None, perks: Vec::new() },
+                PlayerSetup {
+                    faction: Faction::Eu,
+                    starting_credits: 0,
+                    ai: None,
+                    general: None,
+                    perks: Vec::new(),
+                    rank: 1,
+                },
+                PlayerSetup {
+                    faction: Faction::Gla,
+                    starting_credits: 0,
+                    ai: None,
+                    general: None,
+                    perks: Vec::new(),
+                    rank: 1,
+                },
             ],
         },
         rules(),
@@ -767,6 +857,7 @@ fn mutual_kills_resolve_together() {
                 ai: None,
                 general: None,
                 perks: Vec::new(),
+                rank: 1,
             })
             .to_vec(),
     };
@@ -943,6 +1034,7 @@ fn destroying_every_building_and_constructor_defeats_a_player() {
                 ai: None,
                 general: None,
                 perks: Vec::new(),
+                rank: 1,
             })
             .collect(),
     };

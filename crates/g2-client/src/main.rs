@@ -266,6 +266,7 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
             ai,
             general,
             perks: ai.map_or_else(Vec::new, |level| g2_sim::ai::ai_perks(g2_rules::rules(), general, level)),
+            rank: ai.map_or(1, g2_sim::ai::ai_rank),
         })
     };
     // `--ai onslaught` makes the enemy the waves; a spectated player 0 is then `Normal`.

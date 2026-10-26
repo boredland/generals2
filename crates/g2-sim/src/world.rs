@@ -45,6 +45,8 @@ pub struct Player {
     pub hit_by_stealth: bool,
     /// Perks slotted for this match, from `PlayerSetup::perks`.
     pub perks: Vec<crate::defs::PerkId>,
+    /// Rank with the general, from `PlayerSetup::rank`: sets its power's level.
+    pub rank: u8,
 }
 
 /// Running totals for the end-of-match screen. Output only: nothing in the simulation reads
@@ -269,13 +271,14 @@ impl World {
                 power_drain: 0,
                 defeated: false,
                 // A power that needs a building starts unavailable: finishing one charges it.
-                power_ready: crate::defs::powers(rules, p.faction, p.general, &p.perks)
+                power_ready: crate::defs::powers(rules, p.faction, p.general, p.rank, &p.perks)
                     .iter()
                     .map(|pw| pw.filter(|pw| pw.requires.is_none()).map(|pw| pw.first_ticks))
                     .collect(),
                 upgrades: Vec::new(),
                 hit_by_stealth: false,
                 perks: p.perks.clone(),
+                rank: p.rank,
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
             // The onslaught has no base: its waves are all there is of it.
@@ -438,11 +441,17 @@ impl World {
         upgrades.chain(perks).filter(move |&&(d, _)| d == def).map(|&(_, e)| e)
     }
 
-    /// `player`'s powers by slot: their general's (as their perks tune it; `None` without one),
-    /// then their faction's support powers.
+    /// `player`'s powers by slot: their general's (at their rank's level, as their perks tune
+    /// it; `None` without one), then their faction's support powers.
     pub fn powers_of(&self, player: PlayerId) -> Vec<Option<crate::defs::Power>> {
         let p = self.player(player);
-        crate::defs::powers(self.rules, p.faction, p.general, &p.perks)
+        crate::defs::powers(self.rules, p.faction, p.general, p.rank, &p.perks)
+    }
+
+    /// What `maker` (a factory def, or a constructor def) offers `player`: its own list, with
+    /// their general's units.
+    pub fn offers_of(&self, player: PlayerId, maker: DefId) -> Vec<DefId> {
+        self.rules.offers_for(self.player(player).general, maker)
     }
 
     /// `player`'s power in `slot`, if they have one there.
@@ -869,7 +878,7 @@ impl World {
                 if !bd.is_constructor() {
                     return Err(Reject::NotAConstructor);
                 }
-                if !bd.builds.contains(def) {
+                if !self.offers_of(player, b.def).contains(def) {
                     return Err(Reject::CannotBuild);
                 }
                 let (pos, well) = self.check_placement(*def, *pos)?;
@@ -899,7 +908,7 @@ impl World {
             CommandKind::Train { producer, def } => {
                 let p = self.owned(player, *producer)?;
                 let pd = self.rules.def(p.def);
-                if !p.is_complete() || !pd.produces.contains(def) {
+                if !p.is_complete() || !self.offers_of(player, p.def).contains(def) {
                     return Err(Reject::CannotProduce);
                 }
                 if p.queue.len() >= MAX_QUEUE {

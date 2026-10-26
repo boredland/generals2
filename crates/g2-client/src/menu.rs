@@ -20,7 +20,7 @@ use g2_sim::defs::PerkId;
 use g2_sim::{AiLevel, CommandKind, Faction, GeneralId, PlayerId, PlayerSetup};
 
 use crate::hud::{DIM, PANEL, PANEL_EDGE, SLOT, TEAL, TEXT, clock, text};
-use g2_sim::ai::ai_perks;
+use g2_sim::ai::{ai_perks, ai_rank};
 
 use crate::profile::{MAX_RANK, Profile, Refused, match_experience, promotion_cost};
 use crate::sim::Sim;
@@ -125,8 +125,9 @@ impl Default for SkirmishConfig {
 
 impl SkirmishConfig {
     /// Builds the match this config describes. Slot 0 is the human player (`Sim::local`), who
-    /// slots `perks` (from their profile) on their general; AI slots pick their own.
-    pub fn build(&self, perks: &[PerkId]) -> Result<Sim, String> {
+    /// plays their general at `rank` with `perks` slotted (from their profile); AI slots pick
+    /// their own.
+    pub fn build(&self, perks: &[PerkId], rank: u8) -> Result<Sim, String> {
         let source = if self.map.contains(':') {
             Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &self.map)?)
         } else {
@@ -152,6 +153,11 @@ impl SkirmishConfig {
                     Some(level) => ai_perks(g2_rules::rules(), s.general, level),
                     None if i == 0 && s.general.is_some() => perks.to_vec(),
                     None => Vec::new(),
+                },
+                rank: match s.ai {
+                    Some(level) => ai_rank(level),
+                    None if i == 0 && s.general.is_some() => rank,
+                    None => 1,
                 },
             })
             .collect();
@@ -353,8 +359,10 @@ fn apply_one(world: &mut World, act: Act) {
             if let Some(starts) = map_starts(world, &config.map) {
                 config.clamp_slots(starts);
             }
-            let perks = world.resource::<Profile>().slotted(config.slots[0].general);
-            match config.build(&perks) {
+            let profile = world.resource::<Profile>();
+            let general = config.slots[0].general;
+            let (perks, rank) = (profile.slotted(general), general.map_or(1, |g| profile.progress(g).rank));
+            match config.build(&perks, rank) {
                 Ok(sim) => {
                     swap_world(world, sim);
                     let mut ui = world.resource_mut::<Ui>();
@@ -1135,7 +1143,10 @@ mod tests {
         assert_eq!(screen(&app), Screen::Generals);
         assert_eq!(app.world().resource::<Ui>().shown_general, BULLDOG);
         act(&mut app, Act::CycleShownGeneral(-1));
-        assert_eq!(app.world().resource::<Ui>().shown_general, JUNKYARD, "wraps around");
+        let last = GeneralId(g2_rules::rules().generals.len() as u16 - 1);
+        assert_eq!(app.world().resource::<Ui>().shown_general, last, "wraps around");
+        act(&mut app, Act::CycleShownGeneral(JUNKYARD.0 as i32 + 1));
+        assert_eq!(app.world().resource::<Ui>().shown_general, JUNKYARD);
         act(&mut app, Act::BuyPerk(JY_LEADERSHIP));
         assert_eq!(app.world().resource::<Ui>().refused, Some(Refused::RankTooLow));
         act(&mut app, Act::BuyPerk(JY_DISCIPLINE));

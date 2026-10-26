@@ -11,13 +11,14 @@ const WAVES_PLAYER: PlayerId = PlayerId(1);
 
 fn setup(human: Option<AiLevel>, f: [Faction; 2]) -> MatchSetup {
     let players = vec![
-        PlayerSetup { faction: f[0], starting_credits: 5_000, ai: human, general: None, perks: Vec::new() },
+        PlayerSetup { faction: f[0], starting_credits: 5_000, ai: human, general: None, perks: Vec::new(), rank: 1 },
         PlayerSetup {
             faction: f[1],
             starting_credits: 5_000,
             ai: Some(AiLevel::Onslaught),
             general: None,
             perks: Vec::new(),
+            rank: 1,
         },
     ];
     MatchSetup { map: crater_ridge(), seed: 1, players }

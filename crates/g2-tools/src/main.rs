@@ -95,6 +95,7 @@ fn ai_setup(args: &[String]) -> Result<MatchSetup, String> {
                 ai: Some(ai),
                 general,
                 perks: g2_sim::ai::ai_perks(rules(), general, ai),
+                rank: g2_sim::ai::ai_rank(ai),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -139,6 +140,7 @@ fn survey(args: &[String]) -> Result<(), String> {
                             ai: Some(l),
                             general: None,
                             perks: Vec::new(),
+                            rank: 1,
                         })
                         .to_vec();
                     let setup = MatchSetup { map: map.clone(), seed, players };
@@ -333,6 +335,7 @@ fn artillery(args: &[String]) -> Result<(), String> {
                         ai: Some(probed),
                         general: None,
                         perks: Vec::new(),
+                        rank: 1,
                     },
                     PlayerSetup {
                         faction: fb,
@@ -340,6 +343,7 @@ fn artillery(args: &[String]) -> Result<(), String> {
                         ai: Some(AiLevel::Easy),
                         general: None,
                         perks: Vec::new(),
+                        rank: 1,
                     },
                 ];
                 if seat == 1 {

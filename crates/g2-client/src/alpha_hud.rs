@@ -168,6 +168,80 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
         "GLA Scud Storm" => {
             ("BuildButtons/Active/GLA/GS_ScudStorm", "UnitPortraits/GLA/Structures/GS_ScudStorm_Portrait")
         }
+        "EU Fox LRV" => {
+            ("BuildButtons/Active/EU/EU_LightReconVehicle", "UnitPortraits/EU/Vehicles/EU_LightReconVehicle_Portrait")
+        }
+        "EU Longbow" => {
+            ("BuildButtons/Active/EU/EU_LightRocketHelo", "UnitPortraits/EU/Vehicles/EU_LightRocketHelo_Portrait")
+        }
+        "EU Sniper Team" => {
+            ("BuildButtons/Active/EU/EU_EliteSniperSoldierSquad", "UnitPortraits/EU/Units/EU_EliteSniperSquad_Portrait")
+        }
+        "EU Assault APC" => {
+            ("BuildButtons/Active/EU/EU_APC_Assault", "UnitPortraits/EU/Vehicles/EU_APC_Assault_Portrait")
+        }
+        "EU Shock Troopers" => {
+            ("BuildButtons/Active/EU/EU_ShockTrooperSquad", "UnitPortraits/EU/Units/EU_ShockTrooperSquad_Portrait")
+        }
+        "EU Heavy Assault Laser" => {
+            ("BuildButtons/Active/EU/EU_HeavyLaserTank", "UnitPortraits/EU/Vehicles/EU_HeavyLaserTank_Portrait")
+        }
+        "EU Railgun Tank" => (
+            "BuildButtons/Active/EU/EU_HeavyRailgunTankExp",
+            "UnitPortraits/EU/Vehicles/EU_HeavyRailgunTankExp_Portrait",
+        ),
+        "EU Railgun Turret" => (
+            "BuildButtons/Active/EU/ES_BaseDefenseRailgun",
+            "UnitPortraits/EU/Structures/ES_BaseDefenseRailgun_Portrait",
+        ),
+        "APA Inferno Squad" => (
+            "BuildButtons/Active/APA/AU_EliteFlameSoldierSquad",
+            "UnitPortraits/APA/Units/AU_EliteFlameSoldierSquad_Portrait",
+        ),
+        "APA Napalm Mortar Squad" => (
+            "BuildButtons/Active/APA/AU_EliteNapalmSquad",
+            "UnitPortraits/APA/Units/AU_EliteNapalmSoldierSquad_Portrait",
+        ),
+        "APA Dragon Tank" => {
+            ("BuildButtons/Active/APA/AU_MediumFlameTank", "UnitPortraits/APA/Vehicles/AU_MediumFlameTank_Portrait")
+        }
+        "APA Rocket Tank" => {
+            ("SelectionButtons/APA/SB_AU_MediumRocketTank", "UnitPortraits/APA/Vehicles/AU_MediumRocketTank_Portrait")
+        }
+        "APA Saboteurs" => {
+            ("BuildButtons/Active/APA/AU_SaboteurSquad", "UnitPortraits/APA/Units/AU_SaboteurSquad_Portrait")
+        }
+        "APA Sunstorm" => (
+            "BuildButtons/Active/APA/AU_HeavyNukeArtillery",
+            "UnitPortraits/APA/Vehicles/AU_HeavyNukeArtillery_Portrait",
+        ),
+        "APA Shadow Tank" => {
+            ("BuildButtons/Active/APA/AU_MediumStealthTank", "UnitPortraits/APA/Vehicles/AU_MediumStealthTank_Portrait")
+        }
+        "APA Urban Assault Squad" => (
+            "BuildButtons/Active/APA/AU_UrbanAssaultTrooperSquad",
+            "UnitPortraits/APA/Units/AU_UrbanAssaultTrooperSquad_Portrait",
+        ),
+        "GLA Battle Bus" => {
+            ("BuildButtons/Active/GLA/GU_BattleBus", "UnitPortraits/GLA/Vehicles/GU_BattleBus_Portrait")
+        }
+        "GLA Black Market Artillery" => (
+            "BuildButtons/Active/GLA/GU_HeavyRocketArtillery",
+            "UnitPortraits/GLA/Vehicles/GU_HeavyRocketArtillery_Portrait",
+        ),
+        "GLA Shrapnel Tank" => {
+            ("BuildButtons/Active/GLA/GU_HeavyShrapnelTank", "UnitPortraits/GLA/Vehicles/GU_HeavyShrapnelTank_Portrait")
+        }
+        "GLA Toxin Tank" => {
+            ("BuildButtons/Active/GLA/GU_MediumToxinTank", "UnitPortraits/GLA/Vehicles/GU_MediumToxinTank_Portrait")
+        }
+        "GLA Mobile Chemist" => (
+            "BuildButtons/Active/GLA/GU_LightChemicalVehicle",
+            "UnitPortraits/GLA/Vehicles/GU_LightChemicalVehicle_Portrait",
+        ),
+        "GLA Bomb Truck" => {
+            ("BuildButtons/Active/GLA/GU_LightBombVehicle", "UnitPortraits/GLA/Vehicles/GU_LightBombVehicle_Portrait")
+        }
         "EU Gun Turret" => {
             ("BuildButtons/Active/EU/ES_BaseDefenseGun", "UnitPortraits/EU/Structures/ES_BaseDefenseGun_Portrait")
         }

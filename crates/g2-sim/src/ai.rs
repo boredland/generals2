@@ -37,6 +37,12 @@ pub struct Ai {
     regroup_until: u32,
 }
 
+/// The general rank an AI plays at: `Easy` at 1, like a new player; `Normal` and `Onslaught`
+/// at 3, matching the perks they slot (`ai_perks`), so their power is at its second level.
+pub fn ai_rank(level: AiLevel) -> u8 {
+    if level == AiLevel::Easy { 1 } else { 3 }
+}
+
 /// What an AI general slots: `Easy` plays without perks; `Normal` and `Onslaught` slot as a
 /// rank 3 player would, the first three of the general's perks open by rank 3 whose lower tier
 /// is also slotted.
@@ -115,14 +121,16 @@ impl Ai {
         })
     }
 
-    /// Where to use `power` now, if it is worth it: a barrage or an airstrike on the visible
-    /// enemy army's strongest spot; a repair on the spot where our own units and buildings have
-    /// lost the most hit points (at least 600); an ambush beside the nearest visible enemy
-    /// building, else in front of our own base; a missile strike on the remembered enemy base.
-    /// Never a recon: flown over the enemy start, its early look sent Normal's waves at the
-    /// base too soon (Normal won 36 of 54 against Easy with it, 40 without, and lost 12 of 15
-    /// field guns instead of under two thirds). Never a cloak: Normal has no plan for sneaking.
-    fn power_target(&self, world: &World, mine: &[&Entity], power: Power) -> Option<Vec2> {
+    /// Where to use `power` now, if it is worth it: a barrage, an airstrike or a toxin bomb on
+    /// the visible enemy army's strongest spot; a repair on the spot where our own units and
+    /// buildings have lost the most hit points (at least 600); an ambush beside the nearest
+    /// visible enemy building, else in front of our own base; a superweapon on the remembered
+    /// enemy base; the general's own cloak over our largest group of combat units out in the
+    /// field. Never a recon: flown over the enemy start, its early look sent Normal's waves at
+    /// the base too soon (Normal won 36 of 54 against Easy with it, 40 without, and lost 12 of
+    /// 15 field guns instead of under two thirds). Never the faction's cloak (the GLA's GPS
+    /// Scrambler, `slot` above 0): a wide cover for a base, which Normal has no plan for.
+    fn power_target(&self, world: &World, mine: &[&Entity], slot: u8, power: Power) -> Option<Vec2> {
         let player = world.player(self.player);
         let vision = world.vision(self.player);
         // The best of `points` by the sum of `weight` within `r` of each.
@@ -130,10 +138,30 @@ impl Ai {
             points.iter().map(|&p| (weight(p), p)).filter(|&(w, _)| w > 0).max_by_key(|&(w, p)| (w, p.x, p.y))
         };
         match power.kind {
-            PowerKind::Recon { .. } | PowerKind::Cloak { .. } => None,
+            PowerKind::Recon { .. } => None,
+            PowerKind::Cloak { .. } if slot > 0 => None,
+            // A cloak over our largest group of combat units out in the field (at least three,
+            // away from home), so they close in unseen.
+            PowerKind::Cloak { radius, .. } => {
+                let home =
+                    mine.iter().find(|e| world.rules.def(e.def).role() == Some(BuildingRole::CommandCenter))?.pos;
+                let field: Vec<&&Entity> = mine
+                    .iter()
+                    .filter(|e| {
+                        let d = world.rules.def(e.def);
+                        d.is_unit()
+                            && d.weapon().is_some()
+                            && e.inside.is_none()
+                            && e.pos.distance(home) > Fx::from_int(80)
+                    })
+                    .collect();
+                let points: Vec<Vec2> = field.iter().map(|e| e.pos).collect();
+                let weight = |p: Vec2| field.iter().filter(|e| e.pos.distance(p) <= radius).count() as i64;
+                best(&points, &weight).filter(|&(w, _)| w >= 3).map(|(_, p)| p)
+            }
             // The superweapon: on the enemy base, at the remembered building with the most
             // building hit points around it within the cloud.
-            PowerKind::Missiles { cloud_radius, .. } => {
+            PowerKind::Missiles { cloud_radius, .. } if power.requires.is_some() => {
                 let seen: Vec<(Vec2, i64)> = vision
                     .memory
                     .values()
@@ -145,24 +173,29 @@ impl Ai {
                     |p: Vec2| seen.iter().filter(|&&(q, _)| q.distance(p) <= cloud_radius).map(|&(_, hp)| hp).sum();
                 best(&points, &weight).map(|(_, p)| p)
             }
-            PowerKind::Barrage { radius, .. } | PowerKind::Airstrike { radius, .. } => {
+            PowerKind::Barrage { radius, shells, .. }
+            | PowerKind::Airstrike { radius, bombs: shells, .. }
+            | PowerKind::Missiles { radius, missiles: shells, .. } => {
                 let enemies: Vec<&Entity> = world
                     .entities()
                     .filter(|e| e.owner.is_some_and(|o| o != self.player) && world.sees(self.player, e))
                     .collect();
                 let points: Vec<Vec2> = enemies.iter().map(|e| e.pos).collect();
-                let reach = radius * Fx::from_int(3);
+                // A pattern of shells covers about three radii; a single blast just its own.
+                let reach = if shells > 1 { radius * Fx::from_int(3) } else { radius };
                 let weight =
                     |p: Vec2| enemies.iter().filter(|e| e.pos.distance(p) <= reach).map(|e| strength(world, e)).sum();
-                // Worth a barrage: at least two of our faction's strongest units (at full health,
-                // undeployed) worth of enemy fighting strength in the blast area. Fixed by the
-                // rules, so it doesn't drift with how our own army is doing.
-                let faction = player.faction;
+                // Worth a barrage: at least two of our faction's strongest standard units' (at
+                // full health, undeployed) worth of enemy fighting strength in the blast area.
+                // Fixed by the rules, not the general: an elite general's unit (a railgun tank)
+                // would set the bar out of reach of its own general's strike.
                 let tank = world
                     .rules
                     .defs
                     .iter()
-                    .filter(|d| d.faction == Some(faction) && d.is_unit())
+                    .filter(|d| d.faction == Some(player.faction) && d.is_building())
+                    .flat_map(|b| b.produces.iter().map(|&u| world.rules.def(u)))
+                    .filter(|d| d.is_unit())
                     .filter_map(|d| {
                         d.weapon_for(false).map(|w| {
                             d.hp as i64 * w.damage as i64 * TICKS_PER_SECOND as i64 / w.cooldown_ticks.max(1) as i64
@@ -234,7 +267,7 @@ impl Ai {
                 Some((slot as u8, p))
             });
             for (slot, p) in ready {
-                if let Some(at) = self.power_target(world, &mine, p) {
+                if let Some(at) = self.power_target(world, &mine, slot, p) {
                     out.push(CommandKind::Power { slot, at });
                     break;
                 }
@@ -277,9 +310,9 @@ impl Ai {
         // base is replaced rather than left standing forever as idle constructors.
         let anchor = cc.map(|c| c.pos).or_else(|| idle_constructor.and_then(|b| world.entity(b)).map(|e| e.pos));
         if let (Some(builder), Some(base)) = (idle_constructor, anchor) {
-            let builder_def = rules.def(world.entity(builder).unwrap().def);
-            let find =
-                |pred: fn(&crate::defs::Def) -> bool| builder_def.builds.iter().copied().find(|&b| pred(rules.def(b)));
+            // What this builder places for us, with our general's defences.
+            let builds = world.offers_of(me, world.entity(builder).unwrap().def);
+            let find = |pred: fn(&crate::defs::Def) -> bool| builds.iter().copied().find(|&b| pred(rules.def(b)));
             let derrick = find(|d| matches!(d.role(), Some(BuildingRole::OilDerrick { .. })));
             let derricks = count(|r| matches!(r, BuildingRole::OilDerrick { .. }));
             // Barracks first: the faction's factory producing the cheaper unit. Factories that
@@ -289,8 +322,7 @@ impl Ai {
                 !p.is_empty() && p.iter().all(|&u| rules.def(u).flies())
             };
             let factories: Vec<_> = {
-                let mut f: Vec<_> = builder_def
-                    .builds
+                let mut f: Vec<_> = builds
                     .iter()
                     .copied()
                     .filter(|&b| rules.def(b).role() == Some(BuildingRole::Factory) && !air_only(b))
@@ -299,11 +331,9 @@ impl Ai {
                 f
             };
             // Normal: one airfield, once credits pile up with the core factories standing.
-            let airfield =
-                builder_def.builds.iter().copied().filter(|&b| air_only(b)).find(|&b| !mine.iter().any(|e| e.def == b));
+            let airfield = builds.iter().copied().filter(|&b| air_only(b)).find(|&b| !mine.iter().any(|e| e.def == b));
             // Normal: one superweapon, last of all, from a surplus well above its price.
-            let superweapon = builder_def
-                .builds
+            let superweapon = builds
                 .iter()
                 .copied()
                 .find(|&b| rules.def(b).role() == Some(BuildingRole::Superweapon))
@@ -341,19 +371,14 @@ impl Ai {
             // Normal: each tech building once, cheapest first, once credits pile up with every
             // factory it wants already standing (its army comes first).
             let lab = {
-                let mut labs: Vec<_> = builder_def
-                    .builds
-                    .iter()
-                    .copied()
-                    .filter(|&b| rules.def(b).role() == Some(BuildingRole::Lab))
-                    .collect();
+                let mut labs: Vec<_> =
+                    builds.iter().copied().filter(|&b| rules.def(b).role() == Some(BuildingRole::Lab)).collect();
                 labs.sort_by_key(|&b| rules.def(b).cost.credits);
                 labs.into_iter().find(|&l| !mine.iter().any(|e| e.def == l))
             };
             // Normal: one base defence, its only detector: as soon as its factories stand once
             // a stealth unit has hit it, else after its tech buildings (earlier, it cost wins).
-            let turret = builder_def
-                .builds
+            let turret = builds
                 .iter()
                 .copied()
                 .find(|&b| rules.def(b).role() == Some(BuildingRole::Defense))
@@ -444,7 +469,7 @@ impl Ai {
             if rules.def(f.def).role() != Some(BuildingRole::Factory) {
                 continue;
             }
-            let produces = rules.def(f.def).produces;
+            let produces = world.offers_of(me, f.def);
             let pick = produces
                 .iter()
                 .enumerate()

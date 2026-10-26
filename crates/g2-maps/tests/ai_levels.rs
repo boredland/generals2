@@ -27,6 +27,7 @@ fn normal_ai_beats_easy_and_replays_exactly() {
                             ai: Some(if i == normal.0 as usize { AiLevel::Normal } else { AiLevel::Easy }),
                             general: None,
                             perks: Vec::new(),
+                            rank: 1,
                         })
                         .collect();
                     let s = MatchSetup { map: map.clone(), seed: 1, players };

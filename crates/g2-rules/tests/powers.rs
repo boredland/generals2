@@ -16,8 +16,22 @@ fn setup(f0: Faction, general: GeneralId) -> MatchSetup {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 10_000, ai: None, general: Some(general), perks: Vec::new() },
-            PlayerSetup { faction: Faction::Eu, starting_credits: 10_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup {
+                faction: f0,
+                starting_credits: 10_000,
+                ai: None,
+                general: Some(general),
+                perks: Vec::new(),
+                rank: 1,
+            },
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 10_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
         ],
     }
 }
@@ -126,6 +140,7 @@ fn field_repair_restores_nearby_units() {
                 ai: None,
                 general: Some(TASKMASTER),
                 perks: Vec::new(),
+                rank: 1,
             },
             PlayerSetup {
                 faction: Faction::Eu,
@@ -133,6 +148,7 @@ fn field_repair_restores_nearby_units() {
                 ai: None,
                 general: Some(BULLDOG),
                 perks: Vec::new(),
+                rank: 1,
             },
         ],
     };

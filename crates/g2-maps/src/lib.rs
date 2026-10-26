@@ -1087,6 +1087,7 @@ mod tests {
                         ai: None,
                         general: None,
                         perks: Vec::new(),
+                        rank: 1,
                     })
                     .to_vec(),
             };
@@ -1123,6 +1124,7 @@ mod tests {
                     ai: Some(g2_sim::AiLevel::Easy),
                     general: None,
                     perks: Vec::new(),
+                    rank: 1,
                 })
                 .to_vec(),
         };

@@ -4,8 +4,9 @@
 //! outside this repository.
 //! Everything else is a placeholder chosen for playability and will be tuned.
 use g2_sim::defs::{
-    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, Garrison, General, Modifier,
-    Perk, PerkId, Power, PowerKind, PowerTuning, Rules, Shell, Targets, Upgrade, UpgradeId, Veterancy, Weapon,
+    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, Garrison, General,
+    GeneralUnit, Modifier, Perk, PerkId, Power, PowerKind, PowerTuning, Rules, Shell, Targets, Upgrade, UpgradeId,
+    Veterancy, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -69,6 +70,28 @@ pub mod ids {
     pub const APA_BOMBER: DefId = DefId(54);
     pub const APA_FIGHTER: DefId = DefId(55);
     pub const GLA_SCUD_STORM: DefId = DefId(56);
+    pub const EU_FOX: DefId = DefId(57);
+    pub const EU_LONGBOW: DefId = DefId(58);
+    pub const EU_SNIPERS: DefId = DefId(59);
+    pub const EU_ASSAULT_APC: DefId = DefId(60);
+    pub const EU_SHOCK_TROOPERS: DefId = DefId(61);
+    pub const EU_LASER_TANK: DefId = DefId(62);
+    pub const EU_RAILGUN_TANK: DefId = DefId(63);
+    pub const EU_RAILGUN_TURRET: DefId = DefId(64);
+    pub const APA_INFERNO: DefId = DefId(65);
+    pub const APA_NAPALM_MORTAR: DefId = DefId(66);
+    pub const APA_DRAGON: DefId = DefId(67);
+    pub const APA_ROCKET_TANK: DefId = DefId(68);
+    pub const APA_SABOTEURS: DefId = DefId(69);
+    pub const APA_SUNSTORM: DefId = DefId(70);
+    pub const APA_SHADOW_TANK: DefId = DefId(71);
+    pub const APA_URBAN_ASSAULT: DefId = DefId(72);
+    pub const GLA_BATTLE_BUS: DefId = DefId(73);
+    pub const GLA_BLACK_MARKET_ARTILLERY: DefId = DefId(74);
+    pub const GLA_SHRAPNEL_TANK: DefId = DefId(75);
+    pub const GLA_TOXIN_TANK: DefId = DefId(76);
+    pub const GLA_MOBILE_CHEMIST: DefId = DefId(77);
+    pub const GLA_BOMB_TRUCK: DefId = DefId(78);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -91,6 +114,17 @@ pub mod generals {
     pub const BULLDOG: GeneralId = GeneralId(0);
     pub const TASKMASTER: GeneralId = GeneralId(1);
     pub const JUNKYARD: GeneralId = GeneralId(2);
+    pub const DAEDALUS: GeneralId = GeneralId(3);
+    pub const MERCURY_RED: GeneralId = GeneralId(4);
+    pub const CUTTING_EDGE: GeneralId = GeneralId(5);
+    pub const CLEAVER: GeneralId = GeneralId(6);
+    pub const INFERNO: GeneralId = GeneralId(7);
+    pub const RED_ARROW: GeneralId = GeneralId(8);
+    pub const THOUSAND_SUNS: GeneralId = GeneralId(9);
+    pub const BLACKJACK: GeneralId = GeneralId(10);
+    pub const THRAX: GeneralId = GeneralId(11);
+    pub const WILD_DOG: GeneralId = GeneralId(12);
+    pub const KITBASH: GeneralId = GeneralId(13);
 }
 
 /// Stable ids into `RULES.perks`: eight per general, in each general's list order.
@@ -123,6 +157,105 @@ pub mod perks {
     pub const JY_PROTECTOR_II: PerkId = PerkId(21);
     pub const JY_FACTORY_OVERTIME: PerkId = PerkId(22);
     pub const JY_LEADERSHIP: PerkId = PerkId(23);
+    // Daedalus (EU).
+    pub const DD_TAILWIND: PerkId = PerkId(24);
+    pub const DD_HEAVY_BOMBS: PerkId = PerkId(25);
+    pub const DD_PROTECTOR_I: PerkId = PerkId(26);
+    pub const DD_PROTECTOR_II: PerkId = PerkId(27);
+    pub const DD_KANBAN: PerkId = PerkId(28);
+    pub const DD_AERODYNAMICS_I: PerkId = PerkId(29);
+    pub const DD_AERODYNAMICS_II: PerkId = PerkId(30);
+    pub const DD_INSOURCED: PerkId = PerkId(31);
+    // Mercury Red (EU).
+    pub const MR_DOUBLE_TIME: PerkId = PerkId(32);
+    pub const MR_FIELD_MEDICS: PerkId = PerkId(33);
+    pub const MR_PROTECTOR_I: PerkId = PerkId(34);
+    pub const MR_PROTECTOR_II: PerkId = PerkId(35);
+    pub const MR_RAPID_DEPLOYMENT: PerkId = PerkId(36);
+    pub const MR_FACTORY_OVERTIME: PerkId = PerkId(37);
+    pub const MR_INSOURCED: PerkId = PerkId(38);
+    pub const MR_LEADERSHIP: PerkId = PerkId(39);
+    // Cutting Edge (EU).
+    pub const CE_CAPACITORS: PerkId = PerkId(40);
+    pub const CE_FOCUSING: PerkId = PerkId(41);
+    pub const CE_PROTECTOR_I: PerkId = PerkId(42);
+    pub const CE_PROTECTOR_II: PerkId = PerkId(43);
+    pub const CE_FACTORY_OVERTIME: PerkId = PerkId(44);
+    pub const CE_REINFORCED: PerkId = PerkId(45);
+    pub const CE_INSOURCED: PerkId = PerkId(46);
+    pub const CE_OVERCHARGE: PerkId = PerkId(47);
+    // Cleaver (EU).
+    pub const CL_COOLANT: PerkId = PerkId(48);
+    pub const CL_PLASMA_CORE: PerkId = PerkId(49);
+    pub const CL_PROTECTOR_I: PerkId = PerkId(50);
+    pub const CL_PROTECTOR_II: PerkId = PerkId(51);
+    pub const CL_FACTORY_OVERTIME: PerkId = PerkId(52);
+    pub const CL_INSOURCED: PerkId = PerkId(53);
+    pub const CL_HEAVY_PLATING: PerkId = PerkId(54);
+    pub const CL_SLUGS: PerkId = PerkId(55);
+    // Inferno (APA).
+    pub const IN_DOUBLE_SHIFTS: PerkId = PerkId(56);
+    pub const IN_INFERNAL_DIESEL: PerkId = PerkId(57);
+    pub const IN_PROTECTOR_I: PerkId = PerkId(58);
+    pub const IN_PROTECTOR_II: PerkId = PerkId(59);
+    pub const IN_FACTORY_OVERTIME: PerkId = PerkId(60);
+    pub const IN_IGNITION: PerkId = PerkId(61);
+    pub const IN_INSOURCED: PerkId = PerkId(62);
+    pub const IN_LEADERSHIP: PerkId = PerkId(63);
+    // Red Arrow (APA).
+    pub const RA_SALVO_TIMING: PerkId = PerkId(64);
+    pub const RA_WARHEADS: PerkId = PerkId(65);
+    pub const RA_PROTECTOR_I: PerkId = PerkId(66);
+    pub const RA_PROTECTOR_II: PerkId = PerkId(67);
+    pub const RA_TANK_HUNTERS: PerkId = PerkId(68);
+    pub const RA_FACTORY_OVERTIME: PerkId = PerkId(69);
+    pub const RA_INSOURCED: PerkId = PerkId(70);
+    pub const RA_GUIDANCE: PerkId = PerkId(71);
+    // 1000 Suns (APA).
+    pub const TS_FISSION: PerkId = PerkId(72);
+    pub const TS_ENRICHED: PerkId = PerkId(73);
+    pub const TS_PROTECTOR_I: PerkId = PerkId(74);
+    pub const TS_PROTECTOR_II: PerkId = PerkId(75);
+    pub const TS_FACTORY_OVERTIME: PerkId = PerkId(76);
+    pub const TS_URANIUM: PerkId = PerkId(77);
+    pub const TS_INSOURCED: PerkId = PerkId(78);
+    pub const TS_LEADERSHIP: PerkId = PerkId(79);
+    // Blackjack (APA).
+    pub const BJ_QUICK_HANDS: PerkId = PerkId(80);
+    pub const BJ_DEEP_COVER: PerkId = PerkId(81);
+    pub const BJ_PROTECTOR_I: PerkId = PerkId(82);
+    pub const BJ_PROTECTOR_II: PerkId = PerkId(83);
+    pub const BJ_POPULATION: PerkId = PerkId(84);
+    pub const BJ_FACTORY_OVERTIME: PerkId = PerkId(85);
+    pub const BJ_STICKY: PerkId = PerkId(86);
+    pub const BJ_LEADERSHIP: PerkId = PerkId(87);
+    // Thrax (GLA).
+    pub const TX_CATALYST: PerkId = PerkId(88);
+    pub const TX_CONCENTRATE: PerkId = PerkId(89);
+    pub const TX_PROTECTOR_I: PerkId = PerkId(90);
+    pub const TX_PROTECTOR_II: PerkId = PerkId(91);
+    pub const TX_FACTORY_OVERTIME: PerkId = PerkId(92);
+    pub const TX_ANTHRAX: PerkId = PerkId(93);
+    pub const TX_INSOURCED: PerkId = PerkId(94);
+    pub const TX_LEADERSHIP: PerkId = PerkId(95);
+    // Wild Dog (GLA).
+    pub const WD_QUICK_RELOAD: PerkId = PerkId(96);
+    pub const WD_SHAPED_CHARGES: PerkId = PerkId(97);
+    pub const WD_PROTECTOR_I: PerkId = PerkId(98);
+    pub const WD_PROTECTOR_II: PerkId = PerkId(99);
+    pub const WD_FACTORY_OVERTIME: PerkId = PerkId(100);
+    pub const WD_JUNK_ARMOR: PerkId = PerkId(101);
+    pub const WD_INSOURCED: PerkId = PerkId(102);
+    pub const WD_LEADERSHIP: PerkId = PerkId(103);
+    // Kitbash (GLA).
+    pub const KB_SCRAP_PARTS: PerkId = PerkId(104);
+    pub const KB_LONG_FIELD: PerkId = PerkId(105);
+    pub const KB_PROTECTOR_I: PerkId = PerkId(106);
+    pub const KB_PROTECTOR_II: PerkId = PerkId(107);
+    pub const KB_FACTORY_OVERTIME: PerkId = PerkId(108);
+    pub const KB_JUNK_REPAIR: PerkId = PerkId(109);
+    pub const KB_INSOURCED: PerkId = PerkId(110);
+    pub const KB_LEADERSHIP: PerkId = PerkId(111);
 }
 use ids::*;
 use perks::*;
@@ -395,7 +528,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 57] = [
+static DEFS: [Def; 79] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -955,6 +1088,387 @@ static DEFS: [Def; 57] = [
     // Worker (the wiki's Dirty Scud Storm); it launches GLA_PlayerAbility_DirtyScudStorm. No
     // power draw (GLA has none). Footprint is a placeholder.
     building("GLA Scud Storm", Faction::Gla, BuildingRole::Superweapon, 0, 1500, credits(4000), 60, 7, NONE),
+    // ---- Generals' units ------------------------------------------------------------------
+    // Units a general's factories add or swap in (the alpha's `StaticData/Generals/*` `Units`
+    // lists). src: each unit's own alpha blueprint: MaxHealth, Cost, BuildTime, the main
+    // weapon's DamageRating, DamageTypes bonuses (type 0 vs. infantry, 1 light, 2 heavy, 3
+    // structure, 4 garrisoned), Range and RateOfFire, and the veterancy's rank-1 health and
+    // rank-3 fire-rate cut. ArmorRating 0-2 is our Infantry for squads and Light for vehicles,
+    // 3-5 Light, 6+ Heavy. Speeds are placeholders by class (infantry 9, tanks 10, light
+    // vehicles 16, helicopters 12). Wiki names where the archive has them.
+    // Fox LRV (eu_lightreconvehicle): hp 300, $450, 12 s; machine gun 16 (+12 inf), 30, 0.98 s;
+    // carries one squad (`Capacity` 1, can't fire out).
+    carrying(
+        ranked(
+            soldier(
+                "EU Fox LRV",
+                Faction::Eu,
+                300,
+                Armour::Light,
+                credits(450),
+                secs(12),
+                16,
+                2,
+                weapon(16, [12, 0, 0, 0], 30, 10),
+            ),
+            54,
+            85,
+        ),
+        1,
+    ),
+    // Longbow (eu_lightrockethelo): hp 240 (the wiki's card 410), $850, 24 s; rockets 36 (+16
+    // light), 30, 1.2 s, ground and air (`TargetType` 0).
+    ranked(
+        flying(soldier(
+            "EU Longbow",
+            Faction::Eu,
+            240,
+            Armour::Light,
+            credits(850),
+            secs(24),
+            12,
+            3,
+            anti_air(weapon(36, [0, 16, 0, 0], 30, 12), 30),
+        )),
+        36,
+        88,
+    ),
+    // Sniper Team (eu_elitesnipersoldiersquad): hp 240, $750, 13 s; sniper rifle 25 (+200 vs.
+    // infantry), 50, 4 s; stealthed (the wiki's passive Camouflage).
+    stealthy(ranked(
+        soldier(
+            "EU Sniper Team",
+            Faction::Eu,
+            240,
+            Armour::Infantry,
+            credits(750),
+            secs(13),
+            9,
+            2,
+            weapon(25, [200, 0, 0, 0], 50, 40),
+        ),
+        14,
+        83,
+    )),
+    // Assault APC (eu_apcassault): hp 440, $600, 13 s; machine gun 28, 32, 1.5 s; carries two.
+    carrying(
+        ranked(
+            soldier(
+                "EU Assault APC",
+                Faction::Eu,
+                440,
+                Armour::Light,
+                credits(600),
+                secs(13),
+                17,
+                3,
+                weapon(28, [0, 0, 0, 0], 32, 15),
+            ),
+            54,
+            85,
+        ),
+        2,
+    ),
+    // Shock Troopers (eu_shocktroopersquad): hp 240, $375, 10 s; 23, 25, 1.2 s. Replaces the
+    // Recon Squad for its generals.
+    ranked(
+        soldier(
+            "EU Shock Troopers",
+            Faction::Eu,
+            240,
+            Armour::Infantry,
+            credits(375),
+            secs(10),
+            10,
+            2,
+            weapon(23, [0, 0, 0, 0], 25, 12),
+        ),
+        21,
+        94,
+    ),
+    // Heavy Assault Laser (eu_heavylasertank): hp 600 (the wiki's 1000), $1200, 22 s; laser
+    // 110, 35, 3 s. A direct-fire gun stands in for the beam.
+    ranked(
+        soldier(
+            "EU Heavy Assault Laser",
+            Faction::Eu,
+            600,
+            Armour::Light,
+            credits(1200),
+            secs(22),
+            9,
+            3,
+            weapon(110, [0, 0, 0, 0], 35, 30),
+        ),
+        72,
+        80,
+    ),
+    // Railgun Tank (eu_heavyrailguntank_exp): hp 900, $1250, 22 s; railgun 280 (+80 heavy,
+    // +120 garrisoned), 50, 4 s.
+    ranked(
+        soldier(
+            "EU Railgun Tank",
+            Faction::Eu,
+            900,
+            Armour::Heavy,
+            credits(1250),
+            secs(22),
+            8,
+            4,
+            garrison_buster(weapon(280, [0, 0, 80, 0], 50, 40), 120),
+        ),
+        72,
+        80,
+    ),
+    // Railgun turret (es_basedefenserailgun): hp 500, $575, 18 s, 20 power; railgun 100 (+100
+    // garrisoned), 50, 2.5 s, ground only; no stealth detection (the alpha's range 0). Replaces
+    // the Gun Turret for its generals.
+    defense(
+        "EU Railgun Turret",
+        Faction::Eu,
+        -20,
+        500,
+        credits(575),
+        18,
+        3,
+        garrison_buster(weapon(100, [0, 0, 0, 0], 50, 25), 100),
+        0,
+    ),
+    // Inferno Squad (au_eliteflamesoldiersquad): hp 330, $500, 13 s; flamethrower 50 (+65
+    // inf, +30 structure, +80 garrisoned), 25, 3.15 s.
+    ranked(
+        soldier(
+            "APA Inferno Squad",
+            Faction::Apa,
+            330,
+            Armour::Infantry,
+            credits(500),
+            secs(13),
+            9,
+            2,
+            garrison_buster(weapon(50, [65, 0, 0, 30], 25, 32), 80),
+        ),
+        42,
+        79,
+    ),
+    // Napalm Mortar Squad (au_elitenapalmsoldiersquad): hp 160 (the wiki's 205), $700, 14 s;
+    // napalm 40 (+55 inf, +30 structure, +80 garrisoned), 50, 4.15 s, lobbed as a shell.
+    ranked(
+        soldier(
+            "APA Napalm Mortar Squad",
+            Faction::Apa,
+            160,
+            Armour::Infantry,
+            credits(700),
+            secs(14),
+            8,
+            2,
+            garrison_buster(shelling(weapon(40, [55, 0, 0, 30], 50, 42), 5, 40, 12), 80),
+        ),
+        42,
+        79,
+    ),
+    // Dragon Tank (au_mediumflametank): hp 575, $800, 16 s; flamethrower 65 (+95 garrisoned),
+    // 30, 3.15 s.
+    ranked(
+        soldier(
+            "APA Dragon Tank",
+            Faction::Apa,
+            575,
+            Armour::Light,
+            credits(800),
+            secs(16),
+            10,
+            3,
+            garrison_buster(weapon(65, [0, 0, 0, 0], 30, 32), 95),
+        ),
+        72,
+        80,
+    ),
+    // Rocket Tank (au_mediumrockettank): hp 580 (the wiki's 480), $950, 20 s; rockets 45 (+33
+    // light), 35, 2 s, ground and air.
+    ranked(
+        soldier(
+            "APA Rocket Tank",
+            Faction::Apa,
+            580,
+            Armour::Light,
+            credits(950),
+            secs(20),
+            10,
+            3,
+            anti_air(weapon(45, [0, 33, 0, 0], 35, 20), 35),
+        ),
+        54,
+        85,
+    ),
+    // Saboteurs (au_saboteursquad): hp 325, $700, 12 s; sticky grenades 100 (+88 heavy), 18,
+    // 3 s; stealthed (the wiki's Camouflage).
+    stealthy(ranked(
+        soldier(
+            "APA Saboteurs",
+            Faction::Apa,
+            325,
+            Armour::Infantry,
+            credits(700),
+            secs(12),
+            10,
+            2,
+            weapon(100, [0, 0, 88, 0], 18, 30),
+        ),
+        54,
+        85,
+    )),
+    // Sunstorm (au_heavynukeartillery): hp 600, $1550, 24 s; on the move 60 (+20 inf), 30,
+    // 2 s; deployed, the nuclear howitzer 215, 65, 5 s. Shell speed and set-up: Thunderfist's.
+    ranked(
+        deploying(
+            soldier(
+                "APA Sunstorm",
+                Faction::Apa,
+                600,
+                Armour::Light,
+                credits(1550),
+                secs(24),
+                7,
+                3,
+                weapon(60, [20, 0, 0, 0], 30, 20),
+            ),
+            shelling(weapon(215, [0, 0, 0, 0], 65, 50), 8, 40, 20),
+            30,
+        ),
+        45,
+        67,
+    ),
+    // Shadow Tank (au_mediumstealthtank): hp 545, $1075, 17 s; cannon 85 (+30 light), 35,
+    // 2.5 s; stealthed (the wiki's passive stealth).
+    stealthy(ranked(
+        soldier(
+            "APA Shadow Tank",
+            Faction::Apa,
+            545,
+            Armour::Light,
+            credits(1075),
+            secs(17),
+            10,
+            3,
+            weapon(85, [0, 30, 0, 0], 35, 25),
+        ),
+        72,
+        80,
+    )),
+    // Urban Assault Squad (au_urbanassaulttroopersquad): hp 300, $375, 10 s; shotguns 44, 20,
+    // 2 s. Replaces the Red Guard for its generals.
+    ranked(
+        soldier(
+            "APA Urban Assault Squad",
+            Faction::Apa,
+            300,
+            Armour::Infantry,
+            credits(375),
+            secs(10),
+            9,
+            2,
+            weapon(44, [0, 0, 0, 0], 20, 20),
+        ),
+        12,
+        95,
+    ),
+    // Battle Bus (gu_battlebus): hp 525, $750, 14 s, unarmed; carries four squads who can't
+    // fire out (the wiki's bunker deploy isn't modelled).
+    carrying(
+        ranked(
+            with_armour(
+                unit("GLA Battle Bus", Faction::Gla, 525, credits(750), 14, 15, false, None, NONE),
+                Armour::Light,
+            ),
+            54,
+            100,
+        ),
+        4,
+    ),
+    // Black Market Artillery (gu_heavyrocketartillery): hp 750 (the wiki's 850), $1250, 24 s;
+    // rockets 70, 60, 1.75 s, lobbed as shells. The alpha's also fire at aircraft (`TargetType`
+    // 0; the wiki: "anti-aircraft"); a unit here has one weapon and shells can't hit the air.
+    ranked(
+        soldier(
+            "GLA Black Market Artillery",
+            Faction::Gla,
+            750,
+            Armour::Light,
+            credits(1250),
+            secs(24),
+            8,
+            3,
+            shelling(weapon(70, [0, 0, 0, 0], 60, 18), 6, 50, 15),
+        ),
+        105,
+        89,
+    ),
+    // Shrapnel Tank (gu_heavyshrapneltank): hp 650, $1000, 16 s; cannon 60 (+35 heavy), 35,
+    // 2.1 s. Replaces the Scorpion for its generals.
+    ranked(
+        soldier(
+            "GLA Shrapnel Tank",
+            Faction::Gla,
+            650,
+            Armour::Light,
+            credits(1000),
+            secs(16),
+            10,
+            3,
+            weapon(60, [0, 0, 35, 0], 35, 21),
+        ),
+        72,
+        80,
+    ),
+    // Toxin Tank (gu_mediumtoxintank): hp 625, $875, 17 s; toxin cannon 60 (+50 inf, +50
+    // garrisoned), 35, 3 s. Replaces the Scorpion for its general.
+    ranked(
+        soldier(
+            "GLA Toxin Tank",
+            Faction::Gla,
+            625,
+            Armour::Light,
+            credits(875),
+            secs(17),
+            10,
+            3,
+            garrison_buster(weapon(60, [50, 0, 0, 0], 35, 30), 50),
+        ),
+        54,
+        85,
+    ),
+    // Mobile Chemist (gu_lightchemicalvehicle): hp 200, $550, 12 s; submachine gun 11 (+11
+    // inf), 32, 1.2 s. Its healing isn't modelled. Replaces the Technical.
+    ranked(
+        soldier(
+            "GLA Mobile Chemist",
+            Faction::Gla,
+            200,
+            Armour::Light,
+            credits(550),
+            secs(12),
+            16,
+            2,
+            weapon(11, [11, 0, 0, 0], 32, 12),
+        ),
+        23,
+        94,
+    ),
+    // Bomb Truck (gu_lightbombvehicle): hp 160, $400, 13 s; high explosives 185 (+85 heavy),
+    // 7, 1 s: it drives up and blows its charge, but as a gun, not by dying.
+    soldier(
+        "GLA Bomb Truck",
+        Faction::Gla,
+        160,
+        Armour::Light,
+        credits(400),
+        secs(13),
+        16,
+        2,
+        weapon(185, [0, 0, 85, 0], 7, 10),
+    ),
 ];
 
 /// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
@@ -1245,7 +1759,7 @@ static UPGRADES: [Upgrade; 9] = [
 /// 22:06-23:40), matched to what our units and powers can do: "Double Shifts" ('Carpet Bomb'
 /// comes online faster after use) tunes our general's power the same way. Every percentage,
 /// rank and price is a placeholder, of the size of a Zero Hour upgrade (10-25%).
-static PERKS: [Perk; 24] = [
+static PERKS: [Perk; 112] = [
     // ---- Bulldog (EU) ----
     perk(
         "Double Shifts",
@@ -1426,6 +1940,820 @@ static PERKS: [Perk; 24] = [
     ),
     perk("Factory Overtime", "Vehicles build 15% faster.", 2, 500, None, &[], GLA_VEHICLES_FAST, None),
     perk("Leadership", "Units gain double experience from kills.", 5, 1500, None, GLA_LEADERSHIP, &[], None),
+    perk(
+        "Tailwind",
+        "Air Raid comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Heavy Bombs",
+        "Air Raid bombs deal 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, EU_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(DD_PROTECTOR_I),
+        EU_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk(
+        "Kanban",
+        "Longbows build 20% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: EU_LONGBOW, percent: 80 }],
+        None,
+    ),
+    perk(
+        "Aerodynamics I",
+        "Aircraft gain 15% more hit points.",
+        3,
+        800,
+        None,
+        &[(EU_VALKYRIE, Effect::Health { add: 93 }), (EU_LONGBOW, Effect::Health { add: 36 })],
+        &[],
+        None,
+    ),
+    perk(
+        "Aerodynamics II",
+        "Aircraft gain a further 15% more hit points.",
+        4,
+        1000,
+        Some(DD_AERODYNAMICS_I),
+        &[(EU_VALKYRIE, Effect::Health { add: 93 }), (EU_LONGBOW, Effect::Health { add: 36 })],
+        &[],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Fox LRVs cost 10% less.",
+        5,
+        1500,
+        None,
+        &[],
+        &[Modifier::Cost { def: EU_FOX, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Double Time",
+        "Bulwark comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Field Medics",
+        "Bulwark restores 25% more hit points.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 125 }),
+    ),
+    perk(
+        "Protector I",
+        "Shock Troopers take 10% less damage.",
+        1,
+        300,
+        None,
+        &[(EU_SHOCK_TROOPERS, PROTECTOR), (EU_ROCKETS, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Protector II",
+        "Shock Troopers take a further 10% less damage.",
+        3,
+        800,
+        Some(MR_PROTECTOR_I),
+        &[(EU_SHOCK_TROOPERS, PROTECTOR), (EU_ROCKETS, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Rapid Deployment",
+        "Shock Troopers build 20% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: EU_SHOCK_TROOPERS, percent: 80 }],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Assault APCs build 15% faster.",
+        3,
+        800,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: EU_ASSAULT_APC, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Tanks cost 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: EU_AEGIS, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Leadership",
+        "Infantry gain double experience from kills.",
+        5,
+        1500,
+        None,
+        &[(EU_SHOCK_TROOPERS, LEAD), (EU_ROCKETS, LEAD)],
+        &[],
+        None,
+    ),
+    perk(
+        "Capacitors",
+        "Skylance comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Focusing Optics",
+        "Skylance deals 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk(
+        "Protector I",
+        "Infantry take 10% less damage.",
+        1,
+        300,
+        None,
+        &[(EU_SHOCK_TROOPERS, PROTECTOR), (EU_ROCKETS, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(CE_PROTECTOR_I),
+        &[(EU_SHOCK_TROOPERS, PROTECTOR), (EU_ROCKETS, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Heavy Assault Lasers build 15% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: EU_LASER_TANK, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Reinforced Turrets",
+        "Railgun Turrets take 25% less damage.",
+        3,
+        800,
+        None,
+        &[(EU_RAILGUN_TURRET, Effect::Toughness { percent: 75 })],
+        &[],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Heavy Assault Lasers cost 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: EU_LASER_TANK, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Overcharge",
+        "Heavy Assault Lasers deal 20% more damage.",
+        5,
+        1500,
+        None,
+        &[(EU_LASER_TANK, Effect::Damage { percent: 120, against: None })],
+        &[],
+        None,
+    ),
+    perk(
+        "Coolant",
+        "Plasma Bomb comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Plasma Core",
+        "Plasma Bomb deals 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, EU_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(CL_PROTECTOR_I),
+        EU_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Railgun Tanks build 15% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: EU_RAILGUN_TANK, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Railgun Tanks cost 10% less.",
+        3,
+        800,
+        None,
+        &[],
+        &[Modifier::Cost { def: EU_RAILGUN_TANK, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Heavy Plating",
+        "Railgun Tanks take 10% less damage.",
+        4,
+        1000,
+        None,
+        &[(EU_RAILGUN_TANK, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Depleted Slugs",
+        "Railguns deal 20% more damage.",
+        5,
+        1500,
+        None,
+        &[
+            (EU_RAILGUN_TANK, Effect::Damage { percent: 120, against: None }),
+            (EU_RAILGUN_TURRET, Effect::Damage { percent: 120, against: None }),
+        ],
+        &[],
+        None,
+    ),
+    perk(
+        "Double Shifts",
+        "Inferno Artillery comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Infernal Diesel",
+        "Inferno Artillery deals 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk(
+        "Protector I",
+        "Infantry take 10% less damage.",
+        1,
+        300,
+        None,
+        &[(APA_RED_GUARD, PROTECTOR), (APA_TANK_HUNTER, PROTECTOR), (APA_NAPALM_MORTAR, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(IN_PROTECTOR_I),
+        &[(APA_RED_GUARD, PROTECTOR), (APA_TANK_HUNTER, PROTECTOR), (APA_NAPALM_MORTAR, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Dragon Tanks build 15% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: APA_DRAGON, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Ignition",
+        "Dragon Tanks deal 20% more damage.",
+        3,
+        800,
+        None,
+        &[(APA_DRAGON, Effect::Damage { percent: 120, against: None })],
+        &[],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Rocket Tanks cost 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: APA_ROCKET_TANK, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Leadership",
+        "Units gain double experience from kills.",
+        5,
+        1500,
+        None,
+        &[(APA_DRAGON, LEAD), (APA_ROCKET_TANK, LEAD), (APA_NAPALM_MORTAR, LEAD)],
+        &[],
+        None,
+    ),
+    perk(
+        "Salvo Timing",
+        "Thunderclap comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Heavy Warheads",
+        "Thunderclap rockets deal 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, APA_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(RA_PROTECTOR_I),
+        APA_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk(
+        "Tank Hunters",
+        "Tank Hunters build 20% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: APA_TANK_HUNTER, percent: 80 }],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Rocket Tanks build 15% faster.",
+        3,
+        800,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: APA_ROCKET_TANK, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Rocket Tanks cost 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: APA_ROCKET_TANK, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Guidance",
+        "Rocket units deal 20% more damage.",
+        5,
+        1500,
+        None,
+        &[
+            (APA_TANK_HUNTER, Effect::Damage { percent: 120, against: None }),
+            (APA_ROCKET_TANK, Effect::Damage { percent: 120, against: None }),
+        ],
+        &[],
+        None,
+    ),
+    perk(
+        "Fission",
+        "Neutron Bomb comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Enriched Core",
+        "Neutron Bomb deals 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, APA_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(TS_PROTECTOR_I),
+        APA_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Shadow Tanks build 15% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: APA_SHADOW_TANK, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Uranium Shells",
+        "Sunstorms deal 20% more damage.",
+        3,
+        800,
+        None,
+        &[(APA_SUNSTORM, Effect::ShellDamage { percent: 120 })],
+        &[],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Sunstorms cost 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: APA_SUNSTORM, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Leadership",
+        "Tanks gain double experience from kills.",
+        5,
+        1500,
+        None,
+        &[(APA_SHADOW_TANK, LEAD), (APA_ROCKET_TANK, LEAD), (APA_SUNSTORM, LEAD)],
+        &[],
+        None,
+    ),
+    perk(
+        "Quick Hands",
+        "Misdirection comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Deep Cover",
+        "Misdirection lasts 25% longer.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 125 }),
+    ),
+    perk(
+        "Protector I",
+        "Infantry take 10% less damage.",
+        1,
+        300,
+        None,
+        &[(APA_URBAN_ASSAULT, PROTECTOR), (APA_TANK_HUNTER, PROTECTOR), (APA_SABOTEURS, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(BJ_PROTECTOR_I),
+        &[(APA_URBAN_ASSAULT, PROTECTOR), (APA_TANK_HUNTER, PROTECTOR), (APA_SABOTEURS, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Population Control",
+        "Saboteurs cost 10% less.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::Cost { def: APA_SABOTEURS, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Shadow Tanks build 15% faster.",
+        3,
+        800,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: APA_SHADOW_TANK, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Sticky Charges",
+        "Saboteurs deal 20% more damage.",
+        4,
+        1000,
+        None,
+        &[(APA_SABOTEURS, Effect::Damage { percent: 120, against: None })],
+        &[],
+        None,
+    ),
+    perk(
+        "Leadership",
+        "Units gain double experience from kills.",
+        5,
+        1500,
+        None,
+        &[(APA_URBAN_ASSAULT, LEAD), (APA_SHADOW_TANK, LEAD), (APA_SABOTEURS, LEAD)],
+        &[],
+        None,
+    ),
+    perk(
+        "Catalyst",
+        "Toxin Bomb comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Concentrate",
+        "Toxin Bomb deals 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, GLA_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(TX_PROTECTOR_I),
+        GLA_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Toxin Tanks build 15% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: GLA_TOXIN_TANK, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Anthrax Beta",
+        "Toxin Tanks deal 20% more damage.",
+        3,
+        800,
+        None,
+        &[(GLA_TOXIN_TANK, Effect::Damage { percent: 120, against: None })],
+        &[],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Toxin Tanks cost 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: GLA_TOXIN_TANK, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Leadership",
+        "Units gain double experience from kills.",
+        5,
+        1500,
+        None,
+        &[(GLA_TOXIN_TANK, LEAD), (GLA_MOBILE_CHEMIST, LEAD), (GLA_RPG, LEAD)],
+        &[],
+        None,
+    ),
+    perk(
+        "Quick Reload",
+        "Mass RPG Strike comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Shaped Charges",
+        "Mass RPG Strike deals 20% more damage.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 120 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, GLA_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(WD_PROTECTOR_I),
+        GLA_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Shrapnel Tanks build 15% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: GLA_SHRAPNEL_TANK, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Junk Armor",
+        "Shrapnel Tanks take 10% less damage.",
+        3,
+        800,
+        None,
+        &[(GLA_SHRAPNEL_TANK, PROTECTOR)],
+        &[],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Shrapnel Tanks cost 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: GLA_SHRAPNEL_TANK, percent: 90 }],
+        None,
+    ),
+    perk(
+        "Leadership",
+        "Units gain double experience from kills.",
+        5,
+        1500,
+        None,
+        &[(GLA_SHRAPNEL_TANK, LEAD), (GLA_RABBLE, LEAD), (GLA_RPG, LEAD)],
+        &[],
+        None,
+    ),
+    perk(
+        "Scrap Parts",
+        "Stealth Field comes online 20% faster after use.",
+        1,
+        200,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Cooldown { percent: 80 }),
+    ),
+    perk(
+        "Long Field",
+        "Stealth Field lasts 25% longer.",
+        2,
+        500,
+        None,
+        &[],
+        &[],
+        Some(PowerTuning::Strength { percent: 125 }),
+    ),
+    perk("Protector I", "Infantry take 10% less damage.", 1, 300, None, GLA_INFANTRY_10, &[], None),
+    perk(
+        "Protector II",
+        "Infantry take a further 10% less damage.",
+        3,
+        800,
+        Some(KB_PROTECTOR_I),
+        GLA_INFANTRY_10,
+        &[],
+        None,
+    ),
+    perk(
+        "Factory Overtime",
+        "Black Market Artillery builds 15% faster.",
+        2,
+        500,
+        None,
+        &[],
+        &[Modifier::BuildTime { def: GLA_BLACK_MARKET_ARTILLERY, percent: 85 }],
+        None,
+    ),
+    perk(
+        "Junk Repair",
+        "Vehicles regain 2 hit points a second after 5 s without being hit.",
+        3,
+        800,
+        None,
+        &[(GLA_TANK, SCAVENGE), (GLA_TECHNICAL, SCAVENGE), (GLA_BLACK_MARKET_ARTILLERY, SCAVENGE)],
+        &[],
+        None,
+    ),
+    perk(
+        "Insourced",
+        "Black Market Artillery costs 10% less.",
+        4,
+        1000,
+        None,
+        &[],
+        &[Modifier::Cost { def: GLA_BLACK_MARKET_ARTILLERY, percent: 90 }],
+        None,
+    ),
+    perk("Leadership", "Units gain double experience from kills.", 5, 1500, None, GLA_LEADERSHIP, &[], None),
 ];
 
 #[allow(clippy::too_many_arguments)]
@@ -1442,25 +2770,49 @@ const fn perk(
     Perk { name, description, rank, price, requires, effects, modifiers, power }
 }
 
+// A faction's perk tables list every unit of its kind, the generals' own ones too: only a
+// player with that general can train them, so for anyone else those entries do nothing.
 const PROTECTOR: Effect = Effect::Toughness { percent: 90 };
-const EU_INFANTRY_10: &[(DefId, Effect)] = &[(EU_RECON, PROTECTOR), (EU_ROCKETS, PROTECTOR)];
-const APA_INFANTRY_10: &[(DefId, Effect)] = &[(APA_RED_GUARD, PROTECTOR), (APA_TANK_HUNTER, PROTECTOR)];
+const EU_INFANTRY_10: &[(DefId, Effect)] =
+    &[(EU_RECON, PROTECTOR), (EU_ROCKETS, PROTECTOR), (EU_SNIPERS, PROTECTOR), (EU_SHOCK_TROOPERS, PROTECTOR)];
+const APA_INFANTRY_10: &[(DefId, Effect)] = &[
+    (APA_RED_GUARD, PROTECTOR),
+    (APA_TANK_HUNTER, PROTECTOR),
+    (APA_INFERNO, PROTECTOR),
+    (APA_NAPALM_MORTAR, PROTECTOR),
+    (APA_SABOTEURS, PROTECTOR),
+    (APA_URBAN_ASSAULT, PROTECTOR),
+];
 const GLA_INFANTRY_10: &[(DefId, Effect)] = &[(GLA_RABBLE, PROTECTOR), (GLA_RPG, PROTECTOR)];
 const OVERTIME: u32 = 85;
 const EU_VEHICLES_FAST: &[Modifier] = &[
     Modifier::BuildTime { def: EU_AEGIS, percent: OVERTIME },
     Modifier::BuildTime { def: EU_ARTILLERY, percent: OVERTIME },
     Modifier::BuildTime { def: EU_APC, percent: OVERTIME },
+    Modifier::BuildTime { def: EU_FOX, percent: OVERTIME },
+    Modifier::BuildTime { def: EU_ASSAULT_APC, percent: OVERTIME },
+    Modifier::BuildTime { def: EU_LASER_TANK, percent: OVERTIME },
+    Modifier::BuildTime { def: EU_RAILGUN_TANK, percent: OVERTIME },
 ];
 const APA_VEHICLES_FAST: &[Modifier] = &[
     Modifier::BuildTime { def: APA_WARLORD, percent: OVERTIME },
     Modifier::BuildTime { def: APA_THUNDERFIST, percent: OVERTIME },
     Modifier::BuildTime { def: APA_GATLING, percent: OVERTIME },
+    Modifier::BuildTime { def: APA_DRAGON, percent: OVERTIME },
+    Modifier::BuildTime { def: APA_ROCKET_TANK, percent: OVERTIME },
+    Modifier::BuildTime { def: APA_SUNSTORM, percent: OVERTIME },
+    Modifier::BuildTime { def: APA_SHADOW_TANK, percent: OVERTIME },
 ];
 const GLA_VEHICLES_FAST: &[Modifier] = &[
     Modifier::BuildTime { def: GLA_TANK, percent: OVERTIME },
     Modifier::BuildTime { def: GLA_TOXIN_ARTILLERY, percent: OVERTIME },
     Modifier::BuildTime { def: GLA_TECHNICAL, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_BATTLE_BUS, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_BLACK_MARKET_ARTILLERY, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_SHRAPNEL_TANK, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_TOXIN_TANK, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_MOBILE_CHEMIST, percent: OVERTIME },
+    Modifier::BuildTime { def: GLA_BOMB_TRUCK, percent: OVERTIME },
 ];
 // A kill is 1 experience, so only whole multiples change anything.
 const LEAD: Effect = Effect::Experience { percent: 200 };
@@ -1471,6 +2823,12 @@ const GLA_LEADERSHIP: &[(DefId, Effect)] = &[
     (GLA_TOXIN_ARTILLERY, LEAD),
     (GLA_TECHNICAL, LEAD),
     (GLA_TOXIN_CHOPPER, LEAD),
+    (GLA_BATTLE_BUS, LEAD),
+    (GLA_BLACK_MARKET_ARTILLERY, LEAD),
+    (GLA_SHRAPNEL_TANK, LEAD),
+    (GLA_TOXIN_TANK, LEAD),
+    (GLA_MOBILE_CHEMIST, LEAD),
+    (GLA_BOMB_TRUCK, LEAD),
 ];
 const SCAVENGE: Effect = Effect::Repair { hp: 2, calm_ticks: secs(5) };
 const GLA_SCAVENGE: &[(DefId, Effect)] = &[
@@ -1480,9 +2838,15 @@ const GLA_SCAVENGE: &[(DefId, Effect)] = &[
     (GLA_TOXIN_ARTILLERY, SCAVENGE),
     (GLA_TECHNICAL, SCAVENGE),
     (GLA_TOXIN_CHOPPER, SCAVENGE),
+    (GLA_BATTLE_BUS, SCAVENGE),
+    (GLA_BLACK_MARKET_ARTILLERY, SCAVENGE),
+    (GLA_SHRAPNEL_TANK, SCAVENGE),
+    (GLA_TOXIN_TANK, SCAVENGE),
+    (GLA_MOBILE_CHEMIST, SCAVENGE),
+    (GLA_BOMB_TRUCK, SCAVENGE),
 ];
 
-static GENERALS: [General; 3] = [
+static GENERALS: [General; 14] = [
     General {
         name: "Bulldog",
         faction: Faction::Eu,
@@ -1510,6 +2874,40 @@ static GENERALS: [General; 3] = [
             blind: false,
             requires: None,
         }),
+        // levels: more shells (placeholders; the general is ours).
+        power_levels: &[
+            Power {
+                name: "Artillery barrage",
+                kind: PowerKind::Barrage {
+                    shells: 7,
+                    delay_ticks: secs(3),
+                    every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 90,
+                    bonus: [0, 20, 0, 0],
+                    radius: Fx::from_int(7),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Artillery barrage",
+                kind: PowerKind::Barrage {
+                    shells: 9,
+                    delay_ticks: secs(3),
+                    every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 90,
+                    bonus: [0, 20, 0, 0],
+                    radius: Fx::from_int(7),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[],
         perks: &[
             BD_DOUBLE_SHIFTS,
             BD_HEAVY_PAYLOAD,
@@ -1539,6 +2937,29 @@ static GENERALS: [General; 3] = [
             blind: false,
             requires: None,
         }),
+        // the alpha's global Supply Drop: radius 30, then 40 at lvl02 and lvl03, recharge 180 s; units: the wiki's Inferno Squad and Saboteurs for Taskmaster.
+        power_levels: &[
+            Power {
+                name: "Field repair",
+                kind: PowerKind::Repair { radius: Fx::from_int(40), hp: 400 },
+                first_ticks: secs(180),
+                cooldown_ticks: secs(180),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Field repair",
+                kind: PowerKind::Repair { radius: Fx::from_int(40), hp: 500 },
+                first_ticks: secs(180),
+                cooldown_ticks: secs(180),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: APA_INFERNO, replaces: None, at: APA_BARRACKS },
+            GeneralUnit { unit: APA_SABOTEURS, replaces: None, at: APA_BARRACKS },
+        ],
         perks: &[
             TM_SPY_EFFICIENCY,
             TM_LOGISTICS,
@@ -1567,6 +2988,30 @@ static GENERALS: [General; 3] = [
             blind: false,
             requires: None,
         }),
+        // units: the alpha's GLA_JunkyardGeneral (Battle Bus, Black Market Artillery, the Shrapnel Tank in place of the Scorpion); levels: more squads (placeholders).
+        power_levels: &[
+            Power {
+                name: "Ambush",
+                kind: PowerKind::Ambush { def: GLA_RPG, count: 5 },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Ambush",
+                kind: PowerKind::Ambush { def: GLA_RPG, count: 6 },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: GLA_BATTLE_BUS, replaces: None, at: GLA_FACTORY },
+            GeneralUnit { unit: GLA_BLACK_MARKET_ARTILLERY, replaces: None, at: GLA_FACTORY },
+            GeneralUnit { unit: GLA_SHRAPNEL_TANK, replaces: Some(GLA_TANK), at: GLA_FACTORY },
+        ],
         perks: &[
             JY_DISCIPLINE,
             JY_SCAVENGER,
@@ -1576,6 +3021,727 @@ static GENERALS: [General; 3] = [
             JY_PROTECTOR_II,
             JY_FACTORY_OVERTIME,
             JY_LEADERSHIP,
+        ],
+    },
+    // src: the EU air force general (the wiki's Daedalus, the alpha's EU_AirforceGeneral, icon EG_Airforce_01): Fox LRV in place of the APC, Longbow helicopters, the Sniper Team; power Air Raid (lvl01-03: 3 bombers, recharge 240 s, 1 s before activation).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Daedalus",
+        faction: Faction::Eu,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Air Raid",
+            kind: PowerKind::Airstrike {
+                def: EU_BOMBER,
+                jets: 3,
+                spread: Fx::from_int(10),
+                bombs: 2,
+                spacing: Fx::from_int(12),
+                damage: 140,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(10),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Air Raid",
+                kind: PowerKind::Airstrike {
+                    def: EU_BOMBER,
+                    jets: 3,
+                    spread: Fx::from_int(10),
+                    bombs: 2,
+                    spacing: Fx::from_int(12),
+                    damage: 175,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(10),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Air Raid",
+                kind: PowerKind::Airstrike {
+                    def: EU_BOMBER,
+                    jets: 4,
+                    spread: Fx::from_int(10),
+                    bombs: 2,
+                    spacing: Fx::from_int(12),
+                    damage: 175,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(10),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: EU_FOX, replaces: Some(EU_APC), at: EU_FACTORY },
+            GeneralUnit { unit: EU_LONGBOW, replaces: None, at: EU_AIRFIELD },
+            GeneralUnit { unit: EU_SNIPERS, replaces: None, at: EU_BARRACKS },
+        ],
+        perks: &[
+            DD_TAILWIND,
+            DD_HEAVY_BOMBS,
+            DD_PROTECTOR_I,
+            DD_PROTECTOR_II,
+            DD_KANBAN,
+            DD_AERODYNAMICS_I,
+            DD_AERODYNAMICS_II,
+            DD_INSOURCED,
+        ],
+    },
+    // src: the EU rapid assault general (the wiki's Mercury Red: Shock Troopers; the alpha's EU_RapidAssaultGeneral): Shock Troopers in place of the Recon Squad, the Assault APC in place of the APC, Longbows; power Bulwark (radius 25, recharge 180 s; the alpha's effect is a defensive buff, here a field repair).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Mercury Red",
+        faction: Faction::Eu,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Bulwark",
+            kind: PowerKind::Repair { radius: Fx::from_int(25), hp: 300 },
+            first_ticks: secs(180),
+            cooldown_ticks: secs(180),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Bulwark",
+                kind: PowerKind::Repair { radius: Fx::from_int(25), hp: 375 },
+                first_ticks: secs(180),
+                cooldown_ticks: secs(180),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Bulwark",
+                kind: PowerKind::Repair { radius: Fx::from_int(25), hp: 450 },
+                first_ticks: secs(180),
+                cooldown_ticks: secs(180),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: EU_SHOCK_TROOPERS, replaces: Some(EU_RECON), at: EU_BARRACKS },
+            GeneralUnit { unit: EU_ASSAULT_APC, replaces: Some(EU_APC), at: EU_FACTORY },
+            GeneralUnit { unit: EU_LONGBOW, replaces: None, at: EU_AIRFIELD },
+        ],
+        perks: &[
+            MR_DOUBLE_TIME,
+            MR_FIELD_MEDICS,
+            MR_PROTECTOR_I,
+            MR_PROTECTOR_II,
+            MR_RAPID_DEPLOYMENT,
+            MR_FACTORY_OVERTIME,
+            MR_INSOURCED,
+            MR_LEADERSHIP,
+        ],
+    },
+    // src: the EU experimental weapons general (the wiki's Cutting Edge: Heavy Assault Laser; the alpha's EU_LaserGeneral): the Assault APC in place of the APC, the Heavy Assault Laser, the Railgun Turret in place of the Gun Turret, Longbows, Shock Troopers in place of the Recon Squad; power Skylance (an orbital strike, radius 18, recharge 240 s, 300 base damage from lvl02).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Cutting Edge",
+        faction: Faction::Eu,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Skylance",
+            kind: PowerKind::Barrage {
+                shells: 1,
+                delay_ticks: secs(3),
+                every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                damage: 240,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(18),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Skylance",
+                kind: PowerKind::Barrage {
+                    shells: 1,
+                    delay_ticks: secs(3),
+                    every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 300,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(18),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Skylance",
+                kind: PowerKind::Barrage {
+                    shells: 2,
+                    delay_ticks: secs(3),
+                    every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 300,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(18),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: EU_ASSAULT_APC, replaces: Some(EU_APC), at: EU_FACTORY },
+            GeneralUnit { unit: EU_LASER_TANK, replaces: None, at: EU_FACTORY },
+            GeneralUnit { unit: EU_RAILGUN_TURRET, replaces: Some(EU_GUN_TURRET), at: EU_DOZER },
+            GeneralUnit { unit: EU_LONGBOW, replaces: None, at: EU_AIRFIELD },
+            GeneralUnit { unit: EU_SHOCK_TROOPERS, replaces: Some(EU_RECON), at: EU_BARRACKS },
+        ],
+        perks: &[
+            CE_CAPACITORS,
+            CE_FOCUSING,
+            CE_PROTECTOR_I,
+            CE_PROTECTOR_II,
+            CE_FACTORY_OVERTIME,
+            CE_REINFORCED,
+            CE_INSOURCED,
+            CE_OVERCHARGE,
+        ],
+    },
+    // src: the EU railgun general (the wiki's Cleaver: Railgun Squad; the alpha's EU_ScienceGeneral, icon EG_Railgun_01): Fox LRV, the Assault APC in place of the APC, Longbows, the Railgun Turret in place of the Gun Turret, the Railgun Tank; power Plasma Bomb (radius 25/30/35, recharge 240 s, 2.5 s).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Cleaver",
+        faction: Faction::Eu,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Plasma Bomb",
+            kind: PowerKind::Barrage {
+                shells: 1,
+                delay_ticks: secs(3),
+                every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                damage: 200,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(25),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Plasma Bomb",
+                kind: PowerKind::Barrage {
+                    shells: 1,
+                    delay_ticks: secs(3),
+                    every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 200,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(30),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Plasma Bomb",
+                kind: PowerKind::Barrage {
+                    shells: 1,
+                    delay_ticks: secs(3),
+                    every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 200,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(35),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: EU_FOX, replaces: None, at: EU_FACTORY },
+            GeneralUnit { unit: EU_ASSAULT_APC, replaces: Some(EU_APC), at: EU_FACTORY },
+            GeneralUnit { unit: EU_LONGBOW, replaces: None, at: EU_AIRFIELD },
+            GeneralUnit { unit: EU_RAILGUN_TURRET, replaces: Some(EU_GUN_TURRET), at: EU_DOZER },
+            GeneralUnit { unit: EU_RAILGUN_TANK, replaces: None, at: EU_FACTORY },
+        ],
+        perks: &[
+            CL_COOLANT,
+            CL_PLASMA_CORE,
+            CL_PROTECTOR_I,
+            CL_PROTECTOR_II,
+            CL_FACTORY_OVERTIME,
+            CL_INSOURCED,
+            CL_HEAVY_PLATING,
+            CL_SLUGS,
+        ],
+    },
+    // src: the APA flame general (the wiki's Inferno: Dragon Tank, Inferno Squad, Napalm Mortar Squad, Medium Rocket Tank; the alpha's APA_FlameGeneral): the Napalm Mortar Squad, the Dragon Tank in place of the Warlord, the Rocket Tank in place of the Gatling Tank; power Inferno Artillery (radius 20/20/25, recharge 240 s, 3 s).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Inferno",
+        faction: Faction::Apa,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Inferno Artillery",
+            kind: PowerKind::Barrage {
+                shells: 6,
+                delay_ticks: secs(3),
+                every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
+                damage: 70,
+                bonus: [30, 0, 0, 0],
+                radius: Fx::from_int(7),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Inferno Artillery",
+                kind: PowerKind::Barrage {
+                    shells: 6,
+                    delay_ticks: secs(3),
+                    every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 85,
+                    bonus: [30, 0, 0, 0],
+                    radius: Fx::from_int(7),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Inferno Artillery",
+                kind: PowerKind::Barrage {
+                    shells: 8,
+                    delay_ticks: secs(3),
+                    every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 85,
+                    bonus: [30, 0, 0, 0],
+                    radius: Fx::from_int(9),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: APA_NAPALM_MORTAR, replaces: None, at: APA_BARRACKS },
+            GeneralUnit { unit: APA_DRAGON, replaces: Some(APA_WARLORD), at: APA_FACTORY },
+            GeneralUnit { unit: APA_ROCKET_TANK, replaces: Some(APA_GATLING), at: APA_FACTORY },
+        ],
+        perks: &[
+            IN_DOUBLE_SHIFTS,
+            IN_INFERNAL_DIESEL,
+            IN_PROTECTOR_I,
+            IN_PROTECTOR_II,
+            IN_FACTORY_OVERTIME,
+            IN_IGNITION,
+            IN_INSOURCED,
+            IN_LEADERSHIP,
+        ],
+    },
+    // src: the APA rocket general (the wiki's Red Arrow: Rocket Soldier, Tank Hunter; the alpha's APA_RocketGeneral): the Rocket Tank in place of the Gatling Tank, the Napalm Mortar Squad; power Thunderclap (100 damage, radius 20, recharge 240 s, 5 s before activation).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Red Arrow",
+        faction: Faction::Apa,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Thunderclap",
+            kind: PowerKind::Barrage {
+                shells: 8,
+                delay_ticks: secs(5),
+                every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
+                damage: 100,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(6),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Thunderclap",
+                kind: PowerKind::Barrage {
+                    shells: 10,
+                    delay_ticks: secs(5),
+                    every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 100,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(6),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Thunderclap",
+                kind: PowerKind::Barrage {
+                    shells: 12,
+                    delay_ticks: secs(5),
+                    every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 100,
+                    bonus: [0, 0, 0, 0],
+                    radius: Fx::from_int(6),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: APA_ROCKET_TANK, replaces: Some(APA_GATLING), at: APA_FACTORY },
+            GeneralUnit { unit: APA_NAPALM_MORTAR, replaces: None, at: APA_BARRACKS },
+        ],
+        perks: &[
+            RA_SALVO_TIMING,
+            RA_WARHEADS,
+            RA_PROTECTOR_I,
+            RA_PROTECTOR_II,
+            RA_TANK_HUNTERS,
+            RA_FACTORY_OVERTIME,
+            RA_INSOURCED,
+            RA_GUIDANCE,
+        ],
+    },
+    // src: the APA nuclear general (the wiki's 1000 Suns: Sunstorm, Shadow Tank; the alpha's APA_AtomicGeneral): the Rocket Tank, the Sunstorm in place of the Thunderfist, the Shadow Tank; power Neutron Bomb (radius 20, recharge 240 s, 2 s before activation).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "1000 Suns",
+        faction: Faction::Apa,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Neutron Bomb",
+            kind: PowerKind::Barrage {
+                shells: 1,
+                delay_ticks: secs(2),
+                every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                damage: 260,
+                bonus: [100, 0, 0, 0],
+                radius: Fx::from_int(20),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Neutron Bomb",
+                kind: PowerKind::Barrage {
+                    shells: 1,
+                    delay_ticks: secs(2),
+                    every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 325,
+                    bonus: [100, 0, 0, 0],
+                    radius: Fx::from_int(20),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Neutron Bomb",
+                kind: PowerKind::Barrage {
+                    shells: 1,
+                    delay_ticks: secs(2),
+                    every_ticks: g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 400,
+                    bonus: [100, 0, 0, 0],
+                    radius: Fx::from_int(20),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: APA_ROCKET_TANK, replaces: None, at: APA_FACTORY },
+            GeneralUnit { unit: APA_SUNSTORM, replaces: Some(APA_THUNDERFIST), at: APA_FACTORY },
+            GeneralUnit { unit: APA_SHADOW_TANK, replaces: None, at: APA_FACTORY },
+        ],
+        perks: &[
+            TS_FISSION,
+            TS_ENRICHED,
+            TS_PROTECTOR_I,
+            TS_PROTECTOR_II,
+            TS_FACTORY_OVERTIME,
+            TS_URANIUM,
+            TS_INSOURCED,
+            TS_LEADERSHIP,
+        ],
+    },
+    // src: the APA espionage general (the wiki's Blackjack: Saboteurs, Shadow Tank, Urban Assault Squad; the alpha's APA_EspionageGeneral): the Urban Assault Squad in place of the Red Guard, the Dragon Tank, the Shadow Tank in place of the Warlord, the Saboteurs; power Misdirection (radius 15, recharge 240 s; here a cloak over the point).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Blackjack",
+        faction: Faction::Apa,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Misdirection",
+            kind: PowerKind::Cloak { radius: Fx::from_int(15), ticks: secs(20) },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Misdirection",
+                kind: PowerKind::Cloak { radius: Fx::from_int(15), ticks: secs(25) },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Misdirection",
+                kind: PowerKind::Cloak { radius: Fx::from_int(20), ticks: secs(30) },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: APA_URBAN_ASSAULT, replaces: Some(APA_RED_GUARD), at: APA_BARRACKS },
+            GeneralUnit { unit: APA_DRAGON, replaces: None, at: APA_FACTORY },
+            GeneralUnit { unit: APA_SHADOW_TANK, replaces: Some(APA_WARLORD), at: APA_FACTORY },
+            GeneralUnit { unit: APA_SABOTEURS, replaces: None, at: APA_BARRACKS },
+        ],
+        perks: &[
+            BJ_QUICK_HANDS,
+            BJ_DEEP_COVER,
+            BJ_PROTECTOR_I,
+            BJ_PROTECTOR_II,
+            BJ_POPULATION,
+            BJ_FACTORY_OVERTIME,
+            BJ_STICKY,
+            BJ_LEADERSHIP,
+        ],
+    },
+    // src: the GLA toxin general (the wiki's Dr. Thrax: Mobile Chemist, Toxin Tank; the alpha's GLA_ToxinGeneral): the Toxin Tank in place of the Scorpion, the Mobile Chemist in place of the Technical, the Bomb Truck; power Toxin Bomb (radius 20/25/30, recharge 240 s): a toxin cloud.
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Thrax",
+        faction: Faction::Gla,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Toxin Bomb",
+            kind: PowerKind::Missiles {
+                missiles: 1,
+                delay_ticks: secs(1),
+                every_ticks: 1,
+                speed: Fx::from_int(4),
+                spread: Fx::ZERO,
+                damage: 60,
+                radius: Fx::from_int(20),
+                cloud_radius: Fx::from_int(20),
+                cloud_damage: 15,
+                cloud_ticks: secs(9),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Toxin Bomb",
+                kind: PowerKind::Missiles {
+                    missiles: 1,
+                    delay_ticks: secs(1),
+                    every_ticks: 1,
+                    speed: Fx::from_int(4),
+                    spread: Fx::ZERO,
+                    damage: 60,
+                    radius: Fx::from_int(25),
+                    cloud_radius: Fx::from_int(25),
+                    cloud_damage: 15,
+                    cloud_ticks: secs(9),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Toxin Bomb",
+                kind: PowerKind::Missiles {
+                    missiles: 1,
+                    delay_ticks: secs(1),
+                    every_ticks: 1,
+                    speed: Fx::from_int(4),
+                    spread: Fx::ZERO,
+                    damage: 60,
+                    radius: Fx::from_int(30),
+                    cloud_radius: Fx::from_int(30),
+                    cloud_damage: 15,
+                    cloud_ticks: secs(9),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[
+            GeneralUnit { unit: GLA_TOXIN_TANK, replaces: Some(GLA_TANK), at: GLA_FACTORY },
+            GeneralUnit { unit: GLA_MOBILE_CHEMIST, replaces: Some(GLA_TECHNICAL), at: GLA_FACTORY },
+            GeneralUnit { unit: GLA_BOMB_TRUCK, replaces: None, at: GLA_FACTORY },
+        ],
+        perks: &[
+            TX_CATALYST,
+            TX_CONCENTRATE,
+            TX_PROTECTOR_I,
+            TX_PROTECTOR_II,
+            TX_FACTORY_OVERTIME,
+            TX_ANTHRAX,
+            TX_INSOURCED,
+            TX_LEADERSHIP,
+        ],
+    },
+    // src: the GLA marauder general (the wiki's Wild Dog: Marauder Mk. II; the alpha's GLA_MarauderGeneral): the Shrapnel Tank in place of the Scorpion; power Mass RPG Strike (radius 35, recharge 240 s, 1 s).
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Wild Dog",
+        faction: Faction::Gla,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Mass RPG Strike",
+            kind: PowerKind::Barrage {
+                shells: 10,
+                delay_ticks: secs(1),
+                every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
+                damage: 60,
+                bonus: [0, 0, 40, 0],
+                radius: Fx::from_int(5),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Mass RPG Strike",
+                kind: PowerKind::Barrage {
+                    shells: 13,
+                    delay_ticks: secs(1),
+                    every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 60,
+                    bonus: [0, 0, 40, 0],
+                    radius: Fx::from_int(5),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Mass RPG Strike",
+                kind: PowerKind::Barrage {
+                    shells: 16,
+                    delay_ticks: secs(1),
+                    every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
+                    damage: 60,
+                    bonus: [0, 0, 40, 0],
+                    radius: Fx::from_int(5),
+                },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[GeneralUnit { unit: GLA_SHRAPNEL_TANK, replaces: Some(GLA_TANK), at: GLA_FACTORY }],
+        perks: &[
+            WD_QUICK_RELOAD,
+            WD_SHAPED_CHARGES,
+            WD_PROTECTOR_I,
+            WD_PROTECTOR_II,
+            WD_FACTORY_OVERTIME,
+            WD_JUNK_ARMOR,
+            WD_INSOURCED,
+            WD_LEADERSHIP,
+        ],
+    },
+    // src: the GLA engineer general (the alpha's GLA_EngineerGeneral; the wiki lists Kitbash among the GLA generals, the name a guess from the role): the Black Market Artillery; power Stealth Field (radius 25, recharge 240 s): a cloak over the point.
+    // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    General {
+        name: "Kitbash",
+        faction: Faction::Gla,
+        modifiers: &[],
+        power: Some(Power {
+            name: "Stealth Field",
+            kind: PowerKind::Cloak { radius: Fx::from_int(25), ticks: secs(20) },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        }),
+        power_levels: &[
+            Power {
+                name: "Stealth Field",
+                kind: PowerKind::Cloak { radius: Fx::from_int(25), ticks: secs(25) },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+            Power {
+                name: "Stealth Field",
+                kind: PowerKind::Cloak { radius: Fx::from_int(30), ticks: secs(30) },
+                first_ticks: secs(240),
+                cooldown_ticks: secs(240),
+                blind: false,
+                requires: None,
+            },
+        ],
+        units: &[GeneralUnit { unit: GLA_BLACK_MARKET_ARTILLERY, replaces: None, at: GLA_FACTORY }],
+        perks: &[
+            KB_SCRAP_PARTS,
+            KB_LONG_FIELD,
+            KB_PROTECTOR_I,
+            KB_PROTECTOR_II,
+            KB_FACTORY_OVERTIME,
+            KB_JUNK_REPAIR,
+            KB_INSOURCED,
+            KB_LEADERSHIP,
         ],
     },
 ];
@@ -1607,6 +3773,7 @@ pub fn map_by_name(name: &str) -> Option<MapDef> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use g2_sim::defs::GeneralId;
 
     #[test]
     fn perk_ids_match_each_generals_list() {
@@ -1689,6 +3856,28 @@ mod tests {
             (APA_BOMBER, "APA Bomber"),
             (APA_FIGHTER, "APA Fighter"),
             (GLA_SCUD_STORM, "GLA Scud Storm"),
+            (EU_FOX, "EU Fox LRV"),
+            (EU_LONGBOW, "EU Longbow"),
+            (EU_SNIPERS, "EU Sniper Team"),
+            (EU_ASSAULT_APC, "EU Assault APC"),
+            (EU_SHOCK_TROOPERS, "EU Shock Troopers"),
+            (EU_LASER_TANK, "EU Heavy Assault Laser"),
+            (EU_RAILGUN_TANK, "EU Railgun Tank"),
+            (EU_RAILGUN_TURRET, "EU Railgun Turret"),
+            (APA_INFERNO, "APA Inferno Squad"),
+            (APA_NAPALM_MORTAR, "APA Napalm Mortar Squad"),
+            (APA_DRAGON, "APA Dragon Tank"),
+            (APA_ROCKET_TANK, "APA Rocket Tank"),
+            (APA_SABOTEURS, "APA Saboteurs"),
+            (APA_SUNSTORM, "APA Sunstorm"),
+            (APA_SHADOW_TANK, "APA Shadow Tank"),
+            (APA_URBAN_ASSAULT, "APA Urban Assault Squad"),
+            (GLA_BATTLE_BUS, "GLA Battle Bus"),
+            (GLA_BLACK_MARKET_ARTILLERY, "GLA Black Market Artillery"),
+            (GLA_SHRAPNEL_TANK, "GLA Shrapnel Tank"),
+            (GLA_TOXIN_TANK, "GLA Toxin Tank"),
+            (GLA_MOBILE_CHEMIST, "GLA Mobile Chemist"),
+            (GLA_BOMB_TRUCK, "GLA Bomb Truck"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);
@@ -1770,6 +3959,45 @@ mod tests {
         }
     }
 
+    /// A perk worded for all of a faction's infantry, vehicles or units also covers the units
+    /// its generals add: a general's Leadership or Protector reaches the general's own units.
+    #[test]
+    fn faction_wide_perks_cover_generals_units() {
+        let r = rules();
+        let infantry = |d: DefId| r.def(d).armour == Armour::Infantry;
+        let modifier_def = |m: &Modifier| match *m {
+            Modifier::Cost { def, .. } | Modifier::BuildTime { def, .. } => def,
+        };
+        for g in r.generals {
+            for u in g.units.iter().map(|x| x.unit).filter(|&u| r.def(u).is_unit()) {
+                let tables: Vec<(&str, Vec<DefId>)> = match g.faction {
+                    Faction::Eu => vec![
+                        ("Protector", EU_INFANTRY_10.iter().map(|&(d, _)| d).collect()),
+                        ("Overtime", EU_VEHICLES_FAST.iter().map(modifier_def).collect()),
+                    ],
+                    Faction::Apa => vec![
+                        ("Protector", APA_INFANTRY_10.iter().map(|&(d, _)| d).collect()),
+                        ("Overtime", APA_VEHICLES_FAST.iter().map(modifier_def).collect()),
+                    ],
+                    Faction::Gla => vec![
+                        ("Protector", GLA_INFANTRY_10.iter().map(|&(d, _)| d).collect()),
+                        ("Overtime", GLA_VEHICLES_FAST.iter().map(modifier_def).collect()),
+                        ("Leadership", GLA_LEADERSHIP.iter().map(|&(d, _)| d).collect()),
+                        ("Scavenger", GLA_SCAVENGE.iter().map(|&(d, _)| d).collect()),
+                    ],
+                };
+                for (name, defs) in tables {
+                    let applies = match name {
+                        "Protector" => infantry(u),
+                        "Overtime" => !infantry(u) && !r.def(u).flies(),
+                        _ => true,
+                    };
+                    assert_eq!(defs.contains(&u), applies, "{}: {} in {name}", g.name, r.def(u).name);
+                }
+            }
+        }
+    }
+
     /// Every faction can build an aircraft and has a trainable unit that fires at aircraft, so
     /// no helicopter is out of every enemy's reach; shells never hit aircraft.
     #[test]
@@ -1790,6 +4018,66 @@ mod tests {
             assert!(!aa.is_empty(), "{f:?} has nothing that fires at aircraft");
             for d in trainable(f).filter_map(|d| d.weapon().or(d.deploy.map(|x| x.weapon))) {
                 assert!(d.shell.is_none() || d.range_vs(true).is_none(), "a shell weapon targets the air");
+            }
+        }
+    }
+
+    /// Every general's units are its faction's, offered by one of its faction's buildings or
+    /// constructors that has the replaced unit in its own list; no two entries offer the same
+    /// unit at the same place, and no general replaces a constructor or collector.
+    #[test]
+    fn generals_units_fit_their_factions() {
+        let r = rules();
+        for (gi, g) in r.generals.iter().enumerate() {
+            for (k, x) in g.units.iter().enumerate() {
+                let (u, at) = (r.def(x.unit), r.def(x.at));
+                assert_eq!(u.faction, Some(g.faction), "{}: {} isn't theirs", g.name, u.name);
+                assert_eq!(at.faction, Some(g.faction), "{}: {} isn't theirs", g.name, at.name);
+                let own = if at.is_constructor() { at.builds } else { at.produces };
+                assert!(!own.is_empty(), "{}: {} makes nothing", g.name, at.name);
+                if let Some(old) = x.replaces {
+                    assert!(own.contains(&old), "{}: {} doesn't make {}", g.name, at.name, r.def(old).name);
+                    assert!(!r.def(old).is_constructor() && r.def(old).collector().is_none());
+                }
+                assert!(
+                    !g.units[..k].iter().any(|y| y.unit == x.unit && y.at == x.at),
+                    "{}: {} listed twice",
+                    g.name,
+                    u.name
+                );
+                let offered = r.offers_for(Some(GeneralId(gi as u16)), x.at);
+                assert!(offered.contains(&x.unit), "{}: {} not offered", g.name, u.name);
+                assert!(x.replaces.is_none_or(|old| !offered.contains(&old)), "{}: {} still offered", g.name, u.name);
+            }
+        }
+    }
+
+    /// Each general's power has two upgraded levels, the same kind as level 1, each at least as
+    /// strong and no slower to recharge.
+    #[test]
+    fn power_levels_grow() {
+        let strength = |k: &PowerKind| match *k {
+            PowerKind::Barrage { shells, damage, radius, .. } => (shells as i64) * damage as i64 * radius.0,
+            PowerKind::Repair { radius, hp } => hp as i64 * radius.0,
+            PowerKind::Ambush { count, .. } => count as i64,
+            PowerKind::Airstrike { jets, bombs, damage, radius, .. } => {
+                (jets * bombs) as i64 * damage as i64 * radius.0
+            }
+            PowerKind::Recon { .. } => 1,
+            PowerKind::Missiles { missiles, damage, radius, cloud_radius, .. } => {
+                missiles as i64 * damage as i64 * radius.0 + cloud_radius.0
+            }
+            PowerKind::Cloak { radius, ticks } => ticks as i64 * radius.0,
+        };
+        for g in rules().generals {
+            let first = g.power.unwrap_or_else(|| panic!("{}: no power", g.name));
+            assert_eq!(g.power_levels.len(), 2, "{}: three levels", g.name);
+            let mut prev = first;
+            for &lv in g.power_levels {
+                assert_eq!(std::mem::discriminant(&lv.kind), std::mem::discriminant(&first.kind), "{}", g.name);
+                assert!(strength(&lv.kind) >= strength(&prev.kind), "{}: a level is weaker", g.name);
+                assert!(lv.cooldown_ticks <= prev.cooldown_ticks, "{}: a level recharges slower", g.name);
+                prev = lv;
             }
         }
     }

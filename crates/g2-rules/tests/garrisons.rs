@@ -26,8 +26,8 @@ fn setup(f0: Faction, f1: Faction) -> MatchSetup {
         map: town(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new() },
-            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
+            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
         ],
     }
 }

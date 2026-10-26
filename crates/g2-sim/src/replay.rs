@@ -13,9 +13,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// before v4 the byte was a flag, and an AI player was the original, now `Easy`, AI), v5 the
 /// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3), v7 the `Research` command
 /// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14), v9 each player's slotted
-/// perks, v10 the power slot (`Power` is tag 15; tag 11 still decodes, as slot 0). Older
-/// replays still decode.
-pub const VERSION: u16 = 10;
+/// perks, v10 the power slot (`Power` is tag 15; tag 11 still decodes, as slot 0), v11 each
+/// player's general rank (1 before). Older replays still decode.
+pub const VERSION: u16 = 11;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -61,6 +61,7 @@ impl Replay {
             for k in &p.perks {
                 w.u16(k.0);
             }
+            w.u8(p.rank);
         }
         w.u32(self.length_ticks);
         w.u32(self.commands.len() as u32);
@@ -120,7 +121,8 @@ impl Replay {
                 }
                 _ => Vec::new(),
             };
-            players.push(PlayerSetup { faction, starting_credits, ai, general, perks });
+            let rank = if version >= 11 { r.u8()? } else { 1 };
+            players.push(PlayerSetup { faction, starting_credits, ai, general, perks, rank });
         }
         let length_ticks = r.u32()?;
         let mut commands = Vec::new();
@@ -170,6 +172,9 @@ impl Replay {
                 rules.generals.get(g.0 as usize).ok_or_else(|| format!("player {i}: unknown general id {}", g.0))?;
             if general.faction != p.faction {
                 return Err(format!("player {i}: general {} does not belong to {:?}", general.name, p.faction));
+            }
+            if !(1..=crate::defs::PERK_SLOTS as u8).contains(&p.rank) {
+                return Err(format!("player {i}: general rank {} is not 1-{}", p.rank, crate::defs::PERK_SLOTS));
             }
             if p.perks.len() > crate::defs::PERK_SLOTS {
                 return Err(format!(

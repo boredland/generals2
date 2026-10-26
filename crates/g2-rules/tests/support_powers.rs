@@ -14,8 +14,14 @@ const P0: PlayerId = PlayerId(0);
 const P1: PlayerId = PlayerId(1);
 
 fn setup(f0: Faction, f1: Faction) -> MatchSetup {
-    let player =
-        |faction| PlayerSetup { faction, starting_credits: 10_000, ai: None, general: None, perks: Vec::new() };
+    let player = |faction| PlayerSetup {
+        faction,
+        starting_credits: 10_000,
+        ai: None,
+        general: None,
+        perks: Vec::new(),
+        rank: 1,
+    };
     MatchSetup { map: crater_ridge(), seed: 1, players: vec![player(f0), player(f1)] }
 }
 

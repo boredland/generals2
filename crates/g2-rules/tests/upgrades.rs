@@ -18,8 +18,8 @@ fn world(f0: Faction, f1: Faction) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new() },
-            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
+            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
         ],
     };
     World::new(&setup, rules())
@@ -326,13 +326,21 @@ fn matches_with_upgrades_replay_exactly() {
         map: crater_ridge(),
         seed: 3,
         players: vec![
-            PlayerSetup { faction: Faction::Eu, starting_credits: 20_000, ai: None, general: None, perks: Vec::new() },
+            PlayerSetup {
+                faction: Faction::Eu,
+                starting_credits: 20_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            },
             PlayerSetup {
                 faction: Faction::Gla,
                 starting_credits: 20_000,
                 ai: Some(g2_sim::AiLevel::Normal),
                 general: None,
                 perks: Vec::new(),
+                rank: 1,
             },
         ],
     };
@@ -379,13 +387,21 @@ fn the_normal_ai_researches() {
             map: crater_ridge(),
             seed: 1,
             players: vec![
-                PlayerSetup { faction: f, starting_credits: 10_000, ai: Some(level), general: None, perks: Vec::new() },
+                PlayerSetup {
+                    faction: f,
+                    starting_credits: 10_000,
+                    ai: Some(level),
+                    general: None,
+                    perks: Vec::new(),
+                    rank: 1,
+                },
                 PlayerSetup {
                     faction: Faction::Eu,
                     starting_credits: 10_000,
                     ai: None,
                     general: None,
                     perks: Vec::new(),
+                    rank: 1,
                 },
             ],
         };

@@ -131,6 +131,7 @@ impl Sim {
                 ai: spectate.then_some(g2_sim::AiLevel::Easy),
                 general: None,
                 perks: Vec::new(),
+                rank: 1,
             },
             PlayerSetup {
                 faction: factions[1],
@@ -138,6 +139,7 @@ impl Sim {
                 ai: Some(g2_sim::AiLevel::Easy),
                 general: None,
                 perks: Vec::new(),
+                rank: 1,
             },
         ]
     }

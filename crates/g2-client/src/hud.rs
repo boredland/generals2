@@ -553,19 +553,21 @@ impl Slot {
 }
 
 /// What the selection can build, train or research right now, in grid order: a building's
-/// units first, then its upgrades not yet researched or queued anywhere.
+/// units first (with the local player's general's), then its upgrades not yet researched or
+/// queued anywhere.
 pub(crate) fn build_menu(sim: &Sim, sel: &Selection) -> Vec<Slot> {
     let world = &sim.world;
     let focus = sel.0.first().and_then(|&id| world.entity(id));
     focus.map_or_else(Vec::new, |e| {
         let d = world.rules.def(e.def);
+        let offers = world.offers_of(sim.local, e.def).into_iter().map(Slot::Def);
         if !e.is_complete() {
             Vec::new()
         } else if d.is_constructor() {
-            d.builds.iter().map(|&b| Slot::Def(b)).collect()
+            offers.collect()
         } else {
             let research = d.researches.iter().filter(|&&u| !world.researched_or_queued(sim.local, u));
-            d.produces.iter().map(|&u| Slot::Def(u)).chain(research.map(|&u| Slot::Upgrade(u))).collect()
+            offers.chain(research.map(|&u| Slot::Upgrade(u))).collect()
         }
     })
 }

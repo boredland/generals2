@@ -19,6 +19,7 @@ fn the_normal_ai_builds_and_fires_the_scud_storm() {
             ai: Some(ai),
             general: None,
             perks: Vec::new(),
+            rank: 1,
         };
         let s = MatchSetup { map: map.clone(), seed: 1, players: vec![player(level), player(AiLevel::Normal)] };
         let mut w = World::new(&s, rules());

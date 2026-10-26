@@ -234,7 +234,14 @@ mod tests {
     #[test]
     fn host_and_joiner_play_the_same_match_over_tcp() {
         let players: Vec<PlayerSetup> = [Faction::Apa, Faction::Eu]
-            .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None, perks: Vec::new() })
+            .map(|faction| PlayerSetup {
+                faction,
+                starting_credits: 5_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            })
             .to_vec();
         let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 5, players);
         let setup = host_sim.world.replay(&host_sim.setup);
@@ -288,7 +295,14 @@ mod tests {
         use bevy::prelude::*;
         use bevy::time::TimeUpdateStrategy;
         let players: Vec<PlayerSetup> = [Faction::Gla, Faction::Apa]
-            .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None, perks: Vec::new() })
+            .map(|faction| PlayerSetup {
+                faction,
+                starting_credits: 5_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            })
             .to_vec();
         let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 2, players.clone());
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -366,7 +380,14 @@ mod tests {
         use bevy::prelude::*;
         use bevy::time::TimeUpdateStrategy;
         let players: Vec<PlayerSetup> = [Faction::Eu, Faction::Gla]
-            .map(|faction| PlayerSetup { faction, starting_credits: 5_000, ai: None, general: None, perks: Vec::new() })
+            .map(|faction| PlayerSetup {
+                faction,
+                starting_credits: 5_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+            })
             .to_vec();
         let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 3, players);
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

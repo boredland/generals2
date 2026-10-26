@@ -300,17 +300,35 @@ pub struct GeneralId(pub u16);
 /// A general a player picks within a faction. Generals 2 had several per faction, each with
 /// "unique advantages … balanced with disadvantages" (2012 developer
 /// blog in archive/wayback). Their exact rules are unknown; this models them as data, the way
-/// such designs do (per-unit cost and build-time changes), plus one active power.
 #[derive(Clone, Debug)]
 pub struct General {
     pub name: &'static str,
     pub faction: Faction,
     pub modifiers: &'static [Modifier],
+    /// The general's power at rank 1, then its upgraded levels: the alpha's `GeneralPowers`
+    /// lists three (`_lvl01` to `_lvl03`), the second from general rank 3, the third from 5.
     pub power: Option<Power>,
+    pub power_levels: &'static [Power],
+    /// Units (and defences) this general offers beyond, or instead of, the faction's: the
+    /// alpha's `Units` list of `UnitProduced` and `UnitReplaced`.
+    pub units: &'static [GeneralUnit],
     /// The perks this general may slot, cheapest rank first (the alpha's Perks 3.0: "about
     /// eight or nine perks ... unique per general").
     pub perks: &'static [PerkId],
 }
+
+/// One entry of a general's unit list: `unit` is offered by `at` (a factory that trains it,
+/// or a constructor that places it, for a defence), in place of `replaces` where that is
+/// given (in its slot), else in addition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GeneralUnit {
+    pub unit: DefId,
+    pub replaces: Option<DefId>,
+    pub at: DefId,
+}
+
+/// The general rank from which each upgraded power level applies (level 2, level 3).
+pub const POWER_LEVEL_RANKS: [u8; 2] = [3, 5];
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub struct PerkId(pub u16);
@@ -502,16 +520,47 @@ impl Rules {
         });
         (self.def(def).build_ticks * percent / 100).max(1)
     }
+
+    /// What `maker` offers a player with `general`: the units it trains (a factory), or the
+    /// buildings it places (a constructor), with the general's replacements in their slots and
+    /// its additions after.
+    pub fn offers_for(&self, general: Option<GeneralId>, maker: DefId) -> Vec<DefId> {
+        let units = general.map_or(&[][..], |g| self.general(g).units);
+        let d = self.def(maker);
+        let own = if d.is_constructor() { d.builds } else { d.produces };
+        let mut out: Vec<DefId> = own
+            .iter()
+            .map(|&u| units.iter().find(|x| x.at == maker && x.replaces == Some(u)).map_or(u, |x| x.unit))
+            .collect();
+        out.extend(units.iter().filter(|x| x.at == maker && x.replaces.is_none()).map(|x| x.unit));
+        out
+    }
 }
 
-/// Every power a player has, by slot: `general`'s first (slot 0, tuned by `perks`), or `None`
-/// in slot 0 without a general power, then `faction`'s support powers. Perk tunings add up
-/// (two -10% cooldown perks make -20%), as upgrade effects do; they apply to the general's
-/// power only.
-pub fn powers(rules: &Rules, faction: Faction, general: Option<GeneralId>, perks: &[PerkId]) -> Vec<Option<Power>> {
-    let mut out = vec![general.and_then(|g| rules.general(g).power).map(|p| tuned(rules, p, perks))];
+/// Every power a player has, by slot: `general`'s first (slot 0, at the level their `rank`
+/// with it reaches, tuned by `perks`), or `None` in slot 0 without a general power, then
+/// `faction`'s support powers. Perk tunings add up (two -10% cooldown perks make -20%), as
+/// upgrade effects do; they apply to the general's power only.
+pub fn powers(
+    rules: &Rules,
+    faction: Faction,
+    general: Option<GeneralId>,
+    rank: u8,
+    perks: &[PerkId],
+) -> Vec<Option<Power>> {
+    let mut out = vec![general.and_then(|g| general_power(rules.general(g), rank)).map(|p| tuned(rules, p, perks))];
     out.extend(rules.support_powers(faction).map(|&p| Some(p)));
     out
+}
+
+/// `general`'s power at general `rank`: level 1 below the first `POWER_LEVEL_RANKS` rank, else
+/// the highest level the rank reaches, as far as the general has levels.
+pub fn general_power(general: &General, rank: u8) -> Option<Power> {
+    let upgrades = POWER_LEVEL_RANKS.iter().filter(|&&r| rank >= r).count().min(general.power_levels.len());
+    match upgrades {
+        0 => general.power,
+        n => Some(general.power_levels[n - 1]),
+    }
 }
 
 fn tuned(rules: &Rules, mut power: Power, perks: &[PerkId]) -> Power {
