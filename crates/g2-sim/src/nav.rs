@@ -29,6 +29,9 @@ pub struct Grid {
     /// Summed-area table of `blocked`, `(w + 1)`×`(h + 1)`: entry `(x, y)` counts the blocked
     /// cells above and left of cell `(x, y)`, so any box is counted in four lookups.
     sums: Vec<u32>,
+    /// Which connected area of free cells each cell belongs to (0 for blocked cells), so a
+    /// destination can be checked for reachability without a search.
+    area: Vec<u32>,
 }
 
 impl Grid {
@@ -62,7 +65,39 @@ impl Grid {
                 sums[(cy + 1) * stride + cx + 1] = sums[cy * stride + cx + 1] + row;
             }
         }
-        Grid { w, h, blocked, sums }
+        let area = Self::areas(w, h, &blocked);
+        Grid { w, h, blocked, sums, area }
+    }
+
+    /// Labels the connected areas of free cells, numbered from 1 in scan order. Four-way
+    /// flood fill: a diagonal step is only taken when both cells beside it are free (see
+    /// `find`), so it never joins areas the straight steps don't.
+    fn areas(w: i32, h: i32, blocked: &[bool]) -> Vec<u32> {
+        let mut area = vec![0u32; blocked.len()];
+        let mut next = 0;
+        let mut stack = Vec::new();
+        for start in 0..blocked.len() {
+            if blocked[start] || area[start] != 0 {
+                continue;
+            }
+            next += 1;
+            area[start] = next;
+            stack.push(start);
+            while let Some(i) = stack.pop() {
+                let (x, y) = ((i as i32) % w, (i as i32) / w);
+                for (nx, ny) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+                    if nx < 0 || ny < 0 || nx >= w || ny >= h {
+                        continue;
+                    }
+                    let j = (ny * w + nx) as usize;
+                    if !blocked[j] && area[j] == 0 {
+                        area[j] = next;
+                        stack.push(j);
+                    }
+                }
+            }
+        }
+        area
     }
 
     fn cell_of(v: Fx) -> i32 {
@@ -200,6 +235,29 @@ impl Grid {
         }
     }
 
+    /// Like `free_point`, but only cells a unit standing at `from` can walk to count: a free
+    /// cell in a pocket walled in by buildings is no destination. `p` itself when its cell
+    /// is reachable; `free_point(p)` when nothing reachable is near (or `from` is walled in).
+    pub fn reachable_point(&self, p: Vec2, from: Vec2) -> Vec2 {
+        let Some(f) = self.nearest_free(self.cell(from)) else { return self.free_point(p) };
+        let want = self.area[(f.1 * self.w + f.0) as usize];
+        let reachable = |x: i32, y: i32| !self.blocked(x, y) && self.area[(y * self.w + x) as usize] == want;
+        let c = self.cell(p);
+        if reachable(c.0, c.1) {
+            return p;
+        }
+        for r in 1..32_i32 {
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    if dx.abs().max(dy.abs()) == r && reachable(c.0 + dx, c.1 + dy) {
+                        return Self::centre(c.0 + dx, c.1 + dy);
+                    }
+                }
+            }
+        }
+        self.free_point(p)
+    }
+
     /// Nearest free cell to `c` (ring search), for starts inside a grown obstacle.
     fn nearest_free(&self, c: (i32, i32)) -> Option<(i32, i32)> {
         if !self.blocked(c.0, c.1) {
@@ -335,5 +393,27 @@ mod tests {
         let path = grid.find(from, to, |c| c.distance(to) <= Fx::from_int(2)).unwrap();
         assert_eq!(*path.last().unwrap(), to);
         assert!(path.iter().any(|p| p.y < Fx::from_int(14)), "crosses at the ford: {path:?}");
+    }
+
+    #[test]
+    fn a_spot_in_a_walled_pocket_snaps_to_one_the_unit_can_reach() {
+        // The same ring as above: (50,50) is free but walled in.
+        let ring: Vec<_> = (0..16)
+            .map(|k| {
+                let a = k as f64 * std::f64::consts::TAU / 16.0;
+                (v(50 + (a.cos() * 20.0) as i64, 50 + (a.sin() * 20.0) as i64), Fx::from_int(6))
+            })
+            .collect();
+        let grid = Grid::new(Fx::from_int(100), Fx::from_int(100), &ring, &[]);
+        let inside = v(50, 50);
+        assert_eq!(grid.free_point(inside), inside, "free, so free_point keeps it");
+        let outside = grid.reachable_point(inside, v(5, 5));
+        // `find` stops within the goal's reach (2), so a route ends at or just short of it.
+        let path = grid.find(v(5, 5), outside, |c| c.distance(outside) <= Fx::from_int(2)).unwrap();
+        let end = *path.last().unwrap();
+        assert!(end.distance(outside) <= Fx::from_int(2), "a route reaches the snapped spot: {path:?}");
+        assert!(outside.distance(inside) > Fx::from_int(26), "outside the ring: {outside:?}");
+        // From inside the ring, the spot itself is reachable and kept.
+        assert_eq!(grid.reachable_point(inside, v(52, 48)), inside);
     }
 }

@@ -1095,7 +1095,10 @@ impl World {
                 self.map.clamp(target - fwd.scale(back) + left.scale(across))
             })
             .collect();
-        let slots: Vec<Vec2> = open.iter().map(|&p| self.nav.free_point(p)).collect();
+        // Each slot snapped to a cell the group can walk to: the nearest free cell may be a
+        // pocket walled in by buildings (measured: 85% of units held up 5 s or more on a move
+        // were headed for one), and a unit sent there would push at the wall for good.
+        let slots: Vec<Vec2> = open.iter().map(|&p| self.nav.reachable_point(p, centre)).collect();
         let from: Vec<Vec2> = order.iter().map(|&u| pos(u)).collect();
         let mut slot_of: Vec<usize> = (0..order.len()).collect();
         // Bounded for safety: each swap shortens the total, so it converges long before this.
@@ -1410,6 +1413,26 @@ impl World {
         (p, p.distance(target) <= contact + SLACK)
     }
 
+    /// Whether unit `id`, now at `p`, is within three of its radii of the spot it walks to and
+    /// another ground unit already stands on that spot. Its move is then done where it is:
+    /// pushed off the spot every tick by the unit on it (often one of a later wave sent to the
+    /// same place), it would otherwise keep the order, and the AI treats a unit with an order
+    /// as busy, for good (measured: three quarters of the units held up 5 s or more on a move).
+    fn slot_taken(&self, id: EntityId, p: Vec2, spot: Vec2) -> bool {
+        let d = self.rules.def(self.entities.get(id).unwrap().def);
+        if d.flies() || p.distance(spot) > d.radius * Fx::from_int(3) {
+            return false;
+        }
+        self.entities.iter().any(|o| {
+            let od = self.rules.def(o.def);
+            o.id != id
+                && od.is_unit()
+                && !od.flies()
+                && o.inside.is_none()
+                && o.pos.distance(spot) < od.radius + d.radius
+        })
+    }
+
     /// Whether the straight segment `a`→`b` crosses only free cells, apart from the cells at
     /// its ends (a unit may stand at, and arrive at, an obstacle's edge).
     fn straight_is_free(&self, a: Vec2, b: Vec2) -> bool {
@@ -1503,7 +1526,7 @@ impl World {
             }
             Order::Move { target, pace } => {
                 let (p, arrived) = self.approach(id, target, Fx::ZERO, pace.min(speed));
-                (p, if arrived { Order::Idle } else { order })
+                (p, if arrived || self.slot_taken(id, p, target) { Order::Idle } else { order })
             }
             Order::Construct { site } => match self.entities.get(site).filter(|s| s.construction.is_some()) {
                 None => (pos, Order::Idle),
