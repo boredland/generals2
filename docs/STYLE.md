@@ -1,6 +1,6 @@
 # Visual style
 
-Target mood: the 2013 alpha gameplay footage of the cancelled game: a warm, hard-lit military RTS seen from a steep angle, on dry savanna ground, with a spotlit centre. We match the **mood and readability**, not the content. Every model, texture and UI element is designed here and generated procedurally; no shapes, icons or layouts are traced from the footage. The one exception is the menus' layout (see Menus), by choice.
+Target mood: the 2013 alpha gameplay footage of the cancelled game: a warm, hard-lit military RTS seen from a steep angle, on dry savanna ground, with a spotlit centre. We match the **mood and readability**, not the content. Every model, texture and UI element is designed here and generated procedurally; no shapes, icons or layouts are traced from the footage. The one exception is the menus, which copy Command & Conquer: Generals' own (see Menus), by choice.
 
 Reference footage (local-only):
 
@@ -53,13 +53,16 @@ Requirements: every element shows live sim data, nothing is decorative, there ar
 
 ## Menus (`menu.rs`, `front.rs`)
 
-The front end follows the alpha's as its skirmish footage shows it (`archive/videos/alpha/…[3tlbDYSUboc].mkv`, the first 25 s): the layout is recreated on purpose, the content is ours.
+The menus are laid out as Command & Conquer: Generals' shell, from its window layouts in EA's GPL release (`vendor/superhackers/GeneralsGamePatch2/Generals/Window/Menus/*.wnd`): positions in their 800×600 coordinates, colours from their draw data. Only the layout and colours are taken; Generals' art (its logo, button textures, the "Generals" font) is EA's and isn't used.
 
-- A black screen under a centred, letter-spaced silver title and a small red build tag top right, where the alpha had "ALPHA PREVIEW". No EA or Command & Conquer marks.
-- **Main**: a commander card (total XP), the general's portrait with a cycler, a big blue PLAY over a SKIRMISH / ONSLAUGHT mode bar, then LIVE / PROFILE / LEARN / QUIT tabs. Under them a banner with the general's loading-screen art and what this build holds (counted from the rules and maps), and the player's generals with rank and XP where the alpha had its social panel.
-- **Lobby**: a map banner (the official map's own `.tga` preview, sharp at the banner's height over a dimmed stretched copy; Crater Ridge drawn from its map), the name bar as "Name (1v1)" opening the paged map list, TEAM 1 VS TEAM 2 player cards with portrait, faction mark, general, faction and the AI's EASY / NORMAL / ONSLAUGHT pills, match options in the right column, and a big green START BATTLE.
-- Pause, controls and the end screen are centred dialogs; the full screens hang from the title.
-- With the player's import, the alpha's Eurostile fonts, portraits, faction logos and loading-screen art are used; without it, the same layout falls back to bevy's font and faction-coloured tiles. Features the alpha's front end had and this game doesn't (currencies, friends, chat, store) are left out rather than faked.
+- Every screen is the layouts' 800×600 canvas, centred and scaled to the window's height. The battlefield behind it stands in for Generals' animated shell map; the ruled gold frame and the darker margin outside it are its `MainMenuRuler`.
+- Colours from the layouts: gold edges and headings (255 190 1), rust list and cell borders (122 48 1), orange-red button labels (226 76 23) that turn amber under the cursor (255 191 0), and the panels' blacks (2 2 2 at 193 and 126 of 255). Text is set in DejaVu Sans Condensed (bundled, Bitstream Vera licence) in place of Generals' condensed faces.
+- **Main** (`MainMenu.wnd`): the logo top right, where ours is the project's name, and the button column in its gold-edged box below it: Skirmish, Onslaught, Generals, Controls, Exit Game.
+- **Skirmish** (`SkirmishGameOptionsMenu.wnd`): eight player rows with Player, Color, Faction and General cells (General where Generals has Team); a click steps a cell. An AI's Player cell steps Easy, Normal, Onslaught, then closes the last seat; Open seats exist up to the map's starts. Map Preview with the map's name and SELECT MAP on the right; Starting Cash, Fog of War and Seed under the rows; the player's general in the career box; the match in the info box; START GAME and BACK.
+- **Map selection** (`SkirmishMapSelectMenu.wnd`): the map list with its red scroll bar, the picked map's preview beside it, ACCEPT and BACK; BACK restores the map from before.
+- **In-game menu** (`QuitMenu.wnd`): the logo over Surrender, Exit to Main Menu, Return to Game.
+- **Score screen** (`ScoreScreen.wnd`): gold column heads over a row of totals per player, the winner marked green, the outcome across the top band, the match in the box below, and the buttons along the bottom.
+- **Generals** and **Controls** use the skirmish page's frame. With the player's import of the 2013 alpha, the Generals page shows its general portraits; without one, faction-coloured tiles.
 
 ## Combat effects (`fx.rs`)
 
