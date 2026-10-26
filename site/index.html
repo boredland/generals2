@@ -50,7 +50,13 @@
   .bar nav a:hover { color: var(--text); text-decoration: none; }
 
   .hero { position: relative; margin: 0 -20px; }
-  .hero img { display: block; width: 100%; height: clamp(320px, 56vh, 560px); object-fit: cover; }
+  .hero img, .hero video { display: block; width: 100%; height: clamp(320px, 56vh, 560px); object-fit: cover; }
+  /* The still stands in for the clip where motion is unwanted. */
+  .hero img { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .hero video { display: none; }
+    .hero img { display: block; }
+  }
   .hero .veil {
     position: absolute; inset: 0;
     background: linear-gradient(180deg, rgba(12,14,16,0.25) 0%, rgba(12,14,16,0) 35%, rgba(12,14,16,0.92) 100%);
@@ -84,6 +90,8 @@
     aspect-ratio: 16/9; object-fit: cover;
   }
   figcaption { color: var(--dim); font-size: 13.5px; padding: 8px 2px 0; }
+  .clip { margin: 26px 0 0; }
+  .clip video { width: 100%; display: block; border: 1px solid var(--edge); border-radius: 8px; aspect-ratio: 16/9; background: #000; }
 
   table { width: 100%; border-collapse: collapse; margin: 22px 0; font-size: 15px; }
   th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--edge); vertical-align: top; }
@@ -131,13 +139,14 @@
 
 <main>
   <section class="hero">
-    <img src="img/hero.png" alt="EU infantry trading fire with a GLA raid of infantry and a Technical at 3:53, under the 2013 alpha's HUD">
+    <video src="media/hero.webm" poster="media/hero-poster.jpg" autoplay muted loop playsinline aria-hidden="true"></video>
+    <img src="media/hero-poster.jpg" alt="APA and GLA units fighting on Crater Ridge at 4:41, the game's camera without its HUD">
     <div class="veil"></div>
     <div class="copy">
       <h1>Open RTS <span class="glow">— hold the line.</span></h1>
       <p>A deterministic real-time strategy engine written in Rust, in the spirit of the cancelled
-        <em>Generals 2</em>. Build an economy, field an army, and take on two AI levels on the
-        original Generals and Zero Hour maps.</p>
+        <em>Generals 2</em>. Pick one of fourteen generals, build an economy, field an army, and take on the AI
+        or the Onslaught's waves on the original Generals and Zero Hour maps.</p>
       <div class="cta">
         <a class="btn" href="https://github.com/boredland/generals2/releases/latest">Download for Linux</a>
         <a class="btn ghost" href="https://github.com/boredland/generals2">Browse the source</a>
@@ -166,7 +175,7 @@
       <h3>Two AI levels</h3>
       <p><b>Easy</b> sends waves. <b>Normal</b> weighs every fight before it attacks, retreats
         units that are losing, defends against raiders and expands when its supply runs low.
-        Across all 86 skirmish maps Normal beats Easy 1,360 to 183 (5 of 1,548 matches past 20 minutes).</p>
+        Across all 86 skirmish maps Normal beats Easy 1,253 to 285 (10 of 1,548 matches past 20 minutes).</p>
     </div>
     <div class="card">
       <h3>Three factions</h3>
@@ -198,9 +207,16 @@
     unit and building models, the bottom-bar HUD, portraits and build icons are the alpha's (EA's
     art), laid out by its own HUD files and fed by this game's simulation. Without the import the
     game draws its own procedural models and HUD instead.</p>
+  <figure class="clip">
+    <video src="media/gameplay.webm" poster="media/gameplay-poster.jpg" controls muted loop playsinline preload="metadata"></video>
+    <figcaption>Thirty seconds of play at real speed (APA against GLA, Normal AIs, 4:40 to 5:10 on
+      Crater Ridge): tanks trade fire in the field, then the fighting moves to the APA base.
+      Rendered headless, one sim tick a frame
+      (<code>--frames 900</code>), the camera drifting after the fighting.</figcaption>
+  </figure>
   <div class="shots">
     <figure>
-      <img src="img/menu.png" alt="The Open RTS main menu over a battlefield">
+      <img src="img/menu.png" alt="The Open RTS main menu over an APA base: Skirmish, Generals, Controls, Quit">
       <figcaption>The main menu, drawn over the frozen battlefield.</figcaption>
     </figure>
     <figure>
@@ -208,12 +224,20 @@
       <figcaption>Skirmish setup: 86 maps, slots, factions, generals, credits, fog.</figcaption>
     </figure>
     <figure>
-      <img src="img/base.png" alt="An APA base at 1:40 with the command center selected: its portrait and build button in the alpha HUD">
-      <figcaption>An APA base going up, the command center selected: its portrait, and the harvester it trains in the build grid.</figcaption>
+      <img src="img/generals.png" alt="The Generals screen: EU Bulldog at rank 1, its eight perks with prices and ranks">
+      <figcaption>The Generals screen: fourteen generals, each with a rank you earn by playing and eight perks to buy and slot.</figcaption>
     </figure>
     <figure>
-      <img src="img/battle.png" alt="A GLA base at three minutes with the war factory selected: its three vehicles in the build grid">
-      <figcaption>Three minutes in, GLA: the war factory selected, its Scorpion, Toxin Artillery and Technical in the alpha's build grid.</figcaption>
+      <img src="img/base.png" alt="A GLA base under General Junkyard with the war factory selected: six vehicles in the build grid, the Ambush power in the power list">
+      <figcaption>GLA under Junkyard: the war factory trains the Shrapnel Tank in place of the Scorpion, plus the Battle Bus and Black Market Artillery. G arms the general's Ambush, F2 the GPS Scrambler.</figcaption>
+    </figure>
+    <figure>
+      <img src="img/battle.png" alt="An EU base under General Cutting Edge at four minutes, war factory selected: Aegis, Assault APC and Heavy Assault Laser in the build grid">
+      <figcaption>EU under Cutting Edge at four minutes: the Assault APC and Heavy Assault Laser in the war factory, the general's Skylance ready beside the Air Raid and Fuel Air Bomb.</figcaption>
+    </figure>
+    <figure>
+      <img src="img/thrax.png" alt="A GLA base under General Thrax at six minutes with the command center selected and Toxin Bomb ready">
+      <figcaption>GLA under Thrax at six minutes, the command center selected: the Toxin Bomb ready beside the GPS Scrambler.</figcaption>
     </figure>
     <figure>
       <img src="img/maps.png" alt="Zero Hour's Tournament Desert imported into Open RTS, whole map revealed">

@@ -69,7 +69,7 @@ Not yet:
 - **Generals are strong, unevenly.** `g2-tools generals` plays every general against no general, Normal against Normal at rank 3 with its perks, on Crater Ridge, Tournament Desert and Alpine Assault (each enemy faction, both starts: 18 matches a general): the side with a general wins 150 against 87 (15 undecided). Junkyard wins 18 of 18, Kitbash 15, Wild Dog 14, Taskmaster, 1000 Suns and Thrax 13; Mercury Red wins 3 and Cutting Edge 6. Those two trade the Recon Squad for Shock Troopers and the APC for the Assault APC, whose alpha numbers (28 every 1.5 s, range 32) are weaker than our APC's (46 every 2.25 s, range 45, from its card; the alpha's own APC has 32, +21 against infantry, range 32). The numbers are sourced, not tuned, so this stays as measured. Without generals the second seat wins 20 of 27 and GLA 14 of 27, so these counts mix seat, faction and general.
 - Co-op Onslaught (two players against the waves), a network lobby, real art, music and voice acknowledgements.
 - **Balance is unexamined and lopsided.** In 72 Easy-vs-Easy matches on Crater Ridge with fog and artillery (all 9 pairings, seeds 1–8; the AI uses no randomness, so the seed changes nothing) the first start won 32 and the second 40; the EU won 40, the APA 16, the GLA 16. Every match ended, after 6 to 12 minutes. The split has flipped with every AI change (40/32 with fog alone, 32/40 before fog). The two AIs build mirror-image bases (a test checks it) and their units leave the side of each building facing the map centre, yet mirror matches still drift apart after about two minutes. The cause is in per-tick processing, not the layout: the AI of the first start thinks one tick earlier, and movement, separation and pathfinding work on a fixed grid and in entity order, which a 180° rotation does not preserve. Nothing here says anything about faction strength. The unit numbers come from three sourced weapons stretched over nine units.
-- A few Normal-vs-Easy survey matches on large imported maps outlast the survey's 20-minute cap (5 of 1,548 across the 86 skirmish maps). Run longer, the six checked earlier all end with a winner, between 20 and 29 minutes: the last enemy building can take a while to find on a big map. The AI searches unexplored ground outward from the other players' starts.
+- A few Normal-vs-Easy survey matches on large imported maps outlast the survey's 20-minute cap (10 of 1,548 across the 86 skirmish maps). Run longer, the six checked earlier all end with a winner, between 20 and 29 minutes: the last enemy building can take a while to find on a big map. The AI searches unexplored ground outward from the other players' starts.
 - On Crater Ridge, Easy beats Normal (Normal wins 6 of 18; across all 86 skirmish maps it wins 1,253 to 285, 10 undecided; 1,360 to 183 before upgrades). There Normal's first wave is small, Easy wins that fight near its base and counterattacks Normal's empty base at the same time. Neither the attack threshold, the wave size nor the retreat ratio changes this (each tried, 5 to 10 wins). Normal also spends on research while Easy trains: it earns no more but has fewer units by two minutes in. Researching only at tech buildings (not factories) gets it to 10 of 18 there and 1,274 to 267 on all 86 maps (1,253 to 285 now), but costs it against the Onslaught (590 to 173 wins on all maps, from 631 to 133), so research stays as it is.
 - Normal's factories favour units that counter the armour most of the enemy army it can see wears.
 - Easy rebuilds a lost constructor but does not protect it and keeps no reserve, so under pressure it can lose several in a row. Normal moves constructors away from armed enemies but has no notion of a safe route. Easy never uses a power.
@@ -79,17 +79,17 @@ Not yet:
 
 ![EU base at 3 minutes, in-game camera](docs/img/m1-eu-base-3min.png)
 
-![GLA Scorpions and Rabble squads attacking an EU oil derrick foundation at 3:20, in-game camera](docs/img/m3-eu-attacks-gla.png)
+![EU APCs and a GLA Scorpion trading fire in the field at 3:20, in-game camera](docs/img/m3-eu-attacks-gla.png)
 
 ![APA vs GLA after 5 minutes, whole-map view](docs/img/m1-apa-vs-gla-5min.png)
 
-*Above, each under player 0's fog of war: an EU base at 3:00 (EU vs GLA AI, `--view base`); a GLA raid of Scorpion tanks and Rabble squads on an EU oil derrick foundation at 3:20 (`--view battle --ticks 6019`); and APA (red) vs GLA (sand) after 5 minutes of AI vs AI (`--view map`), where only the APA's explored ground is lit and the GLA base stays hidden. All rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150).*
+*Above, each under player 0's fog of war: an EU base at 3:00 (EU vs GLA AI, `--view base`); EU APCs meeting a GLA Scorpion and its squads in the field at 3:20, a blast still glowing (`--view battle --ticks 6019`); and APA (red) vs GLA (sand) after 5 minutes of AI vs AI (`--view map`), where only the APA's explored ground is lit and the GLA base stays hidden. All rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150), in the game's own look (no alpha import), with the HUD as it is now: power and credits, the support powers armed with F1-F3, the minimap, and the build grid.*
 
-![APA Thunderfist deployed, stabiliser legs out, at 4:08](docs/img/m4-apa-thunderfist-deployed.png)
+![APA Thunderfist deployed, stabiliser legs out, at 4:09, seen dimmed through the GLA player's fog](docs/img/m4-apa-thunderfist-deployed.png)
 
-![GLA Toxin Artillery blast landing on EU infantry at 3:25](docs/img/m4-gla-toxin-artillery.png)
+![GLA Toxin Artillery shell bursting beside an EU APC at 2:58](docs/img/m4-gla-toxin-artillery.png)
 
-*Above: artillery. A deployed APA Thunderfist with its legs out (APA vs GLA, `--spectate --view battle --ticks 7233`), and a GLA Toxin Artillery shell landing among EU Recon squads, its blast drawn at its radius (GLA vs EU, `--spectate --view battle --ticks 6160`).*
+*Above: artillery. A deployed APA Thunderfist with its legs out at the edge of the APA base, under the GLA player's fog (GLA vs APA, `--spectate --view at:290,319 --ticks 7480`), and a GLA Toxin Artillery shell bursting beside an EU APC, its blast drawn at its radius (GLA vs EU, `--spectate --view battle --ticks 5349`).*
 
 ![Zero Hour's Tournament Desert, EU base at 3 minutes](docs/img/m2-zh-tournament-desert-base.png)
 
@@ -99,7 +99,7 @@ Not yet:
 
 **Verification status.**
 
-- The README frames were rendered on this host, and the mirror check passed for each (51/51, 52/52 and 45/45 entities for the first three, 41/41 and 51/51 for the artillery frames, none misplaced; hidden enemies keep their model, hidden). The HUD totals match `g2-tools record --seed 1` for the same matches: EU at 5,400 ticks shows `$2195`, power 60/210; APA at 9,000 ticks shows `$105`, power 60/210. The same APA frame with `--reveal` shows the GLA base and its minimap dots; with fog it doesn't.
+- The README frames were rendered on this host, and the mirror check passed for each (56/56, 61/61 and 64/64 entities for the first three, none misplaced; hidden enemies keep their model, hidden). The HUD totals match `g2-tools record --seed 1 --ai normal` for the same matches: EU at 5,400 ticks shows `$95`, power 80/210; APA at 9,000 ticks shows `$70`, power 70/210. The same APA frame with `--reveal` shows the GLA base and its minimap dots; with fog it doesn't.
 - Fog tests: an attack on an enemy never seen is rejected; once scouted, the building can be attacked from out of sight and the order holds through the fog until the tank fires (the test fails if memory isn't accepted, or if the order is dropped in the fog); scenery on unexplored ground stays hidden until a unit explores it; an enemy foundation raised on explored ground out of sight doesn't clear the scenery on it; an enemy command center destroyed out of sight keeps its model and the scenery clearing under it until our dozer sees the spot again (fails if ghosts are dropped). The headless mirror check allows a model with no sim entity only if the fog still remembers it.
 - Artillery tests (`crates/g2-rules/tests/artillery.rs`): a shell lands on the spot after distance over speed and misses a target that drove off (fails with instant shells); every enemy in the blast is hit and our own worker standing in it is not (fails if splash hits friends); no shot inside the minimum range; the Thunderfist deploys and packs up in its set-up time, can't move while deployed, and rejects `Deploy` for units that can't; it deploys on its own for a target beyond its cannon on an attack order and on an attack-move; AI matches with artillery replay to the same hash. The reference replay was re-recorded on purpose for artillery.
 - A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
@@ -111,6 +111,8 @@ Not yet:
   scripts/igpu-only/run.sh target/release/g2-client --screenshot shot.png --ticks 5400 --view base
   # --select "EU War Factory" selects the local player's first entity of that def, to check the selection panels
   # --menu main --movie-frame 160 shows the imported intro movie held at that frame
+  # --frames 900 --screenshot "clip/{}.png" writes a clip instead: 900 frames, one sim tick each, the camera
+  # drifting after the fighting (the site's video: ffmpeg -framerate 30 -i clip/%05d.png ...); --no-hud leaves the HUD out
   ```
 
 - To render on the CPU instead (Mesa lavapipe):

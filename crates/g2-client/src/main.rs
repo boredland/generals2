@@ -4,8 +4,9 @@
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [match flags as above]      two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--select DEF] [--movie-frame N] [...]
-//!             headless: simulate N ticks, render one frame
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--select DEF] [--movie-frame N] [--frames N] [--no-hud] [...]
+//!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
+//!             to a path holding {}, e.g. clip/{}.png)
 //!
 //! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
 //! mode: no base, waves on a schedule, and you win by outlasting the last one.
@@ -67,6 +68,10 @@ struct Args {
     select: Option<String>,
     /// Headless only: show the imported intro movie, held at this frame.
     movie_frame: Option<usize>,
+    /// Headless only: a clip of this many frames, one sim tick each, instead of one shot.
+    frames: Option<u32>,
+    /// Headless only: leave the HUD out of the frame.
+    no_hud: bool,
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
@@ -92,6 +97,8 @@ fn parse_args() -> Result<Args, String> {
         paused: false,
         select: None,
         movie_frame: None,
+        frames: None,
+        no_hud: false,
         screenshot: None,
         record: None,
         ticks: 900,
@@ -174,6 +181,8 @@ fn parse_args() -> Result<Args, String> {
                 a.movie_frame =
                     Some(it.next().and_then(|v| v.parse().ok()).ok_or("--movie-frame needs a frame number")?)
             }
+            "--no-hud" => a.no_hud = true,
+            "--frames" => a.frames = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--frames needs a count")?),
             "--size" => {
                 let v = it.next().ok_or("--size needs WxH")?;
                 let (w, h) = v.split_once('x').ok_or("--size needs WxH")?;
@@ -223,6 +232,8 @@ fn main() -> AppExit {
                 size: args.size,
                 select: args.select,
                 movie_frame: args.movie_frame,
+                frames: args.frames,
+                no_hud: args.no_hud,
             };
             headless::run(sim, ui, capture)
         }
@@ -384,7 +395,10 @@ mod headless {
     }
 
     /// What to capture: the sim's state after `ticks`, seen through `view`, at `size`, saved
-    /// to `path`; optionally with one entity selected or the intro movie on screen.
+    /// to `path`; optionally with one entity selected or the intro movie on screen. With
+    /// `frames`, it is a clip instead: that many frames, one sim tick each (30 per second of
+    /// play), saved to `path` with its `{}` replaced by the frame number, the camera easing
+    /// toward the fighting.
     pub struct Capture {
         pub ticks: u32,
         pub path: String,
@@ -392,11 +406,17 @@ mod headless {
         pub size: (u32, u32),
         pub select: Option<String>,
         pub movie_frame: Option<usize>,
+        pub frames: Option<u32>,
+        pub no_hud: bool,
     }
 
     pub fn run(mut sim: Sim, ui: crate::menu::Ui, capture: Capture) -> AppExit {
-        let Capture { ticks, path, view, size, select, movie_frame } = capture;
+        let Capture { ticks, path, view, size, select, movie_frame, frames, no_hud } = capture;
         sim.speed = 0;
+        if frames.is_some() && !path.contains("{}") {
+            eprintln!("--frames needs a --screenshot path with {{}} for the frame number");
+            return AppExit::error();
+        }
         // The capture is awaited by polling for the file, so an old one at `path` would be
         // taken for the new frame and nothing would be written.
         if let Err(e) = std::fs::remove_file(&path)
@@ -532,14 +552,12 @@ mod headless {
                 }
             }
         };
-        // An image-target camera is not picked as the UI camera automatically; the HUD must be in the shot.
-        let mut camera = world.spawn((
-            crate::look::camera_bundle(),
-            target.clone(),
-            cam.transform(),
-            cam,
-            bevy::ui::IsDefaultUiCamera,
-        ));
+        // An image-target camera is not picked as the UI camera automatically; the HUD must be in
+        // the shot, unless asked to leave it out.
+        let mut camera = world.spawn((crate::look::camera_bundle(), target.clone(), cam.transform(), cam));
+        if !no_hud {
+            camera.insert(bevy::ui::IsDefaultUiCamera);
+        }
         // The overview sits far beyond the haze distance tuned for play; fog would hide the whole map.
         if matches!(view, View::Map) {
             camera.remove::<bevy::pbr::DistanceFog>();
@@ -578,6 +596,9 @@ mod headless {
         // Scenes spawn their meshes a frame or two after the load completes.
         for _ in 0..3 {
             wait(&mut apps);
+        }
+        if let Some(n) = frames {
+            return clip(apps, &target, &path, n, fight.is_some());
         }
         apps.main
             .world_mut()
@@ -631,6 +652,79 @@ mod headless {
             eprintln!("render mirror does not match the simulation");
             return AppExit::error();
         }
+        AppExit::Success
+    }
+
+    /// Plays `n` frames from where the warm-up left the match, one sim tick a frame, saving
+    /// each to `pattern`. Effects age and the sim steps on the fixed clock, so the clip runs
+    /// at real speed whatever the frame costs. With `follow`, the camera eases toward the
+    /// midpoint of the last two seconds' shots.
+    fn clip(mut apps: SubApps, target: &RenderTarget, pattern: &str, n: u32, follow: bool) -> AppExit {
+        use bevy::time::TimeUpdateStrategy;
+        let wait = |apps: &mut SubApps| {
+            apps.update();
+            apps.main
+                .world()
+                .resource::<RenderDevice>()
+                .wgpu_device()
+                .poll(PollType::Wait { submission_index: None, timeout: None })
+                .expect("GPU poll failed");
+        };
+        let world = apps.main.world_mut();
+        world.remove_resource::<crate::view::FreezeEffects>();
+        world.insert_resource(TimeUpdateStrategy::FixedTimesteps(1));
+        world.resource_mut::<Sim>().speed = 1;
+        let mut recent: std::collections::VecDeque<(u32, Vec2)> = Default::default();
+        let names: Vec<String> = (0..n).map(|i| pattern.replace("{}", &format!("{i:05}"))).collect();
+        for name in &names {
+            if let Err(e) = std::fs::remove_file(name)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                eprintln!("can't replace {name}: {e}");
+                return AppExit::error();
+            }
+        }
+        for name in &names {
+            wait(&mut apps);
+            let world = apps.main.world_mut();
+            if follow {
+                let sim = world.resource::<Sim>();
+                let tick = sim.world.tick();
+                for e in sim.world.events() {
+                    if let g2_sim::world::Event::Hit { at, .. } | g2_sim::world::Event::Landed { at, .. } = *e {
+                        recent.push_back((tick, Vec2::new(at.x.to_f32(), at.y.to_f32())));
+                    }
+                }
+                while recent.front().is_some_and(|&(t, _)| t + 2 * g2_sim::TICKS_PER_SECOND < tick) {
+                    recent.pop_front();
+                }
+                if !recent.is_empty() {
+                    let goal = recent.iter().map(|&(_, p)| p).sum::<Vec2>() / recent.len() as f32;
+                    let ground = sim.ground_y(goal.x, goal.y);
+                    let mut q = world.query::<(&mut RtsCamera, &mut Transform)>();
+                    for (mut cam, mut tf) in q.iter_mut(world) {
+                        // About 1.5 s to cover most of a jump, so the view drifts rather than cuts.
+                        cam.pivot = cam.pivot.lerp(Vec3::new(goal.x, ground, goal.y), 0.02);
+                        *tf = cam.transform();
+                    }
+                }
+            }
+            world.spawn(Screenshot::image(target.as_image().unwrap().clone())).observe(save_to_disk(name.clone()));
+        }
+        // Readbacks land a few frames after their request; keep rendering until the last is out.
+        for _ in 0..120 {
+            if names.iter().all(|f| std::path::Path::new(f).exists()) {
+                break;
+            }
+            wait(&mut apps);
+        }
+        let missing = names.iter().filter(|f| !std::path::Path::new(f).exists()).count();
+        if missing > 0 {
+            eprintln!("{missing} of {n} frames were not written");
+            return AppExit::error();
+        }
+        let sim = apps.main.world().resource::<Sim>();
+        println!("wrote {n} frames to {pattern}, ticks to {}", sim.world.tick());
         AppExit::Success
     }
 }
