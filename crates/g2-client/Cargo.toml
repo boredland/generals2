@@ -12,6 +12,9 @@ g2-maps.workspace = true
 g2-frostbite.workspace = true
 bevy.workspace = true
 roxmltree = "0.21"
+# The system's file dialog for picking the alpha's CnC.exe. On Linux it asks the desktop
+# portal over D-Bus (libdbus loaded at run time), falling back to zenity: no GTK to link.
+rfd = { version = "0.17", default-features = false, features = ["xdg-portal"] }
 
 [lints]
 workspace = true

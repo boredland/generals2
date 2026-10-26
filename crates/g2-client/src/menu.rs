@@ -85,6 +85,10 @@ pub enum Act {
     BuyPerk(PerkId),
     SlotPerk(PerkId),
     UnslotPerk(PerkId),
+    /// The alpha page: importing the player's copy of the 2013 alpha.
+    OpenAlpha,
+    /// Opens the file dialog to find the alpha's `CnC.exe`, then imports it.
+    ImportAlpha,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -96,6 +100,7 @@ pub enum Screen {
     Match,
     End,
     Generals,
+    Alpha,
 }
 
 /// One skirmish player: slot 0 is the human at the keyboard, the rest are AI.
@@ -274,11 +279,12 @@ impl Plugin for MenuPlugin {
         app.init_resource::<Ui>()
             .init_resource::<Pending>()
             .init_resource::<MatchEpoch>()
+            .init_resource::<crate::importer::Import>()
             .insert_resource(MapListChannel(std::sync::Mutex::new(rx)))
             .add_systems(Startup, load_fonts)
             .add_systems(
                 Update,
-                (poll_maps, interact, apply, watch_winner, award_experience, rebuild, hover, hide_hud)
+                (poll_maps, interact, apply, watch_winner, award_experience, poll_import, rebuild, hover, hide_hud)
                     .chain()
                     .in_set(MenuSet)
                     .run_if(resource_exists::<Sim>),
@@ -292,6 +298,18 @@ fn poll_maps(mut commands: Commands, rx: Option<Res<MapListChannel>>, done: Opti
     }
     if let Ok(maps) = rx.expect("map channel").0.lock().unwrap().try_recv() {
         commands.insert_resource(MapList(maps));
+    }
+}
+
+/// The alpha page redraws when the import moves on: the worker thread only writes `Import`.
+fn poll_import(import: Res<crate::importer::Import>, mut ui: ResMut<Ui>, mut seen: Local<crate::importer::Status>) {
+    if ui.screen != Screen::Alpha {
+        return;
+    }
+    let now = import.status();
+    if *seen != now {
+        *seen = now;
+        ui.set_changed();
     }
 }
 
@@ -320,7 +338,7 @@ fn interact(
         if !placed && !aimed {
             pending.0.push(match (ui.screen, ui.paused) {
                 (Screen::Setup, _) if ui.map_select.is_some() => Act::CancelMapList,
-                (Screen::Setup | Screen::Controls | Screen::Generals, _) => Act::BackToMain,
+                (Screen::Setup | Screen::Controls | Screen::Generals | Screen::Alpha, _) => Act::BackToMain,
                 (Screen::Match, false) => Act::Pause,
                 (Screen::Match, true) => Act::Resume,
                 (Screen::End, _) => Act::QuitToMenu,
@@ -354,10 +372,13 @@ fn hover(
 /// Top-level match spawns that are UI nodes: the HUD panels, not the 3D scene.
 type HudRoots = (With<MatchEntity>, With<Node>);
 
-/// The match HUD is hidden behind the full-screen menus (main, controls, setup, generals, the
-/// score screen); the in-game menu keeps it, dimmed, as context.
+/// The match HUD is hidden behind the full-screen menus (everything but the in-game menu,
+/// which keeps it, dimmed, as context).
 fn hide_hud(ui: Res<Ui>, mut roots: Query<&mut Visibility, HudRoots>) {
-    let hidden = matches!(ui.screen, Screen::Main | Screen::Controls | Screen::Setup | Screen::Generals | Screen::End);
+    let hidden = matches!(
+        ui.screen,
+        Screen::Main | Screen::Controls | Screen::Setup | Screen::Generals | Screen::Alpha | Screen::End
+    );
     for mut v in &mut roots {
         v.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
     }
@@ -404,6 +425,8 @@ fn apply_one(world: &mut World, act: Act) {
         // mutably, so arms touch them one at a time.
         _ => match act {
             Act::ShowControls => world.resource_mut::<Ui>().screen = Screen::Controls,
+            Act::OpenAlpha => world.resource_mut::<Ui>().screen = Screen::Alpha,
+            Act::ImportAlpha => world.resource::<crate::importer::Import>().start(),
             Act::OpenSetup => {
                 let mut ui = world.resource_mut::<Ui>();
                 ui.screen = Screen::Setup;
@@ -763,6 +786,7 @@ fn rebuild(
     server: Option<Res<AssetServer>>,
     mut images: Option<ResMut<Assets<Image>>>,
     mut preview: Local<Option<(String, Option<Handle<Image>>)>>,
+    import: Res<crate::importer::Import>,
     old: Query<Entity, With<MenuUi>>,
 ) {
     if !ui.is_changed() && !profile.is_changed() && !fonts.as_ref().is_some_and(|f| f.is_added()) {
@@ -820,6 +844,7 @@ fn rebuild(
                         Screen::Match => pause(c, &kit),
                         Screen::End => end_screen(c, &kit, &sim, &ui),
                         Screen::Generals => generals(c, &kit, &ui, &profile),
+                        Screen::Alpha => alpha(c, &kit, &import.status()),
                     }
                 });
             side(root);
@@ -975,6 +1000,7 @@ fn main_menu(c: &mut ChildSpawnerCommands, kit: &Kit) {
         ("SKIRMISH", Act::OpenSetup),
         ("ONSLAUGHT", Act::OpenOnslaught),
         ("GENERALS", Act::OpenGenerals),
+        ("2013 ALPHA", Act::OpenAlpha),
         ("CONTROLS", Act::ShowControls),
         ("EXIT GAME", Act::QuitGame),
     ];
@@ -983,6 +1009,48 @@ fn main_menu(c: &mut ChildSpawnerCommands, kit: &Kit) {
         let y = 116.0 + 40.0 * k as f32;
         button(c, kit, s, act, Look::Button, rect(540.0, y, 748.0, y + 36.0), 16.0);
     }
+}
+
+/// The alpha page: what importing the player's copy of the 2013 alpha does, where it goes,
+/// and how far an import is.
+fn alpha(c: &mut ChildSpawnerCommands, kit: &Kit, status: &crate::importer::Status) {
+    use crate::importer::Status;
+    page(c, kit, "2013 ALPHA");
+    let cache = g2_frostbite::import::default_cache();
+    let imported = cache.as_ref().is_some_and(|d| d.join("manifest.txt").is_file());
+    let about = "If you have the 2013 closed alpha of Generals 2 (\"Generals2 F2P\"), the game can use \
+                 its unit and building models, sound effects, unit voices and menu music, and the \
+                 Generals page its portraits. Pick the alpha's CnC.exe: its files are decoded into a \
+                 folder on this computer (about 4 GB, a few minutes). Nothing is uploaded or shared, \
+                 and the game plays the same either way.";
+    c.spawn((Node { padding: UiRect::all(px(6)), ..rect(64.0, 92.0, 740.0, 200.0) },))
+        .with_child(kit.text(about, 14.0, WHITE, false));
+    let folder = cache.as_ref().map_or("none: set G2_ALPHA_CACHE".to_owned(), |d| d.display().to_string());
+    let (state, colour) = match status {
+        Status::Idle if imported => ("Imported. Import again to replace it.".to_owned(), GOLD),
+        Status::Idle => ("Not imported.".to_owned(), INK_OFF),
+        Status::Choosing => ("Pick the alpha's CnC.exe in the file dialog...".to_owned(), INK_HOT),
+        Status::Importing(part) => (format!("Importing: {part}..."), INK_HOT),
+        Status::Done { .. } => ("Imported. Restart the game to use it.".to_owned(), GOLD),
+        Status::Failed(why) => (format!("Import failed: {why}"), INK),
+    };
+    frame(c, rect(58.0, 210.0, 745.0, 493.0), BOX, RUST);
+    let mut lines = vec![("Folder", folder), ("Status", state.clone())];
+    if let Status::Done { summary, .. } = status {
+        lines.push(("Written", summary.clone()));
+    }
+    for (k, (name, value)) in lines.iter().enumerate() {
+        let y = 222.0 + 44.0 * k as f32;
+        label(c, kit, name, rect(70.0, y, 170.0, y + 40.0), 13.0, GOLD, false);
+        let ink = if *name == "Status" { colour } else { WHITE };
+        c.spawn((Node { align_items: AlignItems::Center, ..rect(170.0, y, 735.0, y + 40.0) },))
+            .with_child(kit.text(value, 13.0, ink, false));
+    }
+    let busy = matches!(status, Status::Choosing | Status::Importing(_));
+    if !busy {
+        button(c, kit, "FIND CNC.EXE", Act::ImportAlpha, Look::Button, rect(94.0, 509.0, 268.0, 545.0), 16.0);
+    }
+    button(c, kit, "BACK", Act::BackToMain, Look::Button, rect(530.0, 509.0, 701.0, 545.0), 16.0);
 }
 
 fn controls(c: &mut ChildSpawnerCommands, kit: &Kit) {

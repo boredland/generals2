@@ -57,12 +57,12 @@ The menus are laid out as Command & Conquer: Generals' shell, from its window la
 
 - Every screen is the layouts' 800×600 canvas, centred and scaled to the window's height. The battlefield behind it stands in for Generals' animated shell map; the ruled gold frame and the darker margin outside it are its `MainMenuRuler`.
 - Colours from the layouts: gold edges and headings (255 190 1), rust list and cell borders (122 48 1), orange-red button labels (226 76 23) that turn amber under the cursor (255 191 0), and the panels' blacks (2 2 2 at 193 and 126 of 255). Text is set in DejaVu Sans Condensed (bundled, Bitstream Vera licence) in place of Generals' condensed faces.
-- **Main** (`MainMenu.wnd`): the logo top right, where ours is the project's name, and the button column in its gold-edged box below it: Skirmish, Onslaught, Generals, Controls, Exit Game.
+- **Main** (`MainMenu.wnd`): the logo top right, where ours is the project's name, and the button column in its gold-edged box below it: Skirmish, Onslaught, Generals, 2013 Alpha, Controls, Exit Game.
 - **Skirmish** (`SkirmishGameOptionsMenu.wnd`): eight player rows with Player, Color, Faction and General cells (General where Generals has Team); a click steps a cell. An AI's Player cell steps Easy, Normal, Onslaught, then closes the last seat; Open seats exist up to the map's starts. Map Preview with the map's name and SELECT MAP on the right; Starting Cash, Fog of War and Seed under the rows; the player's general in the career box; the match in the info box; START GAME and BACK.
 - **Map selection** (`SkirmishMapSelectMenu.wnd`): the map list with its red scroll bar, the picked map's preview beside it, ACCEPT and BACK; BACK restores the map from before.
 - **In-game menu** (`QuitMenu.wnd`): the logo over Surrender, Exit to Main Menu, Return to Game.
 - **Score screen** (`ScoreScreen.wnd`): gold column heads over a row of totals per player, the winner marked green, the outcome across the top band, the match in the box below, and the buttons along the bottom.
-- **Generals** and **Controls** use the skirmish page's frame. With the player's import of the 2013 alpha, the Generals page shows its general portraits; without one, faction-coloured tiles.
+- **Generals**, **2013 Alpha** (importing the player's copy: FIND CNC.EXE opens the system's file dialog, the page follows the import) and **Controls** use the skirmish page's frame. With the player's import of the 2013 alpha, the Generals page shows its general portraits; without one, faction-coloured tiles.
 
 ## Combat effects (`fx.rs`)
 

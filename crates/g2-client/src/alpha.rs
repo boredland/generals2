@@ -1,5 +1,5 @@
 //! Optional content from the 2013 closed alpha, used when the player has imported their own
-//! copy (`g2-tools alpha DIR import`): its unit and building models, sound effects, unit
+//! copy (the main menu's 2013 Alpha page, `importer.rs`, or `g2-tools alpha DIR import`): its unit and building models, sound effects, unit
 //! voice responses and menu music. Without the cache everything stays procedural, and the
 //! game plays the same either way: this changes looks and sounds only.
 //!

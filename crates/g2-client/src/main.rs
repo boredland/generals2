@@ -22,7 +22,7 @@
 //! joiner as player 1 with `--enemy`/`--enemy-general`, on the host's map and seed. Both run
 //! the same build. The game runs at one shared speed: no pause and no fast-forward.
 //!
-//! With an imported 2013 alpha (`g2-tools alpha DIR import`, found in `$G2_ALPHA_CACHE` or the
+//! With an imported 2013 alpha (the main menu's 2013 Alpha page or `g2-tools alpha DIR import`, found in `$G2_ALPHA_CACHE` or the
 //! game's data folder: `~/.local/share/generals2/alpha` on Linux), the client draws its models
 //! and plays its sounds, voices and menu music (`alpha.rs`); the match itself is the same either way.
 
@@ -37,6 +37,7 @@ mod camera;
 mod front;
 mod fx;
 mod hud;
+mod importer;
 mod input;
 mod look;
 mod menu;
@@ -161,8 +162,11 @@ fn parse_args() -> Result<Args, String> {
                     }
                     Some("end") => menu::Screen::End,
                     Some("generals") => menu::Screen::Generals,
+                    Some("alpha") => menu::Screen::Alpha,
                     other => {
-                        return Err(format!("--menu expects main|controls|setup|pause|end|generals, got {other:?}"));
+                        return Err(format!(
+                            "--menu expects main|controls|setup|pause|end|generals|alpha, got {other:?}"
+                        ));
                     }
                 })
             }
