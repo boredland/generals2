@@ -451,7 +451,7 @@ mod headless {
             .iter()
             .map(|s| match *s {
                 crate::sim::Shot::Hit { from, at, .. } | crate::sim::Shot::Shell { from, at, .. } => (from, at),
-                crate::sim::Shot::Blast { at, .. } => (at, at),
+                crate::sim::Shot::Blast { at, .. } | crate::sim::Shot::DigIn { at } => (at, at),
             })
             .collect();
         let fight = (!ends.is_empty()).then(|| {

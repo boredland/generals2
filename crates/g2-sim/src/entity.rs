@@ -46,6 +46,11 @@ pub enum Order {
     Garrison {
         container: EntityId,
     },
+    /// Close on `target` and fire the unit's special shot (`Def::special`) at it once, then
+    /// stop.
+    Special {
+        target: EntityId,
+    },
     /// A support power's jet: flies straight to `aim`, does its power slot `slot`'s work there
     /// (an airstrike's bombs), then flies on to `exit` and leaves the map. Takes no orders.
     Sortie {
@@ -125,6 +130,8 @@ pub struct Entity {
     pub revealed_until: Option<u32>,
     /// Hidden as a stealth unit by a cloaking power until this tick (or until it fires).
     pub cloaked_until: Option<u32>,
+    /// Units with a `Def::special`: the tick from which it can fire again (0: ready).
+    pub special_at: u32,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -278,6 +285,7 @@ mod tests {
             inside: None,
             revealed_until: None,
             cloaked_until: None,
+            special_at: 0,
             route: Route::default(),
         }
     }

@@ -710,6 +710,19 @@ pub fn spawn_shots(
                     }
                 }
             }
+            Shot::DigIn { at } => {
+                if !seen(at) {
+                    continue;
+                }
+                // A ring of dust thrown up as the bus settles into its bunker.
+                let mut rng = Rng::at(at, 0xd16 ^ sim.world.tick());
+                let base = sim.to_world(at) + Vec3::Y * 0.4;
+                for k in 0..10 {
+                    let a = k as f32 / 10.0 * std::f32::consts::TAU + rng.range(-0.2, 0.2);
+                    let out = Vec3::new(a.cos(), 0.0, a.sin());
+                    s.puff(base + out * 3.5, out * 4.0 + Vec3::Y, rng.range(1.2, 2.0), (1.4, 3.2), Fade::Dust, -0.3);
+                }
+            }
         }
     }
     kills

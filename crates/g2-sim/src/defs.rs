@@ -159,6 +159,15 @@ pub struct Garrison {
     pub range_bonus: Fx,
 }
 
+/// A unit's aimed special shot (the Shadow Tank's Particle Accelerator): fired once at a
+/// chosen target on command, then recharging for `cooldown_ticks`. It reveals a stealth unit
+/// as any shot does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Special {
+    pub weapon: Weapon,
+    pub cooldown_ticks: u32,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BuildingRole {
     CommandCenter,
@@ -181,6 +190,9 @@ pub enum BuildingRole {
     Defense,
     /// Launches its faction's superweapon power (`Power::requires`); nothing else.
     Superweapon,
+    /// What a unit turns into where it stands (the GLA Battle Bus's bunker, `Def::becomes`):
+    /// immobile, holds infantry who fire out, and doesn't keep a player in the game.
+    Bunker,
 }
 
 #[derive(Clone, Debug)]
@@ -213,6 +225,11 @@ pub struct Def {
     /// Reveals enemy stealth within this distance of its centre (the alpha's
     /// `StealthDetectionRange`); zero for everything that can't.
     pub detection: Fx,
+    /// Turns into this def on command or on death (the Battle Bus into its bunker), taking its
+    /// occupants along; `None` for everything else.
+    pub becomes: Option<DefId>,
+    /// An aimed special shot fired on command (`Special`); `None` for everything else.
+    pub special: Option<Special>,
 }
 
 /// What a unit gains by rank, after the alpha's `RtsVeterancyComponentData`: three ranks at
@@ -230,6 +247,12 @@ pub struct Veterancy {
 impl Def {
     pub fn is_building(&self) -> bool {
         matches!(self.class, Class::Building { .. })
+    }
+
+    /// A building of a player's base: not a civilian building held, nor a bunker a unit
+    /// turned into. Only these keep a player in the game, and only these are defended.
+    pub fn is_base(&self) -> bool {
+        self.is_building() && !matches!(self.role(), Some(BuildingRole::Civilian | BuildingRole::Bunker))
     }
 
     pub fn is_unit(&self) -> bool {

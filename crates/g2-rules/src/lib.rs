@@ -5,8 +5,8 @@
 //! Everything else is a placeholder chosen for playability and will be tuned.
 use g2_sim::defs::{
     Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, Garrison, General,
-    GeneralUnit, Modifier, Perk, PerkId, Power, PowerKind, PowerTuning, Rules, Shell, Targets, Upgrade, UpgradeId,
-    Veterancy, Weapon,
+    GeneralUnit, Modifier, Perk, PerkId, Power, PowerKind, PowerTuning, Rules, Shell, Special, Targets, Upgrade,
+    UpgradeId, Veterancy, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -92,6 +92,7 @@ pub mod ids {
     pub const GLA_TOXIN_TANK: DefId = DefId(76);
     pub const GLA_MOBILE_CHEMIST: DefId = DefId(77);
     pub const GLA_BOMB_TRUCK: DefId = DefId(78);
+    pub const GLA_BATTLE_BUNKER: DefId = DefId(79);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -313,6 +314,8 @@ const fn building(
         garrison: None,
         stealth: false,
         detection: Fx::ZERO,
+        becomes: None,
+        special: None,
     }
 }
 
@@ -379,6 +382,8 @@ const fn unit(
         garrison: None,
         stealth: false,
         detection: Fx::ZERO,
+        becomes: None,
+        special: None,
     }
 }
 
@@ -425,6 +430,8 @@ const fn soldier(
         garrison: None,
         stealth: false,
         detection: Fx::ZERO,
+        becomes: None,
+        special: None,
     }
 }
 
@@ -489,6 +496,26 @@ const fn carrying(mut d: Def, capacity: u32) -> Def {
     d
 }
 
+/// `d` turns into `into` on command or when destroyed (the Battle Bus into its bunker).
+const fn becoming(mut d: Def, into: DefId) -> Def {
+    d.becomes = Some(into);
+    d
+}
+
+/// `d` fires `weapon` once on command, then recharges for `cooldown_ticks`.
+const fn with_special(mut d: Def, weapon: Weapon, cooldown_ticks: u32) -> Def {
+    d.special = Some(Special { weapon, cooldown_ticks });
+    d
+}
+
+/// What a unit becomes where it stands: never built, no power, immobile, holding `capacity`
+/// squads who fire out with `range_bonus`.
+const fn bunker(name: &'static str, faction: Faction, hp: i32, radius: i64, capacity: u32, range_bonus: i64) -> Def {
+    let mut d = building(name, faction, BuildingRole::Bunker, 0, hp, credits(0), 0, radius, NONE);
+    d.garrison = Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(range_bonus) });
+    d
+}
+
 /// `d` deploys for `weapon`, taking `set_up_tenths` tenths of a second each way.
 const fn deploying(mut d: Def, weapon: Weapon, set_up_tenths: u32) -> Def {
     d.deploy = Some(Deploy { weapon, ticks: set_up_tenths * g2_sim::TICKS_PER_SECOND / 10 });
@@ -528,7 +555,7 @@ const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 79] = [
+static DEFS: [Def; 80] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -547,6 +574,8 @@ static DEFS: [Def; 79] = [
         garrison: None,
         stealth: false,
         detection: Fx::ZERO,
+        becomes: None,
+        special: None,
     },
     Def {
         name: "Oil Well",
@@ -566,6 +595,8 @@ static DEFS: [Def; 79] = [
         garrison: None,
         stealth: false,
         detection: Fx::ZERO,
+        becomes: None,
+        special: None,
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
@@ -1342,22 +1373,30 @@ static DEFS: [Def; 79] = [
         67,
     ),
     // Shadow Tank (au_mediumstealthtank): hp 545, $1075, 17 s; cannon 85 (+30 light), 35,
-    // 2.5 s; stealthed (the wiki's passive stealth).
-    stealthy(ranked(
-        soldier(
-            "APA Shadow Tank",
-            Faction::Apa,
-            545,
-            Armour::Light,
-            credits(1075),
-            secs(17),
-            10,
-            3,
-            weapon(85, [0, 30, 0, 0], 35, 25),
-        ),
-        72,
-        80,
-    )),
+    // 2.5 s; stealthed (the wiki's passive stealth). Particle Accelerator (the alpha's
+    // APA_ParticleAccelerator, a unit-targeted ability): one aimed shot, 300 damage at range 50;
+    // the wiki: it "temporarily disables the cloaking shield", as the cannon's 2.5 s
+    // `StealthDisableOnFire` does. Placeholder: the 20 s recharge (the data has no cooldown;
+    // `ManaCost` and `MaxMana` are 0).
+    with_special(
+        stealthy(ranked(
+            soldier(
+                "APA Shadow Tank",
+                Faction::Apa,
+                545,
+                Armour::Light,
+                credits(1075),
+                secs(17),
+                10,
+                3,
+                weapon(85, [0, 30, 0, 0], 35, 25),
+            ),
+            72,
+            80,
+        )),
+        weapon(300, [0, 0, 0, 0], 50, 0),
+        secs(20),
+    ),
     // Urban Assault Squad (au_urbanassaulttroopersquad): hp 300, $375, 10 s; shotguns 44, 20,
     // 2 s. Replaces the Red Guard for its generals.
     ranked(
@@ -1376,17 +1415,23 @@ static DEFS: [Def; 79] = [
         95,
     ),
     // Battle Bus (gu_battlebus): hp 525, $750, 14 s, unarmed; carries four squads who can't
-    // fire out (the wiki's bunker deploy isn't modelled).
-    carrying(
-        ranked(
-            with_armour(
-                unit("GLA Battle Bus", Faction::Gla, 525, credits(750), 14, 15, false, None, NONE),
-                Armour::Light,
+    // fire out. Its two unlocked abilities are the passive GLA_BattleBusBunker (the wiki: it
+    // "can deploy into a bunker when destroyed") and the instant GLA_InstantBunker ("manually
+    // ordered to deploy into one"): both make it the Battle Bunker, at once (no set-up time in
+    // the data) and for good (no ability turns it back).
+    becoming(
+        carrying(
+            ranked(
+                with_armour(
+                    unit("GLA Battle Bus", Faction::Gla, 525, credits(750), 14, 15, false, None, NONE),
+                    Armour::Light,
+                ),
+                54,
+                100,
             ),
-            54,
-            100,
+            4,
         ),
-        4,
+        GLA_BATTLE_BUNKER,
     ),
     // Black Market Artillery (gu_heavyrocketartillery): hp 750 (the wiki's 850), $1250, 24 s;
     // rockets 70, 60, 1.75 s, lobbed as shells. The alpha's also fire at aircraft (`TargetType`
@@ -1470,6 +1515,11 @@ static DEFS: [Def; 79] = [
         2,
         weapon(185, [0, 0, 85, 0], 7, 10),
     ),
+    // Battle Bunker (gu_battlebus_bunker, a structure blueprint): what the Battle Bus becomes.
+    // hp 525, room for four squads who fire out with an 8-unit range bonus, and die with it
+    // (`DieWithGarrison`); it can't move. Never built (its 45 s build time and $750 cost are
+    // unused). Radius 4: the bus's `EntityRadius` 3.5, rounded up.
+    bunker("GLA Battle Bunker", Faction::Gla, 525, 4, 4, 8),
 ];
 
 /// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
@@ -1628,6 +1678,8 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
         garrison: Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(8) }),
         stealth: false,
         detection: Fx::ZERO,
+        becomes: None,
+        special: None,
     }
 }
 
@@ -3879,6 +3931,7 @@ mod tests {
             (GLA_TOXIN_TANK, "GLA Toxin Tank"),
             (GLA_MOBILE_CHEMIST, "GLA Mobile Chemist"),
             (GLA_BOMB_TRUCK, "GLA Bomb Truck"),
+            (GLA_BATTLE_BUNKER, "GLA Battle Bunker"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

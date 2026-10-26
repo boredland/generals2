@@ -130,6 +130,10 @@ impl World {
             if let Some(t) = e.cloaked_until {
                 h.u64(0x636c_0000_0000 | t as u64);
             }
+            // Only once a special shot has been fired, so matches without one hash as before.
+            if e.special_at != 0 {
+                h.u64(0x7370_0000_0000 | e.special_at as u64);
+            }
             // Only for units inside something, so matches without garrisons hash as before.
             if let Some(c) = e.inside {
                 h.u64(0x6761_7272);
@@ -246,6 +250,10 @@ fn hash_order(h: &mut Fnv, o: Order) {
         Order::Garrison { container } => {
             h.u64(6);
             id(h, container);
+        }
+        Order::Special { target } => {
+            h.u64(8);
+            id(h, target);
         }
         Order::Sortie { aim, exit, slot, dropped } => {
             h.u64(7);

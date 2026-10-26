@@ -329,6 +329,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
     let w = r * 1.75;
     match (faction, role) {
         (_, BuildingRole::Civilian) => civilian(&mut p, r),
+        (_, BuildingRole::Bunker) => battle_bunker(&mut p, r),
         (_, BuildingRole::Defense) => turret(&mut p, faction, r),
         (_, BuildingRole::Superweapon) => scud_storm(&mut p, w),
         (_, BuildingRole::OilDerrick { .. }) => derrick(&mut p, faction, r),
@@ -353,6 +354,24 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
         (_, BuildingRole::Lab) => lab(&mut p, faction, w),
     }
     p
+}
+
+/// The Battle Bus dug in: its hull sunk on its axles with sheet armour over the windows, a
+/// ring of sandbags and scrap around it, and firing slits for the squads inside.
+fn battle_bunker(p: &mut Vec<Part>, r: f32) {
+    let (w, d) = (r * 1.5, r * 0.7);
+    p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, r * 1.8, 0.2, r * 1.8));
+    let top = tier(p, 0.0, 0.0, 0.2, w, d, 2.0, Slot::Hull);
+    p.push(block(Slot::Team, 0.0, 0.0, top, w * 0.9, 0.3, d * 0.9));
+    for x in [-0.3, 0.0, 0.3] {
+        p.push(bx(Slot::Dark, Vec3::new(x * w, 1.4, d / 2.0 + 0.05), Vec3::new(w * 0.18, 0.25, 0.1)));
+    }
+    scrap(p, 0.0, 0.0, top + 0.3, w * 0.6, d * 0.6, 57);
+    let ring = r * 0.85;
+    sandbags(p, -ring, -ring, ring, -ring, 0.2, 5);
+    sandbags(p, -ring, ring, ring, ring, 0.2, 5);
+    sandbags(p, -ring, -ring * 0.6, -ring, ring * 0.6, 0.2, 3);
+    sandbags(p, ring, -ring * 0.6, ring, ring * 0.6, 0.2, 3);
 }
 
 /// A base defence on a concrete pad: EU a squat armoured box with a long twin autocannon, APA

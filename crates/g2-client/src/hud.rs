@@ -653,6 +653,9 @@ fn update_fields(
                             None => return None,
                         })
                     })
+                    .chain(
+                        (aim == Some(crate::input::SPECIAL)).then(|| "PARTICLE ACCELERATOR: click an enemy".to_owned()),
+                    )
                     .collect();
                 t.0 = lines.join("\n");
             }
@@ -706,6 +709,18 @@ fn update_fields(
                             DeployState::Deploying(_) => "  -  setting up",
                             DeployState::Deployed => "  -  DEPLOYED (T: pack up)",
                             DeployState::Packing(_) => "  -  packing up",
+                        };
+                    }
+                    if d.becomes.is_some() && e.owner == Some(sim.local) {
+                        s += "  -  T: become a bunker";
+                    }
+                    if d.special.is_some() && e.owner == Some(sim.local) {
+                        let left = e.special_at.saturating_sub(world.tick());
+                        s += &if left == 0 {
+                            "  -  R: particle accelerator READY".to_owned()
+                        } else {
+                            let secs = left.div_ceil(g2_sim::TICKS_PER_SECOND);
+                            format!("  -  particle accelerator {}:{:02}", secs / 60, secs % 60)
                         };
                     }
                     if let Some(g) = d.garrison {

@@ -146,6 +146,22 @@ pub enum Event {
         container: EntityId,
         at: Vec2,
     },
+    /// `player`'s unit of def `from` at `at` turned into a `into` (the Battle Bus into its
+    /// bunker). Output only.
+    Transformed {
+        player: PlayerId,
+        from: DefId,
+        into: DefId,
+        at: Vec2,
+    },
+    /// `shooter` fired its special shot (`Def::special`) at `target` from `from` to `at`;
+    /// its damage is a `Hit` on the same tick. Output only, for drawing it.
+    SpecialFired {
+        shooter: EntityId,
+        target: EntityId,
+        from: Vec2,
+        at: Vec2,
+    },
 }
 
 /// What sent a shell, for drawing it: the weapon of a unit def (which outlives the shooter,
@@ -335,6 +351,7 @@ impl World {
             inside: None,
             revealed_until: None,
             cloaked_until: None,
+            special_at: 0,
             route: Route::default(),
         }
     }
@@ -791,6 +808,23 @@ impl World {
         }
     }
 
+    /// Unit `id` turns into its `Def::becomes` where it stands: a new entity of that def at full
+    /// health, the same owner, its occupants moved inside it; the unit itself goes. Instant: the
+    /// alpha's instant bunker has no set-up time.
+    fn transform(&mut self, id: EntityId) {
+        let e = self.entities.get(id).unwrap();
+        let (Some(into), Some(owner), pos, def) = (self.rules.def(e.def).becomes, e.owner, e.pos, e.def) else {
+            return;
+        };
+        let occupants = self.occupants(id);
+        let new = self.spawn_owned(into, owner, pos);
+        for u in occupants {
+            self.entities.get_mut(u).unwrap().inside = Some(new);
+        }
+        self.entities.despawn(id);
+        self.events.push(Event::Transformed { player: owner, from: def, into, at: pos });
+    }
+
     /// Units inside a container sit at its centre: a transport that moved takes them along.
     fn carry_occupants(&mut self) {
         for id in self.entities.ids() {
@@ -1046,6 +1080,36 @@ impl World {
                     return Err(Reject::CannotGarrison);
                 }
                 self.evacuate(*container);
+                Ok(())
+            }
+            CommandKind::Transform { units } => {
+                let units =
+                    self.own_units(player, units, |d| d.becomes.is_some()).map_err(|_| Reject::CannotTransform)?;
+                for u in units {
+                    self.transform(u);
+                }
+                Ok(())
+            }
+            CommandKind::Special { units, target } => {
+                if !self.attackable(player, *target) {
+                    return Err(Reject::SpecialNotReady);
+                }
+                let flying = self.entities.get(*target).is_some_and(|t| self.rules.def(t.def).flies());
+                let tick = self.tick;
+                let ready: Vec<EntityId> = self
+                    .own_units(player, units, |d| d.special.is_some_and(|s| s.weapon.targets.hits(flying)))
+                    .map_err(|_| Reject::SpecialNotReady)?
+                    .into_iter()
+                    .filter(|&u| self.entities.get(u).unwrap().special_at <= tick)
+                    .collect();
+                if ready.is_empty() {
+                    return Err(Reject::SpecialNotReady);
+                }
+                for u in ready {
+                    let e = self.entities.get_mut(u).unwrap();
+                    e.order = Order::Special { target: *target };
+                    e.home = None;
+                }
                 Ok(())
             }
         }
@@ -1536,6 +1600,29 @@ impl World {
                     (p, order)
                 }
             },
+            // The special shot: close to its range, fire once (as `engage` does, with the special
+            // weapon and its own recharge), then stop. A target lost (dead, gone into stealth)
+            // or a shot already spent drops the order.
+            Order::Special { target } => {
+                let tick = self.tick;
+                let spec = self.rules.def(self.entities.get(id).unwrap().def).special;
+                let seen = self
+                    .live_enemy(owner, target)
+                    .filter(|t| !self.hidden(t) || self.visions[owner.0 as usize].detected.contains(&t.id))
+                    .map(|t| (t.pos, self.rules.def(t.def).radius, self.rules.def(t.def).flies()));
+                match (spec, seen) {
+                    (Some(s), Some((tpos, tr, flying))) if self.entities.get(id).unwrap().special_at <= tick => {
+                        let range = s.weapon.range_vs(flying).unwrap_or(Fx::ZERO);
+                        if tpos.distance(pos) - tr > range {
+                            (self.approach(id, tpos, tr + range - SLACK, speed).0, order)
+                        } else {
+                            self.fire_special(id, target, s);
+                            (pos, Order::Idle)
+                        }
+                    }
+                    _ => (pos, Order::Idle),
+                }
+            }
             Order::Gather { pile, phase } => self.gather_step(id, pile, phase, pos, speed, radius, owner),
             // A target that slips back into stealth (no detector, no recent shot) is lost; one
             // that only walks into the fog is still chased.
@@ -1757,6 +1844,26 @@ impl World {
             }
         }
         best.map(|(_, _, id)| id)
+    }
+
+    /// Unit `id` fires its special shot `s` at `target`: direct damage against the target's
+    /// armour, joining this tick's shots; the shot then recharges, and like any shot it gives
+    /// a stealth unit away for `STEALTH_REVEAL_TICKS` (the alpha's `StealthDisableOnFire`) and
+    /// ends a cloaking power's cover. The unit's main gun keeps its own cooldown.
+    fn fire_special(&mut self, id: EntityId, target: EntityId, s: crate::defs::Special) {
+        let t = self.entities.get(target).unwrap();
+        let (tpos, armour) = (t.pos, self.rules.def(t.def).armour);
+        let tick = self.tick;
+        let e = self.entities.get(id).unwrap();
+        let (pos, owner, stealthy) = (e.pos, e.owner.unwrap(), self.rules.def(e.def).stealth);
+        let e = self.entities.get_mut(id).unwrap();
+        e.special_at = tick + s.cooldown_ticks;
+        if stealthy {
+            e.revealed_until = Some(tick + STEALTH_REVEAL_TICKS);
+        }
+        e.cloaked_until = None;
+        self.shots.push((id, owner, target, s.weapon.damage_vs(armour), false));
+        self.events.push(Event::SpecialFired { shooter: id, target, from: pos, at: tpos });
     }
 
     /// Moves unit `id` into range of `target` and fires when the weapon is ready. Returns the
@@ -2359,6 +2466,17 @@ impl World {
     }
 
     fn cleanup(&mut self) {
+        // A unit that turns into something (the Battle Bus) does so when destroyed, its
+        // occupants inside the new entity (the alpha's passive `GLA_BattleBusBunker`).
+        for id in self.entities.ids() {
+            let e = self.entities.get(id).unwrap();
+            if e.hp <= 0
+                && self.rules.def(e.def).becomes.is_some()
+                && e.owner.is_some_and(|o| !self.players[o.0 as usize].defeated)
+            {
+                self.transform(id);
+            }
+        }
         // Units inside a destroyed building or vehicle die with it (the alpha's
         // `DieWithGarrison`).
         for id in self.entities.ids() {
@@ -2396,12 +2514,11 @@ impl World {
             let owner = Some(PlayerId(i as u8));
             let onslaught = self.ai[i].as_ref().is_some_and(|a| a.level() == AiLevel::Onslaught);
             // Entities killed this tick (hp ≤ 0) are swept by `cleanup` right after. A civilian
-            // building held is no base: it doesn't keep a player in the game.
+            // building held, or a bunker a unit turned into, is no base: neither keeps a player
+            // in the game.
             let alive = self.entities.iter().any(|e| {
                 let d = self.rules.def(e.def);
-                e.owner == owner
-                    && e.hp > 0
-                    && ((d.is_building() && d.role() != Some(BuildingRole::Civilian)) || d.is_constructor())
+                e.owner == owner && e.hp > 0 && (d.is_base() || d.is_constructor())
             });
             // The onslaught has no base to lose: it is beaten once its last wave is out and gone.
             p.defeated = if onslaught {

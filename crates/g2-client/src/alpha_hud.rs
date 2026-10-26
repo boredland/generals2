@@ -222,7 +222,8 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
             "BuildButtons/Active/APA/AU_UrbanAssaultTrooperSquad",
             "UnitPortraits/APA/Units/AU_UrbanAssaultTrooperSquad_Portrait",
         ),
-        "GLA Battle Bus" => {
+        // The bunker is the bus dug in: the alpha gives it no button or portrait of its own.
+        "GLA Battle Bus" | "GLA Battle Bunker" => {
             ("BuildButtons/Active/GLA/GU_BattleBus", "UnitPortraits/GLA/Vehicles/GU_BattleBus_Portrait")
         }
         "GLA Black Market Artillery" => (

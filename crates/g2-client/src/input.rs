@@ -26,10 +26,14 @@ pub struct Selection(pub Vec<EntityId>);
 #[derive(Resource, Default)]
 pub struct Placement(pub Option<DefId>);
 
-/// A power is armed, by slot (0 the general's, 1-3 support): the next left click on the
-/// ground uses it there.
+/// A power is armed, by slot (0 the general's, 1-3 support), or the selected units' special
+/// shot (`SPECIAL`): the next left click on the ground uses the power there, on an enemy fires
+/// the special at it.
 #[derive(Resource, Default)]
 pub struct PowerAim(pub Option<u8>);
+
+/// `PowerAim` for the selection's special shot (R) rather than a power slot.
+pub const SPECIAL: u8 = u8::MAX;
 
 /// The key that arms each power slot.
 pub const POWER_KEYS: [KeyCode; 4] = [KeyCode::KeyG, KeyCode::F1, KeyCode::F2, KeyCode::F3];
@@ -190,6 +194,30 @@ pub(crate) fn keyboard(
                 .all(|&id| sim.world.entity(id).unwrap().deploy == g2_sim::entity::DeployState::Deployed);
             sim.order(CommandKind::Deploy { units: deployable, deployed: !all_set_up });
         }
+        // T also turns the selected Battle Buses into bunkers, for good.
+        let becoming: Vec<EntityId> = sel
+            .0
+            .iter()
+            .copied()
+            .filter(|&id| sim.world.entity(id).is_some_and(|e| rules.def(e.def).becomes.is_some()))
+            .collect();
+        if !becoming.is_empty() {
+            sim.order(CommandKind::Transform { units: becoming });
+        }
+    }
+    // R: arm the special shot of the selected units that have one ready; the next left click
+    // on an enemy fires it.
+    if keys.just_pressed(KeyCode::KeyR) {
+        let tick = sim.world.tick();
+        let ready = sel.0.iter().any(|&id| {
+            sim.world.entity(id).is_some_and(|e| {
+                e.owner == Some(sim.local) && rules.def(e.def).special.is_some() && e.special_at <= tick
+            })
+        });
+        if ready {
+            aim.0 = Some(SPECIAL);
+            placing.0 = None;
+        }
     }
     // E: everyone gets out of the selected buildings and vehicles that hold units.
     if keys.just_pressed(KeyCode::KeyE) {
@@ -312,7 +340,15 @@ fn mouse(
 
     if let Some(slot) = aim.0 {
         if buttons.just_pressed(MouseButton::Left) {
-            sim.order(CommandKind::Power { slot, at: here });
+            if slot == SPECIAL {
+                let me = sim.local;
+                if let Some(target) = pick(&sim, here, |e| e.owner.is_some_and(|o| o != me)) {
+                    let units = sel.0.clone();
+                    sim.order(CommandKind::Special { units, target });
+                }
+            } else {
+                sim.order(CommandKind::Power { slot, at: here });
+            }
             aim.0 = None;
         }
         if buttons.just_pressed(MouseButton::Right) {

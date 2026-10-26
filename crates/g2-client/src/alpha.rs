@@ -143,6 +143,7 @@ fn model_for(def: &str) -> Option<&'static str> {
         "GLA Toxin Tank" => "_gla/gu_mediumtoxintank/gu_mediumtoxintank_skn_mesh",
         "GLA Mobile Chemist" => "_gla/gu_lightchemicalvehicle/gu_lightchemicalvehicle_skn_mesh",
         "GLA Bomb Truck" => "_gla/gu_lightbombvehicle/gu_lightbombvehicle_skn_mesh",
+        "GLA Battle Bunker" => "_gla/gu_battlebus/gu_battlebus_bunker_mesh",
         "Shanty" => "civilian/africa/afri_cb_shanty/afri_cb_shanty_05_mesh",
         "Town House" => "civilian/africa/afri_cb_town/afri_cb_town_09_mesh",
         "Urban Block" => "civilian/africa/afri_cb_urban/afri_cb_urban_03_mesh",

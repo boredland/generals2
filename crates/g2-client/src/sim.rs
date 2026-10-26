@@ -260,6 +260,8 @@ pub enum Shot {
     Shell { from: g2_sim::Vec2, at: g2_sim::Vec2, flight: u32, done: f32, look: crate::fx::Look },
     /// A shell landed at `at`; its blast has `radius`.
     Blast { at: g2_sim::Vec2, radius: g2_sim::Fx, look: crate::fx::Look },
+    /// A unit turned into a bunker at `at` (the Battle Bus digging in).
+    DigIn { at: g2_sim::Vec2 },
 }
 
 pub struct SimPlugin;
@@ -324,15 +326,29 @@ fn step_sim(
 }
 
 /// Turns the last step's combat events into `Shot`s for the view. A shell's blast is drawn at
-/// its landing, so its hits get no tracer of their own.
+/// its landing, so its hits get no tracer of their own. A special shot's hit is drawn as the
+/// special (a particle accelerator's beam), not as the shooter's gun; a unit turning into a
+/// bunker throws up dust where it digs in.
 pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
     let tick = world.tick();
+    let specials: Vec<(g2_sim::EntityId, g2_sim::EntityId)> = world
+        .events()
+        .iter()
+        .filter_map(|e| match *e {
+            g2_sim::world::Event::SpecialFired { shooter, target, .. } => Some((shooter, target)),
+            _ => None,
+        })
+        .collect();
     for e in world.events() {
         match *e {
             g2_sim::world::Event::Hit { shooter, target, at, killed, splash, target_def, .. } => {
                 let s = world.entity(shooter);
                 let from = s.map_or(at, |s| s.pos);
-                let look = s.map(|s| crate::fx::Look::of_unit(world, s));
+                let look = if specials.contains(&(shooter, target)) {
+                    Some(crate::fx::Look::Beam { rail: true })
+                } else {
+                    s.map(|s| crate::fx::Look::of_unit(world, s))
+                };
                 let flies = |e: Option<&g2_sim::Entity>| e.is_some_and(|e| world.rules.def(e.def).flies());
                 let target_flies = world.entity(target).map_or(world.rules.def(target_def).flies(), |t| flies(Some(t)));
                 hits.0.push(Shot::Hit {
@@ -355,6 +371,7 @@ pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
             g2_sim::world::Event::Landed { at, radius, source } => {
                 hits.0.push(Shot::Blast { at, radius, look: crate::fx::Look::of_shell(world, source) })
             }
+            g2_sim::world::Event::Transformed { at, .. } => hits.0.push(Shot::DigIn { at }),
             _ => {}
         }
     }

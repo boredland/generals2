@@ -14,8 +14,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3), v7 the `Research` command
 /// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14), v9 each player's slotted
 /// perks, v10 the power slot (`Power` is tag 15; tag 11 still decodes, as slot 0), v11 each
-/// player's general rank (1 before). Older replays still decode.
-pub const VERSION: u16 = 11;
+/// player's general rank (1 before), v12 the `Transform` and `Special` commands (tags 16, 17).
+/// Older replays still decode.
+pub const VERSION: u16 = 12;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -309,6 +310,15 @@ impl Writer {
                 self.u8(14);
                 self.id(*container);
             }
+            CommandKind::Transform { units } => {
+                self.u8(16);
+                self.ids(units);
+            }
+            CommandKind::Special { units, target } => {
+                self.u8(17);
+                self.ids(units);
+                self.id(*target);
+            }
         }
     }
 }
@@ -376,6 +386,8 @@ impl Reader<'_> {
             13 => CommandKind::Garrison { units: self.ids()?, container: self.id()? },
             14 => CommandKind::Evacuate { container: self.id()? },
             15 => CommandKind::Power { slot: self.u8()?, at: self.pos()? },
+            16 => CommandKind::Transform { units: self.ids()? },
+            17 => CommandKind::Special { units: self.ids()?, target: self.id()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

@@ -82,6 +82,16 @@ pub enum CommandKind {
     Evacuate {
         container: EntityId,
     },
+    /// Units that turn into something where they stand (`Def::becomes`: the Battle Bus into
+    /// its bunker) do so now, occupants and all.
+    Transform {
+        units: Vec<EntityId>,
+    },
+    /// Units with a ready special shot (`Def::special`) close on `target` and fire it once.
+    Special {
+        units: Vec<EntityId>,
+        target: EntityId,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.
@@ -102,6 +112,10 @@ pub enum Reject {
     QueueFull,
     /// None of the units can deploy.
     CannotDeploy,
+    /// None of the units can turn into anything.
+    CannotTransform,
+    /// None of the units has a special shot ready, or the target is not an enemy.
+    SpecialNotReady,
     /// The player has no power in that slot, or it is still recharging.
     PowerNotReady,
     /// The point is unexplored (except for a recon), off the map, or (for an ambush) not open

@@ -540,7 +540,7 @@ impl Ai {
                 && rules.def(e.def).is_unit()
                 && rules.def(e.def).weapon().is_some()
                 && world.sees(me, e)
-                && mine.iter().any(|b| rules.def(b.def).is_building() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
+                && mine.iter().any(|b| rules.def(b.def).is_base() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
         });
         if let Some(intruder) = intruder {
             // Only units at home defend: a wave already under way keeps going, and a unit
@@ -549,7 +549,7 @@ impl Ai {
                 .iter()
                 .filter(|e| {
                     !matches!(e.order, Order::Attack { .. } | Order::AttackMove { engaged: Some(_), .. })
-                        && mine.iter().any(|b| rules.def(b.def).is_building() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
+                        && mine.iter().any(|b| rules.def(b.def).is_base() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
                 })
                 .map(|e| e.id)
                 .collect();
@@ -613,11 +613,8 @@ impl Ai {
         let seen_now = sum(&mut enemies.iter());
         // Slow fade (a 64th per second): an army that walked out of sight still exists.
         self.enemy_seen = (self.enemy_seen - self.enemy_seen / 64).max(seen_now);
-        // A held civilian building is no base to defend or fall back to.
-        let buildings: Vec<&&Entity> = mine
-            .iter()
-            .filter(|e| rules.def(e.def).is_building() && rules.def(e.def).role() != Some(BuildingRole::Civilian))
-            .collect();
+        // A held civilian building or a bunker is no base to defend or fall back to.
+        let buildings: Vec<&&Entity> = mine.iter().filter(|e| rules.def(e.def).is_base()).collect();
         let near_base = |p: Vec2| buildings.iter().any(|b| b.pos.distance(p) <= DEFEND_RADIUS);
         let at_home = |e: &&Entity| near_base(e.pos);
 
@@ -626,6 +623,25 @@ impl Ai {
             let threatened = enemies.iter().any(|e| strength(world, e) > 0 && e.pos.distance(c.pos) <= DANGER_RADIUS);
             if threatened && c.pos.distance(home) > Fx::from_int(20) && !matches!(c.order, Order::Move { .. }) {
                 out.push(CommandKind::Move { units: vec![c.id], target: home });
+            }
+        }
+
+        // Special shots (the Shadow Tank's Particle Accelerator): every unit with one ready
+        // fires it at the strongest enemy it sees within reach (units first, as a gun picks;
+        // ties by id), wherever it is. A unit already firing one is left alone.
+        for u in mine.iter().filter(|e| e.inside.is_none() && !matches!(e.order, Order::Special { .. })) {
+            let Some(sp) = rules.def(u.def).special.filter(|_| u.special_at <= world.tick()) else { continue };
+            let target = enemies
+                .iter()
+                .filter(|t| {
+                    let d = rules.def(t.def);
+                    sp.weapon.range_vs(d.flies()).is_some_and(|r| t.pos.distance(u.pos) - d.radius <= r)
+                })
+                .max_by_key(|t| {
+                    (rules.def(t.def).is_unit(), strength(world, t).max(t.hp as i64), std::cmp::Reverse(t.id))
+                });
+            if let Some(t) = target {
+                out.push(CommandKind::Special { units: vec![u.id], target: t.id });
             }
         }
 
