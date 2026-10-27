@@ -68,9 +68,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: |
-            dist/Generals2-windows-x86_64.zip
-            smoke/shot.png
+          path: dist/Generals2-windows-x86_64.zip
+
+      # Proof images aren't release packages; separate artifacts keep dist/ out of the package.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-proof
+          path: smoke/shot.png
 
   macos:
     runs-on: macos-latest
@@ -98,9 +102,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: macos
-          path: |
-            dist/Generals2-macOS.dmg
-            shot.png
+          path: dist/Generals2-macOS.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-proof
+          path: shot.png
 
   publish:
     if: startsWith(github.ref, 'refs/tags/')
@@ -109,8 +116,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
+          name: linux
           path: dist
-          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos
+          path: dist
 
       - name: Checksums
         working-directory: dist

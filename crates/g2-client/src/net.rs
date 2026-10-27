@@ -266,10 +266,14 @@ mod tests {
         };
         let mut sims = [host_sim, joiner];
         let target = g2_sim::Vec2::from_int(150, 150);
-        let mut spins = 0;
+        let started = std::time::Instant::now();
         while sims.iter().any(|s| s.world.tick() < 600) {
-            spins += 1;
-            assert!(spins < 2_000_000, "stuck at ticks {} / {}", sims[0].world.tick(), sims[1].world.tick());
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "stuck at ticks {} / {}",
+                sims[0].world.tick(),
+                sims[1].world.tick()
+            );
             for s in &mut sims {
                 if s.world.tick() == 60 && s.online.as_ref().unwrap().lockstep.me() == s.local {
                     let u = first_unit(s);
@@ -280,6 +284,8 @@ mod tests {
                 }
                 assert_eq!(s.online.as_ref().unwrap().failed, None);
             }
+            // Spinning without a pause starved the socket threads on the macOS CI runner.
+            std::thread::sleep(Duration::from_micros(200));
         }
         assert_eq!(sims[0].world.state_hash(), sims[1].world.state_hash());
         let log = sims[0].world.replay(&sims[0].setup).commands;
