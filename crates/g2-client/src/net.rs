@@ -430,6 +430,7 @@ mod tests {
                 .init_resource::<crate::view::Mirror>()
                 .init_resource::<ButtonInput<MouseButton>>()
                 .init_resource::<ButtonInput<KeyCode>>()
+                .init_resource::<crate::settings::Settings>()
                 .add_plugins((crate::sim::SimPlugin, MenuPlugin { blocking: true }))
                 .insert_resource(crate::sim::RecordTo(path.to_string_lossy().into_owned()))
                 .add_systems(Last, crate::sim::save_replay_on_exit);

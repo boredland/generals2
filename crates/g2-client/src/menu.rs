@@ -24,6 +24,7 @@ use crate::hud::clock;
 use g2_sim::ai::{ai_perks, ai_rank};
 
 use crate::profile::{MAX_RANK, Profile, Refused, match_experience, promotion_cost};
+use crate::settings::Settings;
 use crate::sim::Sim;
 
 /// Spawns that belong to the running match (scene, models, HUD, camera). `swap_world`
@@ -89,6 +90,30 @@ pub enum Act {
     OpenAlpha,
     /// Opens the file dialog to find the alpha's `CnC.exe`, then imports it.
     ImportAlpha,
+    /// The options page, from the main menu or the in-game menu (it returns to either).
+    OpenOptions,
+    /// An options cell steps its setting; changes apply at once and ACCEPT saves them.
+    CycleOption(Opt),
+    /// DEFAULTS: every option back to its default (not saved until ACCEPT).
+    DefaultOptions,
+    /// ACCEPT: save the options and go back.
+    AcceptOptions,
+    /// BACK: drop the changes made on the page and go back.
+    CancelOptions,
+}
+
+/// One setting on the options page.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Opt {
+    Camera,
+    Scheme,
+    Pan,
+    AlternatePan,
+    EdgePan,
+    LockMouse,
+    PanSpeed,
+    ZoomSpeed,
+    ZoomModifier,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -101,6 +126,7 @@ pub enum Screen {
     End,
     Generals,
     Alpha,
+    Options,
 }
 
 /// One skirmish player: slot 0 is the human at the keyboard, the rest are AI.
@@ -209,6 +235,8 @@ pub struct Ui {
     pub refused: Option<Refused>,
     /// The experience the finished match earned, for the end screen; set once per match.
     pub earned: Option<(GeneralId, u32)>,
+    /// The settings as they were when the options page opened, for BACK.
+    pub options_before: Option<Settings>,
 }
 
 impl Default for Ui {
@@ -222,6 +250,7 @@ impl Default for Ui {
             shown_general: GeneralId(0),
             refused: None,
             earned: None,
+            options_before: None,
         }
     }
 }
@@ -275,6 +304,9 @@ impl Plugin for MenuPlugin {
         }
         if !app.world().contains_resource::<Profile>() {
             app.insert_resource(Profile::load(Profile::default_path(), g2_rules::rules()));
+        }
+        if !app.world().contains_resource::<Settings>() {
+            app.insert_resource(Settings::load(Settings::default_path()));
         }
         app.init_resource::<Ui>()
             .init_resource::<Pending>()
@@ -338,6 +370,7 @@ fn interact(
         if !placed && !aimed {
             pending.0.push(match (ui.screen, ui.paused) {
                 (Screen::Setup, _) if ui.map_select.is_some() => Act::CancelMapList,
+                (Screen::Options, _) => Act::CancelOptions,
                 (Screen::Setup | Screen::Controls | Screen::Generals | Screen::Alpha, _) => Act::BackToMain,
                 (Screen::Match, false) => Act::Pause,
                 (Screen::Match, true) => Act::Resume,
@@ -372,13 +405,14 @@ fn hover(
 /// Top-level match spawns that are UI nodes: the HUD panels, not the 3D scene.
 type HudRoots = (With<MatchEntity>, With<Node>);
 
-/// The match HUD is hidden behind the full-screen menus (everything but the in-game menu,
-/// which keeps it, dimmed, as context).
+/// The match HUD is hidden behind the full-screen menus (everything but the in-game menu and
+/// the options opened from it, which keep it, dimmed, as context).
 fn hide_hud(ui: Res<Ui>, mut roots: Query<&mut Visibility, HudRoots>) {
-    let hidden = matches!(
-        ui.screen,
-        Screen::Main | Screen::Controls | Screen::Setup | Screen::Generals | Screen::Alpha | Screen::End
-    );
+    let hidden = match ui.screen {
+        Screen::Match => false,
+        Screen::Options => !ui.paused,
+        Screen::Main | Screen::Controls | Screen::Setup | Screen::Generals | Screen::Alpha | Screen::End => true,
+    };
     for mut v in &mut roots {
         v.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
     }
@@ -595,6 +629,25 @@ fn apply_one(world: &mut World, act: Act) {
                 }
                 world.resource_mut::<Ui>().refused = done.err();
             }
+            Act::OpenOptions => {
+                let before = world.resource::<Settings>().clone();
+                let mut ui = world.resource_mut::<Ui>();
+                ui.options_before = Some(before);
+                // From the in-game menu the match stays paused behind the page.
+                ui.screen = Screen::Options;
+            }
+            Act::CycleOption(opt) => cycle_option(&mut world.resource_mut::<Settings>(), opt),
+            Act::DefaultOptions => world.resource_mut::<Settings>().reset(),
+            Act::AcceptOptions | Act::CancelOptions => {
+                let before = world.resource_mut::<Ui>().options_before.take();
+                if act == Act::AcceptOptions {
+                    world.resource::<Settings>().save();
+                } else if let Some(before) = before {
+                    world.insert_resource(before);
+                }
+                let mut ui = world.resource_mut::<Ui>();
+                ui.screen = if ui.paused { Screen::Match } else { Screen::Main };
+            }
             Act::Start | Act::QuitGame => unreachable!("handled above"),
         },
     }
@@ -780,6 +833,7 @@ fn rebuild(
     ui: Res<Ui>,
     sim: Res<Sim>,
     profile: Res<Profile>,
+    settings: Res<Settings>,
     maps: Option<Res<MapList>>,
     fonts: Option<Res<MenuFonts>>,
     cache: Option<Res<crate::alpha::Cache>>,
@@ -789,7 +843,11 @@ fn rebuild(
     import: Res<crate::importer::Import>,
     old: Query<Entity, With<MenuUi>>,
 ) {
-    if !ui.is_changed() && !profile.is_changed() && !fonts.as_ref().is_some_and(|f| f.is_added()) {
+    if !ui.is_changed()
+        && !profile.is_changed()
+        && !settings.is_changed()
+        && !fonts.as_ref().is_some_and(|f| f.is_added())
+    {
         return;
     }
     for e in &old {
@@ -807,9 +865,10 @@ fn rebuild(
     let map_image = preview.as_ref().and_then(|(_, h)| h.clone());
     let maps = maps.as_ref().map(|m| m.0.as_slice());
     let kit = Kit { fonts: fonts.as_deref(), server: server.as_deref(), alpha: cache.is_some() };
-    // The in-game menu sits on the match as Generals' does; every other screen is framed by
-    // the ruler, the battlefield behind it standing in for Generals' shell map.
-    let ruled = ui.screen != Screen::Match;
+    // The in-game menu sits on the match as Generals' does, and so do the options opened from
+    // it; every other screen is framed by the ruler, the battlefield behind it standing in for
+    // Generals' shell map.
+    let ruled = ui.screen != Screen::Match && !ui.paused;
     let dim = if ruled { Color::NONE } else { Color::srgba(0.0, 0.0, 0.0, 0.3) };
     commands
         .spawn((
@@ -845,6 +904,7 @@ fn rebuild(
                         Screen::End => end_screen(c, &kit, &sim, &ui),
                         Screen::Generals => generals(c, &kit, &ui, &profile),
                         Screen::Alpha => alpha(c, &kit, &import.status()),
+                        Screen::Options => options(c, &kit, &settings, ui.paused),
                     }
                 });
             side(root);
@@ -1001,6 +1061,7 @@ fn main_menu(c: &mut ChildSpawnerCommands, kit: &Kit) {
         ("ONSLAUGHT", Act::OpenOnslaught),
         ("GENERALS", Act::OpenGenerals),
         ("2013 ALPHA", Act::OpenAlpha),
+        ("OPTIONS", Act::OpenOptions),
         ("CONTROLS", Act::ShowControls),
         ("EXIT GAME", Act::QuitGame),
     ];
@@ -1057,8 +1118,10 @@ fn controls(c: &mut ChildSpawnerCommands, kit: &Kit) {
     page(c, kit, "CONTROLS");
     for (k, (keys, what)) in [
         ("Left click, drag", "Select units and buildings"),
-        ("Right click", "Context order: attack, gather, build, move"),
+        ("Right click", "Context order: attack, gather, build, move (Options: control scheme)"),
         ("Ctrl + right click", "Attack-move"),
+        ("Wheel, ] / [, .", "Zoom toward the cursor, zoom in / out, toggle closest view"),
+        ("WASD, edge, middle drag", "Pan the battlefield; Q / E rotate"),
         ("B, then 1-9", "Build; 1-9 on a factory queues units"),
         ("Backspace", "Cancel the queued item"),
         ("T", "Deploy or pack up artillery; turn a Battle Bus into its bunker"),
@@ -1071,24 +1134,158 @@ fn controls(c: &mut ChildSpawnerCommands, kit: &Kit) {
     .into_iter()
     .enumerate()
     {
-        let y = 96.0 + 34.0 * k as f32;
-        label(c, kit, keys, rect(72.0, y, 290.0, y + 30.0), 14.0, GOLD, false);
-        label(c, kit, what, rect(300.0, y, 745.0, y + 30.0), 14.0, WHITE, false);
+        let y = 94.0 + 31.0 * k as f32;
+        label(c, kit, keys, rect(72.0, y, 290.0, y + 28.0), 14.0, GOLD, false);
+        label(c, kit, what, rect(300.0, y, 745.0, y + 28.0), 14.0, WHITE, false);
     }
     button(c, kit, "BACK", Act::BackToMain, Look::Button, rect(530.0, 509.0, 701.0, 545.0), 16.0);
 }
 
-/// The in-game menu, as Generals' `QuitMenu.wnd`: the logo over a column of buttons.
+/// The in-game menu, as Generals' `QuitMenu.wnd`: the logo over a column of buttons, Options
+/// among them.
 fn pause(c: &mut ChildSpawnerCommands, kit: &Kit) {
-    frame(c, rect(252.0, 100.0, 552.0, 332.0), DIALOG, GOLD);
+    frame(c, rect(252.0, 100.0, 552.0, 380.0), DIALOG, GOLD);
     logo(c, kit, rect(262.0, 101.0, 550.0, 180.0));
-    for (k, (s, act)) in
-        [("SURRENDER", Act::Surrender), ("EXIT TO MAIN MENU", Act::QuitToMenu), ("RETURN TO GAME", Act::Resume)]
-            .into_iter()
-            .enumerate()
+    for (k, (s, act)) in [
+        ("OPTIONS", Act::OpenOptions),
+        ("SURRENDER", Act::Surrender),
+        ("EXIT TO MAIN MENU", Act::QuitToMenu),
+        ("RETURN TO GAME", Act::Resume),
+    ]
+    .into_iter()
+    .enumerate()
     {
         let y = 183.0 + 48.0 * k as f32;
         button(c, kit, s, act, Look::Button, rect(288.0, y, 512.0, y + 40.0), 16.0);
+    }
+}
+
+/// Steps `opt` to its next value, wrapping.
+fn cycle_option(s: &mut Settings, opt: Opt) {
+    use crate::settings::{Battlefield, Modifier, PAN_SPEEDS, Pan, Scheme, ZOOM_SPEEDS};
+    fn next<T: Copy + PartialEq>(all: &[T], v: T) -> T {
+        all[(all.iter().position(|&x| x == v).unwrap_or(0) + 1) % all.len()]
+    }
+    // A slider steps tick by tick: the next tick above the value, back to the first.
+    let tick = |ticks: &[f32; 7], v: f32| *ticks.iter().find(|&&t| t > v + 1e-4).unwrap_or(&ticks[0]);
+    match opt {
+        Opt::Camera => s.camera = next(&Battlefield::ALL, s.camera),
+        Opt::Scheme => s.scheme = next(&[Scheme::Classic, Scheme::Modern], s.scheme),
+        Opt::Pan => s.pan = next(&Pan::ALL, s.pan),
+        Opt::AlternatePan => s.alternate_pan = !s.alternate_pan,
+        Opt::EdgePan => s.edge_pan = !s.edge_pan,
+        Opt::LockMouse => s.lock_mouse = !s.lock_mouse,
+        Opt::PanSpeed => s.pan_speed = tick(&PAN_SPEEDS, s.pan_speed),
+        Opt::ZoomSpeed => s.zoom_speed = tick(&ZOOM_SPEEDS, s.zoom_speed),
+        Opt::ZoomModifier => s.zoom_modifier = next(&Modifier::ALL, s.zoom_modifier),
+    }
+}
+
+/// The options page, in the frame of Generals' `OptionsMenu.wnd` (its parent window at
+/// 120,12-661,597, the gold title, the bordered Control Options panel and DEFAULTS, ACCEPT and
+/// BACK along the bottom), with OpenRA's Display camera and Input settings in it: a click steps
+/// a cell, OpenRA's dropdowns and sliders as Generals' combo boxes. Below the cells, what the
+/// mouse does under the chosen scheme, in OpenRA's words.
+fn options(c: &mut ChildSpawnerCommands, kit: &Kit, s: &Settings, in_match: bool) {
+    use crate::settings::{Battlefield, Modifier, PAN_SPEEDS, Pan, Scheme, ZOOM_SPEEDS};
+    frame(c, rect(120.0, 12.0, 661.0, 597.0), if in_match { DIALOG } else { PANEL }, GOLD);
+    c.spawn(Node { align_items: AlignItems::Center, ..rect(152.0, 21.0, 640.0, 54.0) })
+        .with_child(kit.text("OPTIONS", 26.0, GOLD, true));
+    c.spawn((rect(140.0, 56.0, 641.0, 57.0), BackgroundColor(GOLD)));
+    let on = |b: bool| if b { "On" } else { "Off" };
+    let level = |ticks: &[f32; 7], v: f32| {
+        let i = ticks.iter().position(|&t| (t - v).abs() < 1e-3).map_or(String::from("?"), |i| (i + 1).to_string());
+        format!("{i} of 7")
+    };
+    let rows: [(&str, String, Opt); 9] = [
+        (
+            "Battlefield Camera",
+            match s.camera {
+                Battlefield::Close => "Close",
+                Battlefield::Medium => "Medium",
+                Battlefield::Far => "Far",
+            }
+            .into(),
+            Opt::Camera,
+        ),
+        (
+            "Control Scheme",
+            match s.scheme {
+                Scheme::Classic => "Classic",
+                Scheme::Modern => "Modern",
+            }
+            .into(),
+            Opt::Scheme,
+        ),
+        (
+            "Pan Behaviour",
+            match s.pan {
+                Pan::Disabled => "Disabled",
+                Pan::Standard => "Standard",
+                Pan::Inverted => "Inverted",
+                Pan::Joystick => "Joystick",
+            }
+            .into(),
+            Opt::Pan,
+        ),
+        ("Alternate Mouse Panning", on(s.alternate_pan).into(), Opt::AlternatePan),
+        ("Screen Edge Panning", on(s.edge_pan).into(), Opt::EdgePan),
+        ("Lock Mouse to Window", on(s.lock_mouse).into(), Opt::LockMouse),
+        ("Pan Speed", level(&PAN_SPEEDS, s.pan_speed), Opt::PanSpeed),
+        ("Zoom Speed", level(&ZOOM_SPEEDS, s.zoom_speed), Opt::ZoomSpeed),
+        (
+            "Zoom Modifier",
+            match s.zoom_modifier {
+                Modifier::None => "None",
+                Modifier::Alt => "Alt",
+                Modifier::Ctrl => "Ctrl",
+                Modifier::Meta => "Meta",
+                Modifier::Shift => "Shift",
+            }
+            .into(),
+            Opt::ZoomModifier,
+        ),
+    ];
+    frame(c, rect(151.0, 69.0, 635.0, 376.0), BOX, RUST);
+    heading(c, kit, "Control Options", rect(161.0, 72.0, 600.0, 96.0));
+    for (k, (name, value, opt)) in rows.iter().enumerate() {
+        let y = 100.0 + 30.0 * k as f32;
+        label(c, kit, name, rect(168.0, y, 400.0, y + 24.0), 14.0, WHITE, false);
+        cell(c, kit, value, Act::CycleOption(*opt), rect(420.0, y + 1.0, 615.0, y + 23.0));
+    }
+    // OpenRA's control scheme description, for the scheme, pan button and zoom modifier set.
+    let (select, order) = match s.scheme {
+        Scheme::Classic => ("Left", "Left"),
+        Scheme::Modern => ("Left", "Right"),
+    };
+    let pan_button = if s.pan_button() == MouseButton::Right { "Right" } else { "Middle" };
+    let zoom = match s.zoom_modifier {
+        Modifier::None => "<Scroll Wheel>".to_owned(),
+        m => format!("<{m:?} + Scroll Wheel>"),
+    };
+    let mut lines = vec![
+        format!("- Select units using the <{select}> mouse button"),
+        format!("- Command units using the <{order}> mouse button"),
+        "- Place structures and aim powers using the <Left> mouse button".to_owned(),
+        format!("- Zoom the battlefield using {zoom}"),
+    ];
+    if s.pan != Pan::Disabled {
+        let edge = if s.edge_pan { " or the screen edge" } else { "" };
+        lines.push(format!("- Pan the battlefield using the <{pan_button}> mouse button{edge}"));
+    } else if s.edge_pan {
+        lines.push("- Pan the battlefield using the screen edge".to_owned());
+    }
+    frame(c, rect(151.0, 384.0, 635.0, 516.0), BOX, RUST);
+    for (k, line) in lines.iter().enumerate() {
+        let y = 390.0 + 24.0 * k as f32;
+        label(c, kit, line, rect(164.0, y, 630.0, y + 22.0), 13.0, INK_OFF, false);
+    }
+    for (s, act, x0, x1) in [
+        ("DEFAULTS", Act::DefaultOptions, 152.0, 308.0),
+        ("ACCEPT", Act::AcceptOptions, 312.0, 471.0),
+        ("BACK", Act::CancelOptions, 476.0, 635.0),
+    ] {
+        button(c, kit, s, act, Look::Button, rect(x0, 528.0, x1, 560.0), 16.0);
     }
 }
 
@@ -1518,6 +1715,7 @@ mod tests {
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<ButtonInput<KeyCode>>()
             .init_resource::<Profile>()
+            .init_resource::<crate::settings::Settings>()
             .add_plugins(MenuPlugin { blocking: true });
         let window = app.world_mut().spawn_empty().id();
         (app, window)
@@ -1766,5 +1964,34 @@ mod tests {
         let earned = match_experience(false, 0);
         assert_eq!(app.world().resource::<Ui>().earned, Some((BULLDOG, earned)));
         assert_eq!(app.world().resource::<Profile>().progress(BULLDOG).xp, xp + earned, "earned once");
+    }
+
+    /// The options page edits the live settings: BACK puts back what was there when it opened,
+    /// ACCEPT keeps the changes and writes the file, and either returns to where the page was
+    /// opened, the in-game menu still paused over the match.
+    #[test]
+    fn options_apply_at_once_and_back_undoes_them() {
+        use crate::settings::{Battlefield, Settings};
+        let (mut app, _) = app();
+        let path = std::env::temp_dir().join(format!("g2-options-{}", std::process::id())).join("settings");
+        app.world_mut().resource_mut::<Settings>().path = Some(path.clone());
+        act(&mut app, Act::OpenOptions);
+        assert_eq!(screen(&app), Screen::Options);
+        act(&mut app, Act::CycleOption(Opt::Camera));
+        assert_eq!(app.world().resource::<Settings>().camera, Battlefield::Medium, "applies at once");
+        act(&mut app, Act::CancelOptions);
+        assert_eq!((screen(&app), app.world().resource::<Settings>().camera), (Screen::Main, Battlefield::Close));
+        assert!(!path.exists(), "BACK saves nothing");
+
+        act(&mut app, Act::Start);
+        act(&mut app, Act::Pause);
+        act(&mut app, Act::OpenOptions);
+        act(&mut app, Act::CycleOption(Opt::Camera));
+        act(&mut app, Act::CycleOption(Opt::Camera));
+        act(&mut app, Act::AcceptOptions);
+        let ui = app.world().resource::<Ui>();
+        assert_eq!((ui.screen, ui.paused), (Screen::Match, true), "back to the in-game menu");
+        assert_eq!(Settings::load(Some(path.clone())).camera, Battlefield::Far, "ACCEPT saves");
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 }

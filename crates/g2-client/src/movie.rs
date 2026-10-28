@@ -243,6 +243,7 @@ mod tests {
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(33)))
             .insert_resource(cache.clone())
             .insert_resource(crate::menu::Ui::default())
+            .init_resource::<crate::settings::Settings>()
             .insert_resource(crate::sim::Sim::new(
                 g2_rules::crater_ridge(),
                 None,

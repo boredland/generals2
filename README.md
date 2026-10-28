@@ -106,7 +106,7 @@ Not yet:
 - Artillery tests (`crates/g2-rules/tests/artillery.rs`): a shell lands on the spot after distance over speed and misses a target that drove off (fails with instant shells); every enemy in the blast is hit and our own worker standing in it is not (fails if splash hits friends); no shot inside the minimum range; the Thunderfist deploys and packs up in its set-up time, can't move while deployed, and rejects `Deploy` for units that can't; it deploys on its own for a target beyond its cannon on an attack order and on an attack-move; AI matches with artillery replay to the same hash. The reference replay was re-recorded on purpose for artillery.
 - A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
 - Imported maps: all 174 official maps parse in a test; a recorded AI match on `zh:Tournament Desert` round-trips through a replay and verifies to the same hash, and a moved resource is caught as a changed map; terrain tests check that starts sit on the battlefield level, original scenery stays off bases and water, the ridge past the edge has no steps, and water surfaces stay inside the map; a test aims camera rays at 361 points on Defcon6's terraces and checks each lands within 0.5 units. Tournament Desert, Alpine Assault, Golden Oasis, Defcon6 and Winding River were rendered headless with the mirror check passing (models on terrain, none misplaced): Tournament Desert 70/70, Winding River 72/72 for the frames above. On Winding River the unexplored river measured about 24–27 luminance under fog against 78–86 with `--reveal`. In an A/B of the water drawing (fog milestone), translucent water was dark at some unexplored river points and nearly revealed-bright at others (blending order depends on each mesh's distance to the camera); opaque water without lifting the fog sheet onto its surface stayed at the revealed brightness everywhere; opaque water with the lift is dark throughout.
-- The **interactive** window (mouse, keyboard, camera) has not been exercised; the build host has no display. That includes clicks on the HUD (build-grid buttons, the minimap jump, and clicks on a panel staying out of the world; unit-tested on hand-placed nodes at scale 2, not on a laid-out window) and rebuilding the HUD on a window resize (unit-tested: one HUD after each resize, none stacked), the attack and Ctrl attack-move orders, mixed selections (armed units attack, the rest walk to the spot), clicking onto hills (the ray march itself is unit-tested), clicking remembered buildings in the fog, `T` to deploy, and the camera easing up and down terrain while panning. Combat effects in motion (shots, shells along their arc, blasts and kills) have been watched in headless `--frames` clips, not in a window. The "+credits" pop-ups, the Thunderfist's legs sliding out and the fog sheet updating as units move have only been seen frozen in screenshots; a test checks that every delivery reaches the pop-up queue at ×8, and one that a shell handed over partway through its flight starts at that point of its arc and lands on time.
+- The **interactive** window (mouse, keyboard, camera) has not been exercised; the build host has no display. That includes clicks on the HUD (build-grid buttons, the minimap jump, and clicks on a panel staying out of the world; unit-tested on hand-placed nodes at scale 2, not on a laid-out window) and rebuilding the HUD on a window resize (unit-tested: one HUD after each resize, none stacked), the attack and Ctrl attack-move orders, mixed selections (armed units attack, the rest walk to the spot), clicking onto hills (the ray march itself is unit-tested), clicking remembered buildings in the fog, `T` to deploy, the camera easing up and down terrain while panning, and the options page's camera and input settings in a real window: panning by drag, the wheel and `[`/`]`/`.` zoom, the Classic scheme's clicks, and locking the mouse (the pan behaviours, the zoom range and steps and the options page's apply, accept and back are unit-tested through the real systems on a simulated window; the camera presets are rendered headless). Combat effects in motion (shots, shells along their arc, blasts and kills) have been watched in headless `--frames` clips, not in a window. The "+credits" pop-ups, the Thunderfist's legs sliding out and the fog sheet updating as units move have only been seen frozen in screenshots; a test checks that every delivery reaches the pop-up queue at ×8, and one that a shell handed over partway through its flight starts at that point of its arc and lands on time.
 - **GPU on the build host:** the discrete amdgpu device (an MI50) is wedged; opening it hangs the process in D state. Run every GPU command through `scripts/igpu-only/run.sh`. It finds the MI50 by its PCI IDs (Vega 20), not its bus address, which has changed across reboots, and hides its DRM nodes with an `LD_PRELOAD` shim, so only the integrated Radeon is enumerated (strace confirmed it was the only device node opened). Since a reboot in October 2026 the MI50 is off the bus; the script then says so and runs without the shim. It refuses to run if the MI50 is the only render node:
 
   ```
@@ -199,11 +199,14 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 | Input | Action |
 |---|---|
 | Left click / drag | Select own units (click selects buildings too); Shift adds |
-| Right click | Enemy → attack (unarmed units in the selection walk there); supply pile → gather; own foundation → help build; ground → move |
+| Right click | Enemy → attack (unarmed units in the selection walk there); supply pile → gather; own foundation → help build; ground → move. Given on release: a right-button drag that panned the camera orders nothing |
 | Ctrl + right click | Attack-move: armed units fight anything they meet on the way |
 | Constructor selected: `1`–`9` | Choose a building; left click places (Shift repeats); Esc / right click cancels |
 | Building selected: `1`–`9` | Queue production; Backspace cancels the last item |
-| WASD / arrows / screen edge | Pan; mouse wheel zooms; Q/E rotate |
+| WASD / arrows / screen edge | Pan (the edge only with Screen Edge Panning on); Q/E rotate |
+| Middle drag (Classic scheme: right drag) | Pan, by the chosen Pan Behaviour (Alternate Mouse Panning swaps the button) |
+| Mouse wheel | Zoom toward the cursor (with the Zoom Modifier held, if one is set) |
+| `]` / `[` / `.` | Zoom in / zoom out / toggle between the default and the closest view |
 | Space | Pause; `+`/`-` change speed (×1–×8). Not in a network match: the clock is shared |
 | Tab | Select the next own collector and centre the camera on it |
 | T | Deploy the selected Thunderfists (howitzer), or pack them up if all are deployed |
@@ -211,7 +214,21 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 | F1-F3 | Arm your faction's support powers the same way (EU: Air Raid, Fuel Air Bomb; APA: Carpet Bombing, Spy Sorties; GLA: Scud Storm once built, GPS Scrambler) |
 | F10 | Surrender |
 | M | Mute / unmute sound |
-| Esc | Pause menu (resume, surrender, quit to menu); in the main menu, Esc goes back |
+| Esc | Pause menu (options, surrender, quit to menu, resume); in the main menu, Esc goes back |
+
+The main menu and the pause menu open **Options**, OpenRA's camera and input settings in the frame of Generals' `OptionsMenu.wnd` (`crates/g2-client/src/settings.rs`). A click steps a setting and it applies at once; ACCEPT saves them (`$G2_SETTINGS`, else `settings` in the game's data folder; plain text), BACK puts them back as they were, DEFAULTS resets them. Headless screenshots ignore the saved file and use the defaults, or `--camera close|medium|far`.
+
+| Setting | Values (default first), as OpenRA's |
+|---|---|
+| Battlefield Camera | Close, Medium, Far. The default view, which is also the furthest out: Close is the game's own framing (a command center about a fifth of the screen wide), Medium shows 1.4 and Far 2 times as much, from the midpoints of OpenRA's Close/Medium/Far window heights (480-600, 600-900, 900-1300). The wheel zooms in to half the default view; a spectator (`--spectate`) may also zoom out to twice it, as OpenRA's observers may. Haze and the sun's shadow range stretch with the view |
+| Control Scheme | Modern (left click selects, right click orders, middle button pans), Classic (left click orders the selection unless it is on one of your own units or buildings, which it selects; right click deselects; right button pans). OpenRA's third, Other RTS, differs from Modern only in confirming order modes picked from buttons, which this game doesn't have |
+| Pan Behaviour | Joystick (the view runs toward the cursor, faster the further it is dragged), Standard (the battlefield follows the cursor), Inverted, Disabled. A drag shorter than 8 pixels is a click |
+| Alternate Mouse Panning | Off, On: pan with the other button (middle under Classic, right under Modern) |
+| Screen Edge Panning | On, Off |
+| Lock Mouse to Window | Off, On (confines the cursor; macOS can't, and leaves it free) |
+| Pan Speed | 4 of 7 (OpenRA's 30 on its 10-50 slider): keys, the screen edge and Joystick drags |
+| Zoom Speed | 3 of 7 (OpenRA's 0.04 on its 0.01-0.4 exponential slider): the zoom per wheel notch, compounded so in and out cancel |
+| Zoom Modifier | None, Alt, Ctrl, Meta, Shift: a key to hold for the wheel to zoom |
 
 ## Determinism rules for `g2-sim`
 

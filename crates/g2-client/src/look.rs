@@ -3,7 +3,7 @@
 //! haze and a heavy vignette.
 
 use bevy::camera::{Exposure, PerspectiveProjection, ShadowLodOrigin};
-use bevy::light::{CascadeShadowConfigBuilder, GlobalAmbientLight};
+use bevy::light::{CascadeShadowConfig, CascadeShadowConfigBuilder, GlobalAmbientLight};
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::effect_stack::Vignette;
 use bevy::prelude::*;
@@ -35,7 +35,7 @@ pub fn camera_bundle() -> impl Bundle {
             color: Color::srgb(0.32, 0.27, 0.18),
             directional_light_color: Color::srgba(1.0, 0.85, 0.6, 0.25),
             directional_light_exponent: 20.0,
-            falloff: FogFalloff::Linear { start: 330.0, end: 900.0 },
+            falloff: fog_falloff(1.0),
         },
         // The footage darkens the top corners hard but keeps the left and right middle lit.
         Vignette { intensity: 1.15, radius: 0.74, smoothness: 2.4, roundness: 1.2, ..default() },
@@ -70,17 +70,7 @@ pub fn spawn_lights(commands: &mut Commands) {
         // Afternoon sun from the upper left of the default view (camera looks toward -Z, screen
         // right is +X): light travels toward +X/+Z, so shadows fall to the lower right.
         Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, -2.35, -0.85, 0.0)),
-        CascadeShadowConfigBuilder {
-            // Fine splits near the camera, where coarse shadow texels band the ground into
-            // contour rings, over a short fixed range: everything the camera can see is
-            // inside 300 units, and tighter cascades buy texel density over map_size.
-            num_cascades: 4,
-            minimum_distance: 1.0,
-            maximum_distance: 300.0,
-            first_cascade_far_bound: 60.0,
-            overlap_proportion: 0.15,
-        }
-        .build(),
+        cascades(1.0).build(),
     ));
     // Twice the default texel density per cascade: the sun is the only shadow caster, so the
     // extra memory buys clean shadows across the whole map.
@@ -91,4 +81,44 @@ pub fn spawn_lights(commands: &mut Commands) {
         ..default()
     });
     commands.insert_resource(ClearColor(Color::BLACK));
+}
+
+/// How much further out than the Close default view the camera is (never less than 1, so
+/// the tuned look of the default view is what any closer view gets too).
+fn reach(distance: f32) -> f32 {
+    (distance / crate::camera::DEFAULT_DISTANCE).max(1.0)
+}
+
+/// Haze tuned at the default view; further out it starts further away, so a zoomed-out view
+/// is as clear around its centre as the default one.
+fn fog_falloff(k: f32) -> FogFalloff {
+    FogFalloff::Linear { start: 330.0 * k, end: 900.0 * k }
+}
+
+fn cascades(k: f32) -> CascadeShadowConfigBuilder {
+    CascadeShadowConfigBuilder {
+        // Fine splits near the camera, where coarse shadow texels band the ground into
+        // contour rings, over a short range: at the default view everything the camera can
+        // see is inside 300 units, and tighter cascades buy texel density over map_size. A
+        // view further out stretches the range with it.
+        num_cascades: 4,
+        minimum_distance: 1.0,
+        maximum_distance: 300.0 * k,
+        first_cascade_far_bound: 60.0 * k,
+        overlap_proportion: 0.15,
+    }
+}
+
+pub fn fit_fog(distance: f32, fog: &mut DistanceFog) {
+    let k = reach(distance);
+    if !matches!(fog.falloff, FogFalloff::Linear { start, .. } if start == 330.0 * k) {
+        fog.falloff = fog_falloff(k);
+    }
+}
+
+pub fn fit_cascades(distance: f32, config: &mut CascadeShadowConfig) {
+    let k = reach(distance);
+    if config.bounds.last() != Some(&(300.0 * k)) {
+        *config = cascades(k).build();
+    }
 }

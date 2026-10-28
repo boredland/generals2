@@ -4,7 +4,7 @@
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [match flags as above]      two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--select DEF] [--movie-frame N] [--frames N] [--no-hud] [...]
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera close|medium|far] [--select DEF] [--movie-frame N] [--frames N] [--no-hud] [...]
 //!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
 //!             to a path holding {}, e.g. clip/{}.png)
 //!
@@ -46,6 +46,7 @@ mod movie;
 mod net;
 mod profile;
 mod rig;
+mod settings;
 mod sim;
 mod terrain;
 mod utfwin;
@@ -79,6 +80,9 @@ struct Args {
     frames: Option<u32>,
     /// Headless only: leave the HUD out of the frame.
     no_hud: bool,
+    /// Headless only: the battlefield camera the views use (else Close, whatever the player
+    /// saved, so shots are the same on every machine).
+    battlefield: settings::Battlefield,
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
@@ -106,6 +110,7 @@ fn parse_args() -> Result<Args, String> {
         movie_frame: None,
         frames: None,
         no_hud: false,
+        battlefield: settings::Battlefield::Close,
         screenshot: None,
         record: None,
         ticks: 900,
@@ -163,9 +168,10 @@ fn parse_args() -> Result<Args, String> {
                     Some("end") => menu::Screen::End,
                     Some("generals") => menu::Screen::Generals,
                     Some("alpha") => menu::Screen::Alpha,
+                    Some("options") => menu::Screen::Options,
                     other => {
                         return Err(format!(
-                            "--menu expects main|controls|setup|pause|end|generals|alpha, got {other:?}"
+                            "--menu expects main|controls|setup|pause|end|generals|alpha|options, got {other:?}"
                         ));
                     }
                 })
@@ -192,6 +198,14 @@ fn parse_args() -> Result<Args, String> {
                     Some(it.next().and_then(|v| v.parse().ok()).ok_or("--movie-frame needs a frame number")?)
             }
             "--no-hud" => a.no_hud = true,
+            "--camera" => {
+                a.battlefield = match it.next().as_deref() {
+                    Some("close") => settings::Battlefield::Close,
+                    Some("medium") => settings::Battlefield::Medium,
+                    Some("far") => settings::Battlefield::Far,
+                    other => return Err(format!("--camera expects close|medium|far, got {other:?}")),
+                }
+            }
             "--frames" => a.frames = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--frames needs a count")?),
             "--size" => {
                 let v = it.next().ok_or("--size needs WxH")?;
@@ -244,6 +258,7 @@ fn main() -> AppExit {
                 movie_frame: args.movie_frame,
                 frames: args.frames,
                 no_hud: args.no_hud,
+                battlefield: args.battlefield,
             };
             headless::run(sim, ui, capture)
         }
@@ -369,9 +384,9 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
     app.run()
 }
 
-fn spawn_camera(mut commands: Commands, sim: Res<Sim>) {
+fn spawn_camera(mut commands: Commands, sim: Res<Sim>, settings: Res<settings::Settings>) {
     let home = sim.world.entities().find(|e| e.owner == Some(sim.local)).map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
-    camera::spawn(&mut commands, home);
+    camera::spawn(&mut commands, home, settings.camera.distance());
 }
 
 mod headless {
@@ -418,10 +433,11 @@ mod headless {
         pub movie_frame: Option<usize>,
         pub frames: Option<u32>,
         pub no_hud: bool,
+        pub battlefield: crate::settings::Battlefield,
     }
 
     pub fn run(mut sim: Sim, ui: crate::menu::Ui, capture: Capture) -> AppExit {
-        let Capture { ticks, path, view, size, select, movie_frame, frames, no_hud } = capture;
+        let Capture { ticks, path, view, size, select, movie_frame, frames, no_hud, battlefield } = capture;
         sim.speed = 0;
         if frames.is_some() && !path.contains("{}") {
             eprintln!("--frames needs a --screenshot path with {{}} for the frame number");
@@ -480,6 +496,8 @@ mod headless {
         )
         .insert_resource(sim)
         .insert_resource(ui)
+        // Shots look the same on every machine: the player's saved settings stay out of them.
+        .insert_resource(crate::settings::Settings::default())
         .add_plugins((
             crate::sim::SimPlugin,
             crate::menu::MenuPlugin { blocking: true },
@@ -492,6 +510,7 @@ mod headless {
         // Warm-up frames run on wall time; frozen effects survive until the capture.
         .insert_resource(crate::view::FreezeEffects)
         .insert_resource(crate::hud::HeadlessScreen(Vec2::new(size.0 as f32, size.1 as f32)))
+        .add_systems(Update, crate::camera::fit_view)
         .init_resource::<crate::input::Placement>();
         let selected = select.as_deref().and_then(|name| {
             let world = &app.world().resource::<Sim>().world;
@@ -526,13 +545,13 @@ mod headless {
             match view {
                 View::Battle if let Some(f) = fight => RtsCamera {
                     pivot: Vec3::new(f.x, sim.ground_y(f.x, f.y), f.y),
-                    distance: crate::camera::DEFAULT_DISTANCE,
+                    distance: battlefield.distance(),
                     yaw: crate::look::YAW,
                     pitch: crate::look::PITCH,
                 },
                 View::At(x, z) => RtsCamera {
                     pivot: Vec3::new(x, sim.ground_y(x, z), z),
-                    distance: crate::camera::DEFAULT_DISTANCE,
+                    distance: battlefield.distance(),
                     yaw: crate::look::YAW,
                     pitch: crate::look::PITCH,
                 },
@@ -547,7 +566,7 @@ mod headless {
                         .map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
                     RtsCamera {
                         pivot: home + Vec3::new(12.0, 0.0, 4.0),
-                        distance: crate::camera::DEFAULT_DISTANCE,
+                        distance: battlefield.distance(),
                         yaw: crate::look::YAW,
                         pitch: crate::look::PITCH,
                     }

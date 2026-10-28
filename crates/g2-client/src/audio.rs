@@ -1005,6 +1005,7 @@ mod tests {
             .init_resource::<crate::view::Mirror>()
             .init_resource::<ButtonInput<MouseButton>>()
             .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<crate::settings::Settings>()
             .add_plugins((crate::sim::SimPlugin, MenuPlugin { blocking: true }, SoundPlugin));
         // Two frames per choice: the sound runs before the menu applies it, so an order the
         // choice gives is heard on the next frame.

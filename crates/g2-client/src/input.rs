@@ -2,7 +2,10 @@
 //!
 //! Left click/drag: select own units (click on a building selects it).
 //! Right click: context order (enemy → attack, supply pile → gather, own foundation →
-//! construct, ground → move). Ctrl + right click on the ground attack-moves.
+//! construct, ground → move), on release, so a right-button drag that panned the camera
+//! orders nothing. Ctrl + click on the ground attack-moves. Under the Classic control scheme
+//! (`settings.rs`, as OpenRA's) a left click orders the selected units instead, unless it is on
+//! one of our own units or buildings, which it selects; a right click deselects.
 //! With a constructor selected: B opens build mode, 1-9 pick a building, left click places, Esc cancels.
 //! With a building selected: 1-9 queue production, Backspace cancels the last item.
 //! Clicking a build-grid button is pressing its key; clicking the minimap moves the camera
@@ -38,8 +41,12 @@ pub const SPECIAL: u8 = u8::MAX;
 /// The key that arms each power slot.
 pub const POWER_KEYS: [KeyCode; 4] = [KeyCode::KeyG, KeyCode::F1, KeyCode::F2, KeyCode::F3];
 
+/// The left button's drag start, and whether the right button went down over the world.
 #[derive(Resource, Default)]
-struct Drag(Option<Vec2>);
+struct Drag {
+    left: Option<Vec2>,
+    right: bool,
+}
 
 const DIGITS: [KeyCode; 9] = [
     KeyCode::Digit1,
@@ -322,6 +329,8 @@ fn mouse(
     mut aim: ResMut<PowerAim>,
     mut drag: ResMut<Drag>,
     hud: HudQueries,
+    settings: Res<crate::settings::Settings>,
+    pan: Res<crate::camera::PanDrag>,
 ) {
     let (Ok(window), Ok((camera, cam_tf, mut rts))) = (window.single(), cam.single_mut()) else { return };
     let Some(cursor) = window.cursor_position() else { return };
@@ -337,6 +346,13 @@ fn mouse(
     let cam = (camera, cam_tf);
     let Some(ground) = cursor_ground(&sim, window, cam) else { return };
     let here = to_sim(ground);
+    // A right click is complete on release, unless the right button was dragging the camera.
+    if buttons.just_pressed(MouseButton::Right) {
+        drag.right = true;
+    }
+    let right_click = buttons.just_released(MouseButton::Right) && core::mem::take(&mut drag.right) && !pan.ended;
+    let classic = settings.scheme == crate::settings::Scheme::Classic;
+    let attack_move = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
 
     if let Some(slot) = aim.0 {
         if buttons.just_pressed(MouseButton::Left) {
@@ -351,7 +367,7 @@ fn mouse(
             }
             aim.0 = None;
         }
-        if buttons.just_pressed(MouseButton::Right) {
+        if right_click {
             aim.0 = None;
         }
         return;
@@ -367,18 +383,23 @@ fn mouse(
                 placing.0 = None;
             }
         }
-        if buttons.just_pressed(MouseButton::Right) {
+        if right_click {
             placing.0 = None;
         }
         return;
     }
 
     if buttons.just_pressed(MouseButton::Left) {
-        drag.0 = window.cursor_position();
+        drag.left = window.cursor_position();
     }
     if buttons.just_released(MouseButton::Left)
-        && let (Some(start), Some(end)) = (drag.0.take(), window.cursor_position())
+        && let (Some(start), Some(end)) = (drag.left.take(), window.cursor_position())
     {
+        // Classic: a click that would order the selection orders it instead of selecting.
+        if classic && start.distance(end) < 6.0 && overrides_selection(&sim, &sel, here) {
+            give_orders(&mut sim, &sel, here, attack_move);
+            return;
+        }
         let additive = keys.pressed(KeyCode::ShiftLeft);
         if !additive {
             sel.0.clear();
@@ -411,61 +432,88 @@ fn mouse(
         }
     }
 
-    if buttons.just_pressed(MouseButton::Right) && !sel.0.is_empty() {
-        let units: Vec<EntityId> = sel
-            .0
-            .iter()
-            .copied()
-            .filter(|&id| sim.world.entity(id).is_some_and(|e| sim.world.rules.def(e.def).is_unit()))
-            .collect();
-        if units.is_empty() {
-            return;
-        }
-        let rules = sim.world.rules;
-        // An enemy under the cursor wins over our own entities or a pile it stands next to.
-        let enemy = pick(&sim, here, |e| e.owner.is_some_and(|o| o != me));
-        let target = enemy.or_else(|| pick(&sim, here, |e| e.owner.is_none() || e.owner == Some(me)));
-        let attack_move = keys.any_pressed([KeyCode::ControlLeft, KeyCode::ControlRight]);
-        let armed = |id: &EntityId| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).weapon().is_some());
-        let kinds = match target.and_then(|t| sim.world.entity(t)) {
-            // Armed units attack; the rest of a mixed selection walks to the spot instead of
-            // having the whole order rejected.
-            Some(t) if t.owner.is_some_and(|o| o != me) => {
-                let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
-                [
-                    (!fighters.is_empty()).then_some(CommandKind::Attack { units: fighters, target: t.id }),
-                    (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
-                ]
-            }
-            Some(t) if matches!(rules.def(t.def).class, Class::SupplyPile) => {
-                [Some(CommandKind::Gather { units, pile: t.id }), None]
-            }
-            Some(t) if t.owner == Some(me) && t.construction.is_some() => {
-                [Some(CommandKind::Construct { units, site: t.id }), None]
-            }
-            // Infantry get into a building or vehicle with room for them; the rest move there.
-            Some(t) if sim.world.garrison_room(me, t.id).is_some_and(|room| room > 0) => {
-                let (infantry, others): (Vec<_>, Vec<_>) = units
-                    .into_iter()
-                    .partition(|id| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).can_garrison()));
-                [
-                    (!infantry.is_empty()).then_some(CommandKind::Garrison { units: infantry, container: t.id }),
-                    (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
-                ]
-            }
-            _ if attack_move => {
-                let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
-                [
-                    (!fighters.is_empty()).then_some(CommandKind::AttackMove { units: fighters, target: here }),
-                    (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
-                ]
-            }
-            _ => [Some(CommandKind::Move { units, target: here }), None],
-        };
-        for kind in kinds.into_iter().flatten() {
-            sim.order(kind);
+    if right_click {
+        if classic {
+            sel.0.clear();
+        } else {
+            give_orders(&mut sim, &sel, here, attack_move);
         }
     }
+}
+
+/// The selected units' context order at `here`: attack an enemy, gather from a pile, help
+/// build our foundation, get into a building with room, else move (attack-move with Ctrl).
+fn give_orders(sim: &mut Sim, sel: &Selection, here: g2_sim::Vec2, attack_move: bool) {
+    let me = sim.local;
+    let units: Vec<EntityId> = sel
+        .0
+        .iter()
+        .copied()
+        .filter(|&id| sim.world.entity(id).is_some_and(|e| sim.world.rules.def(e.def).is_unit()))
+        .collect();
+    if units.is_empty() {
+        return;
+    }
+    let rules = sim.world.rules;
+    // An enemy under the cursor wins over our own entities or a pile it stands next to.
+    let enemy = pick(sim, here, |e| e.owner.is_some_and(|o| o != me));
+    let target = enemy.or_else(|| pick(sim, here, |e| e.owner.is_none() || e.owner == Some(me)));
+    let armed = |id: &EntityId| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).weapon().is_some());
+    let kinds = match target.and_then(|t| sim.world.entity(t)) {
+        // Armed units attack; the rest of a mixed selection walks to the spot instead of
+        // having the whole order rejected.
+        Some(t) if t.owner.is_some_and(|o| o != me) => {
+            let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
+            [
+                (!fighters.is_empty()).then_some(CommandKind::Attack { units: fighters, target: t.id }),
+                (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+            ]
+        }
+        Some(t) if matches!(rules.def(t.def).class, Class::SupplyPile) => {
+            [Some(CommandKind::Gather { units, pile: t.id }), None]
+        }
+        Some(t) if t.owner == Some(me) && t.construction.is_some() => {
+            [Some(CommandKind::Construct { units, site: t.id }), None]
+        }
+        // Infantry get into a building or vehicle with room for them; the rest move there.
+        Some(t) if sim.world.garrison_room(me, t.id).is_some_and(|room| room > 0) => {
+            let (infantry, others): (Vec<_>, Vec<_>) = units
+                .into_iter()
+                .partition(|id| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).can_garrison()));
+            [
+                (!infantry.is_empty()).then_some(CommandKind::Garrison { units: infantry, container: t.id }),
+                (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+            ]
+        }
+        _ if attack_move => {
+            let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
+            [
+                (!fighters.is_empty()).then_some(CommandKind::AttackMove { units: fighters, target: here }),
+                (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+            ]
+        }
+        _ => [Some(CommandKind::Move { units, target: here }), None],
+    };
+    for kind in kinds.into_iter().flatten() {
+        sim.order(kind);
+    }
+}
+
+/// Classic's left click orders rather than selects (OpenRA's `InputOverridesSelection`): with
+/// units selected, anywhere but on one of our own entities, or on our own foundation or a
+/// building with room for the selection's infantry, which the order uses.
+fn overrides_selection(sim: &Sim, sel: &Selection, here: g2_sim::Vec2) -> bool {
+    let me = sim.local;
+    let rules = sim.world.rules;
+    let has_units = sel.0.iter().any(|&id| sim.world.entity(id).is_some_and(|e| rules.def(e.def).is_unit()));
+    if !has_units {
+        return false;
+    }
+    let Some(own) = pick(sim, here, |e| e.owner == Some(me)).and_then(|id| sim.world.entity(id)) else {
+        return true;
+    };
+    let infantry = sel.0.iter().any(|&id| sim.world.entity(id).is_some_and(|e| rules.def(e.def).can_garrison()));
+    own.construction.is_some() || (infantry && sim.world.garrison_room(me, own.id).is_some_and(|room| room > 0))
 }
 
 /// Topmost shown entity under the cursor: the one whose footprint contains `at`, smallest
@@ -651,6 +699,8 @@ mod tests {
             world.init_resource::<Placement>();
             world.init_resource::<PowerAim>();
             world.init_resource::<Drag>();
+            world.init_resource::<crate::settings::Settings>();
+            world.init_resource::<crate::camera::PanDrag>();
             world.run_system_once(mouse).unwrap();
             // A world click completes on release: release on the same spot.
             world.resource_mut::<ButtonInput<MouseButton>>().clear();
