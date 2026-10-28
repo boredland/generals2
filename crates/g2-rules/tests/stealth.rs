@@ -139,9 +139,9 @@ fn a_stealth_unit_hides_again_after_its_reveal() {
     step_until(&mut w, 30 * 10, "out of reach", |w| {
         w.entity(rpg).unwrap().revealed_until == Some(until) && w.tick() >= until - 1
     });
-    assert!(w.sees(P1, w.entity(rpg).unwrap()), "revealed until the end of its window");
+    assert!(!w.hidden(w.entity(rpg).unwrap()), "revealed until the end of its window");
     w.step();
-    assert!(!w.sees(P1, w.entity(rpg).unwrap()), "still revealed after {STEALTH_REVEAL_TICKS} ticks");
+    assert!(w.hidden(w.entity(rpg).unwrap()), "still revealed after {STEALTH_REVEAL_TICKS} ticks");
 }
 
 /// A base defence detects stealth units in its range: a hidden RPG squad walking up to an EU

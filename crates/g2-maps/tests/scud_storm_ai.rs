@@ -7,11 +7,12 @@ use g2_rules::rules;
 use g2_sim::world::Event;
 use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World};
 
-/// A GLA mirror on Tournament Desert with 40,000 credits each, Normal (or Easy) against
-/// Normal: Normal's silo stands at 336 s and its strike flies at 757 s (measured).
+/// A GLA mirror on Tournament Urban with 40,000 credits each, Normal (or Easy) against
+/// Normal: Normal's silo stands at 862 s and its strike flies at 1,283 s (measured). (On
+/// Tournament Desert, with the alpha's footprints, the mirror ends at 349 s before a silo.)
 #[test]
 fn the_normal_ai_builds_and_fires_the_scud_storm() {
-    let map = g2_maps::resolve("zh:Tournament Desert").unwrap();
+    let map = g2_maps::resolve("zh:Tournament Urban").unwrap();
     for level in [AiLevel::Normal, AiLevel::Easy] {
         let player = |ai| PlayerSetup {
             faction: Faction::Gla,

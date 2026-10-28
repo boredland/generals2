@@ -351,7 +351,8 @@ const fn researching(mut d: Def, upgrades: &'static [UpgradeId]) -> Def {
 }
 
 /// An unarmed unit: constructor or collector. Without a sourced armour class, vehicles are
-/// `Light` and GLA workers `Infantry` (placeholders); `with_armour` sets a sourced one.
+/// `Light` and GLA workers `Infantry` (placeholders); `with_armour` sets a sourced one. Radius
+/// 2, the alpha's `EntityRadius` for most of them; `with_radius` sets another.
 #[allow(clippy::too_many_arguments)]
 const fn unit(
     name: &'static str,
@@ -392,8 +393,15 @@ const fn with_armour(mut d: Def, armour: Armour) -> Def {
     d
 }
 
+/// `d`'s footprint is `radius`, the alpha blueprint's `EntityRadius` where it isn't 2.
+const fn with_radius(mut d: Def, radius: Fx) -> Def {
+    d.radius = radius;
+    d
+}
+
 /// A combat unit; one entity per squad, with the squad's card values. `build_ticks` rather
-/// than seconds, since the cards give hundredths.
+/// than seconds, since the cards give hundredths. `radius` is the alpha blueprint's
+/// `EntityRadius` (2 for infantry and light vehicles, 3.5 for tanks, 4 for aircraft).
 #[allow(clippy::too_many_arguments)]
 const fn soldier(
     name: &'static str,
@@ -403,7 +411,7 @@ const fn soldier(
     cost: Cost,
     build_ticks: u32,
     speed: i64,
-    radius: i64,
+    radius: Fx,
     weapon: Weapon,
 ) -> Def {
     Def {
@@ -420,7 +428,7 @@ const fn soldier(
         armour,
         cost,
         build_ticks,
-        radius: Fx::from_int(radius),
+        radius,
         produces: NONE,
         builds: NONE,
         deploy: None,
@@ -608,7 +616,7 @@ static DEFS: [Def; 80] = [
         1751,
         credits(1000),
         28,
-        10,
+        12,
         &[EU_DOZER],
     ),
     // src: Bulldozer hp 250, armour Heavy, land speed 14.
@@ -645,13 +653,17 @@ static DEFS: [Def; 80] = [
         1200,
         credits(800),
         20,
-        8,
+        12,
         &[EU_HARVESTER, EU_DOZER],
     ),
-    // src: EU harvester $450, 0:20, airborne collector (flying is not modelled yet).
-    unit("EU Harvester", Faction::Eu, 300, credits(450), 20, 24, false, Some(HARVEST), NONE),
+    // src: EU harvester $450, 0:20, airborne collector (flying is not modelled yet); the
+    // alpha's `EntityRadius` 4, the aircraft's.
+    with_radius(
+        unit("EU Harvester", Faction::Eu, 300, credits(450), 20, 24, false, Some(HARVEST), NONE),
+        Fx::from_int(4),
+    ),
     building("EU Power Plant", Faction::Eu, BuildingRole::PowerPlant, 100, 800, credits(600), 15, 6, NONE),
-    building("EU Oil Derrick", Faction::Eu, DERRICK, -10, 600, credits(500), 15, 5, NONE),
+    building("EU Oil Derrick", Faction::Eu, DERRICK, -10, 600, credits(500), 15, 6, NONE),
     // ---- Asia-Pacific Alliance -----------------------------------------------------------
     building(
         "APA Command Center",
@@ -661,7 +673,7 @@ static DEFS: [Def; 80] = [
         1751,
         credits(1000),
         28,
-        10,
+        12,
         &[APA_CRANE],
     ),
     // src: Crane hp 280, $150, 11 s.
@@ -685,13 +697,13 @@ static DEFS: [Def; 80] = [
         1200,
         credits(800),
         20,
-        8,
+        12,
         &[APA_HARVESTER, APA_CRANE],
     ),
     // src: APA harvester $300, 0:19.
     unit("APA Harvester", Faction::Apa, 350, credits(300), 19, 18, false, Some(HARVEST), NONE),
-    building("APA Power Plant", Faction::Apa, BuildingRole::PowerPlant, 100, 800, credits(600), 15, 6, NONE),
-    building("APA Oil Derrick", Faction::Apa, DERRICK, -10, 600, credits(500), 15, 5, NONE),
+    building("APA Power Plant", Faction::Apa, BuildingRole::PowerPlant, 100, 800, credits(600), 15, 8, NONE),
+    building("APA Oil Derrick", Faction::Apa, DERRICK, -10, 600, credits(500), 15, 6, NONE),
     // ---- Global Liberation Army ----------------------------------------------------------
     // src: GLA command center gives 0 power; the GLA has no power grid.
     building(
@@ -702,7 +714,7 @@ static DEFS: [Def; 80] = [
         1751,
         credits(1000),
         28,
-        10,
+        12,
         &[GLA_WORKER],
     ),
     // src: workers construct and gather supplies.
@@ -726,29 +738,59 @@ static DEFS: [Def; 80] = [
         1000,
         credits(600),
         18,
-        8,
+        10,
         &[GLA_WORKER],
     ),
-    building("GLA Oil Derrick", Faction::Gla, DERRICK, 0, 500, credits(400), 12, 5, NONE),
+    building("GLA Oil Derrick", Faction::Gla, DERRICK, 0, 500, credits(400), 12, 6, NONE),
     // ---- Combat ----------------------------------------------------------------------------
     // Barracks numbers are placeholders. War factories copy the GLA war factory card.
     // Researches: where the alpha's production data offers each upgrade.
     researching(
-        building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 7, &[EU_RECON, EU_ROCKETS]),
+        building("EU Barracks", Faction::Eu, FACTORY, -10, 800, credits(500), 15, 6, &[EU_RECON, EU_ROCKETS]),
         &[HOLLOW_POINT],
     ),
-    building("EU War Factory", Faction::Eu, FACTORY, -20, 1000, credits(900), 25, 9, &[EU_AEGIS, EU_ARTILLERY, EU_APC]),
+    building(
+        "EU War Factory",
+        Faction::Eu,
+        FACTORY,
+        -20,
+        1000,
+        credits(900),
+        25,
+        10,
+        &[EU_AEGIS, EU_ARTILLERY, EU_APC],
+    ),
     // Ranks (`ranked`): each unit's rank-1 health and rank-3 fire interval come from the alpha
     // unit it stands for (EU Howitzer: the rocket vehicle).
     // src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
     ranked(
-        soldier("EU Recon Squad", Faction::Eu, 200, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+        soldier(
+            "EU Recon Squad",
+            Faction::Eu,
+            200,
+            Armour::Infantry,
+            credits(150),
+            centis(627),
+            9,
+            Fx::from_int(2),
+            RIFLES,
+        ),
         21,
         93,
     ),
     // src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
     ranked(
-        soldier("EU Aegis Tank", Faction::Eu, 660, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+        soldier(
+            "EU Aegis Tank",
+            Faction::Eu,
+            660,
+            Armour::Heavy,
+            credits(990),
+            centis(2444),
+            9,
+            Fx::from_ratio(7, 2),
+            TANK_GUN,
+        ),
         90,
         92,
     ),
@@ -761,7 +803,7 @@ static DEFS: [Def; 80] = [
             800,
             credits(500),
             15,
-            7,
+            8,
             &[APA_RED_GUARD, APA_TANK_HUNTER],
         ),
         &[POPULATION_CONTROL],
@@ -776,25 +818,45 @@ static DEFS: [Def; 80] = [
             1000,
             credits(900),
             25,
-            9,
+            12,
             &[APA_WARLORD, APA_THUNDERFIST, APA_GATLING],
         ),
         &[FIRESTORM_SHELLS],
     ),
     // src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
     ranked(
-        soldier("APA Red Guard", Faction::Apa, 180, Armour::Infantry, credits(150), centis(627), 9, 2, RIFLES),
+        soldier(
+            "APA Red Guard",
+            Faction::Apa,
+            180,
+            Armour::Infantry,
+            credits(150),
+            centis(627),
+            9,
+            Fx::from_int(2),
+            RIFLES,
+        ),
         12,
         94,
     ),
     // src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
     ranked(
-        soldier("APA Warlord Tank", Faction::Apa, 610, Armour::Heavy, credits(990), centis(2444), 9, 3, TANK_GUN),
+        soldier(
+            "APA Warlord Tank",
+            Faction::Apa,
+            610,
+            Armour::Heavy,
+            credits(990),
+            centis(2444),
+            9,
+            Fx::from_ratio(7, 2),
+            TANK_GUN,
+        ),
         68,
         93,
     ),
     researching(
-        building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 7, &[GLA_RABBLE, GLA_RPG]),
+        building("GLA Barracks", Faction::Gla, FACTORY, 0, 800, credits(500), 15, 10, &[GLA_RABBLE, GLA_RPG]),
         &[SHORTENED_FUSES],
     ),
     // src: GLA war factory hp 1000, $900, 25 s.
@@ -806,7 +868,7 @@ static DEFS: [Def; 80] = [
         1000,
         credits(900),
         25,
-        9,
+        12,
         &[GLA_TANK, GLA_TOXIN_ARTILLERY, GLA_TECHNICAL, GLA_TOXIN_CHOPPER],
     ),
     // src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
@@ -819,7 +881,7 @@ static DEFS: [Def; 80] = [
             credits(120),
             secs(6),
             10,
-            2,
+            Fx::from_int(2),
             weapon(12, [4, 4, 0, 0], 20, 10),
         ),
         30,
@@ -836,7 +898,7 @@ static DEFS: [Def; 80] = [
             credits(700),
             secs(18),
             11,
-            3,
+            Fx::from_ratio(7, 2),
             weapon(30, [0, 15, 0, 0], 30, 12),
         ),
         72,
@@ -854,7 +916,7 @@ static DEFS: [Def; 80] = [
                 credits(980),
                 centis(2151),
                 7,
-                3,
+                Fx::from_ratio(7, 2),
                 THUNDERFIST_CANNON,
             ),
             HOWITZER,
@@ -874,14 +936,18 @@ static DEFS: [Def; 80] = [
             credits(1000),
             centis(3011),
             7,
-            3,
+            Fx::from_ratio(7, 2),
             TOXIN_SHELL,
         ),
         105,
         95,
     ),
     // Placeholder throughout: no EU artillery card is archived. Fires on the move.
-    ranked(soldier("EU Howitzer", Faction::Eu, 550, Armour::Heavy, credits(950), secs(24), 7, 3, EU_SHELL), 39, 93),
+    ranked(
+        soldier("EU Howitzer", Faction::Eu, 550, Armour::Heavy, credits(950), secs(24), 7, Fx::from_int(2), EU_SHELL),
+        39,
+        93,
+    ),
     // ---- Anti-armour infantry and fast vehicles ----------------------------------------------
     // src: Rocket Squad hp 180, $300, 16.29 s, EU barracks, anti-armour. Weapon and speed:
     // `ROCKETS`, a placeholder. The alpha's squad also fires up at aircraft, reaching 40 there
@@ -895,7 +961,7 @@ static DEFS: [Def; 80] = [
             credits(300),
             centis(1629),
             8,
-            2,
+            Fx::from_int(2),
             anti_air(ROCKETS, 40),
         ),
         18,
@@ -904,7 +970,17 @@ static DEFS: [Def; 80] = [
     // src: Tank Hunter, APA barracks, anti-armour rocket infantry; the card has no numbers.
     // Placeholder: the EU Rocket Squad's.
     ranked(
-        soldier("APA Tank Hunter", Faction::Apa, 180, Armour::Infantry, credits(300), centis(1629), 8, 2, ROCKETS),
+        soldier(
+            "APA Tank Hunter",
+            Faction::Apa,
+            180,
+            Armour::Infantry,
+            credits(300),
+            centis(1629),
+            8,
+            Fx::from_int(2),
+            ROCKETS,
+        ),
         18,
         91,
     ),
@@ -921,7 +997,7 @@ static DEFS: [Def; 80] = [
             credits(250),
             secs(14),
             9,
-            2,
+            Fx::from_int(2),
             anti_air(weapon(40, [0, 0, 60, 0], 26, 20), 26),
         ),
         14,
@@ -941,7 +1017,7 @@ static DEFS: [Def; 80] = [
                 credits(435),
                 centis(1466),
                 19,
-                3,
+                Fx::from_int(2),
                 weapon(46, [0, 0, 0, 0], 45, 23),
             ),
             54,
@@ -961,7 +1037,7 @@ static DEFS: [Def; 80] = [
             credits(660),
             centis(2330),
             12,
-            3,
+            Fx::from_ratio(7, 2),
             // The alpha's Gatling tank turns a second gun skywards, reaching 50 there.
             anti_air(weapon(10, [12, 0, 0, 0], 32, 4), 50),
         ),
@@ -979,7 +1055,7 @@ static DEFS: [Def; 80] = [
             credits(400),
             secs(10),
             17,
-            3,
+            Fx::from_int(2),
             weapon(14, [6, 0, 0, 0], 30, 6),
         ),
         23,
@@ -990,23 +1066,23 @@ static DEFS: [Def; 80] = [
     // advanced tech lab (es_techstructureb) hp 750, $1000, 25 s, 30 power; GLA salvage bay
     // (gs_techstructureb) hp 750, $800, 20 s.
     researching(
-        building("EU Tech Lab", Faction::Eu, BuildingRole::Lab, -30, 750, credits(750), 20, 6, NONE),
+        building("EU Tech Lab", Faction::Eu, BuildingRole::Lab, -30, 750, credits(750), 20, 10, NONE),
         &[HIGHTECH_ALLOYS, IMPROVED_BALLISTICS, SENIOR_WARFIGHTER],
     ),
     researching(
-        building("EU Advanced Tech Lab", Faction::Eu, BuildingRole::Lab, -30, 750, credits(1000), 25, 6, NONE),
+        building("EU Advanced Tech Lab", Faction::Eu, BuildingRole::Lab, -30, 750, credits(1000), 25, 12, NONE),
         &[HIGH_EXPLOSIVES],
     ),
     researching(
-        building("GLA Salvage Bay", Faction::Gla, BuildingRole::Lab, 0, 750, credits(800), 20, 6, NONE),
+        building("GLA Salvage Bay", Faction::Gla, BuildingRole::Lab, 0, 750, credits(800), 20, 10, NONE),
         &[SCRAP_REPAIR],
     ),
     // ---- Aircraft ----------------------------------------------------------------------------
     // src: the alpha's airfields (es_airfield, as_airfield): hp 750, $1200, 34 s, 30 power. The
     // GLA has none; its helicopter comes from its war factory (card: Toxin Chopper "produced:
     // GLA war factory").
-    building("EU Airfield", Faction::Eu, FACTORY, -30, 750, credits(1200), 34, 9, &[EU_VALKYRIE]),
-    building("APA Airfield", Faction::Apa, FACTORY, -30, 750, credits(1200), 34, 9, &[APA_MANTIS]),
+    building("EU Airfield", Faction::Eu, FACTORY, -30, 750, credits(1200), 34, 12, &[EU_VALKYRIE]),
+    building("APA Airfield", Faction::Apa, FACTORY, -30, 750, credits(1200), 34, 12, &[APA_MANTIS]),
     // src: the alpha's helicopters, `RtsMovementComponentData` and weapon specs. EU heavy rocket
     // helo (the Valkyrie; card hp 621, $1250, 32.58 s): speed 12, rockets 120 every 6 s at 60,
     // ground only. APA light gun helo (the Mantis; card hp 322): speed 16, machine gun 42 (+28
@@ -1024,7 +1100,7 @@ static DEFS: [Def; 80] = [
             credits(1250),
             centis(3258),
             12,
-            3,
+            Fx::from_int(4),
             weapon(120, [0, 0, 0, 0], 60, 60),
         )),
         90,
@@ -1039,7 +1115,7 @@ static DEFS: [Def; 80] = [
             credits(950),
             secs(24),
             16,
-            3,
+            Fx::from_int(4),
             weapon(42, [0, 0, 28, 0], 35, 11),
         )),
         39,
@@ -1054,7 +1130,7 @@ static DEFS: [Def; 80] = [
             credits(750),
             secs(24),
             19,
-            3,
+            Fx::from_int(4),
             anti_air(weapon(26, [12, 0, 0, 0], 30, 11), 30),
         )),
         27,
@@ -1080,7 +1156,7 @@ static DEFS: [Def; 80] = [
     // against aircraft, where the alpha fires a heavier second rocket; hp 400, $300, 18 s;
     // detects within 45). Ranges count from the edge, as a garrison's do. The EU and APA names
     // and every footprint are placeholders.
-    defense("EU Gun Turret", Faction::Eu, -20, 450, credits(450), 18, 3, weapon(26, [8, 0, 0, 0], 57, 8), 50),
+    defense("EU Gun Turret", Faction::Eu, -20, 450, credits(450), 18, 2, weapon(26, [8, 0, 0, 0], 57, 8), 50),
     defense(
         "APA Flame Turret",
         Faction::Apa,
@@ -1088,7 +1164,7 @@ static DEFS: [Def; 80] = [
         500,
         credits(500),
         18,
-        3,
+        2,
         garrison_buster(weapon(44, [20, 0, 0, 0], 45, 20), 60),
         40,
     ),
@@ -1118,7 +1194,7 @@ static DEFS: [Def; 80] = [
     // src: the alpha's gs_scudstorm: MaxHealth 1500, $4000, BuildTime 60 s, built by the
     // Worker (the wiki's Dirty Scud Storm); it launches GLA_PlayerAbility_DirtyScudStorm. No
     // power draw (GLA has none). Footprint is a placeholder.
-    building("GLA Scud Storm", Faction::Gla, BuildingRole::Superweapon, 0, 1500, credits(4000), 60, 7, NONE),
+    building("GLA Scud Storm", Faction::Gla, BuildingRole::Superweapon, 0, 1500, credits(4000), 60, 16, NONE),
     // ---- Generals' units ------------------------------------------------------------------
     // Units a general's factories add or swap in (the alpha's `StaticData/Generals/*` `Units`
     // lists). src: each unit's own alpha blueprint: MaxHealth, Cost, BuildTime, the main
@@ -1139,7 +1215,7 @@ static DEFS: [Def; 80] = [
                 credits(450),
                 secs(12),
                 16,
-                2,
+                Fx::from_int(2),
                 weapon(16, [12, 0, 0, 0], 30, 10),
             ),
             54,
@@ -1158,7 +1234,7 @@ static DEFS: [Def; 80] = [
             credits(850),
             secs(24),
             12,
-            3,
+            Fx::from_int(4),
             anti_air(weapon(36, [0, 16, 0, 0], 30, 12), 30),
         )),
         36,
@@ -1175,7 +1251,7 @@ static DEFS: [Def; 80] = [
             credits(750),
             secs(13),
             9,
-            2,
+            Fx::from_int(2),
             weapon(25, [200, 0, 0, 0], 50, 40),
         ),
         14,
@@ -1192,7 +1268,7 @@ static DEFS: [Def; 80] = [
                 credits(600),
                 secs(13),
                 17,
-                3,
+                Fx::from_int(2),
                 weapon(28, [0, 0, 0, 0], 32, 15),
             ),
             54,
@@ -1212,7 +1288,7 @@ static DEFS: [Def; 80] = [
             credits(375),
             secs(10),
             10,
-            2,
+            Fx::from_int(2),
             weapon(49, [0, 0, 0, 0], 25, 12),
         ),
         21,
@@ -1229,7 +1305,7 @@ static DEFS: [Def; 80] = [
             credits(1200),
             secs(22),
             9,
-            3,
+            Fx::from_ratio(7, 2),
             weapon(110, [0, 0, 0, 0], 35, 30),
         ),
         72,
@@ -1246,7 +1322,7 @@ static DEFS: [Def; 80] = [
             credits(1250),
             secs(22),
             8,
-            4,
+            Fx::from_ratio(7, 2),
             garrison_buster(weapon(280, [0, 0, 80, 0], 50, 40), 120),
         ),
         72,
@@ -1262,7 +1338,7 @@ static DEFS: [Def; 80] = [
         500,
         credits(575),
         18,
-        3,
+        2,
         garrison_buster(weapon(100, [0, 0, 0, 0], 50, 25), 100),
         0,
     ),
@@ -1277,7 +1353,7 @@ static DEFS: [Def; 80] = [
             credits(500),
             secs(13),
             9,
-            2,
+            Fx::from_int(2),
             garrison_buster(weapon(50, [65, 0, 0, 30], 25, 32), 80),
         ),
         42,
@@ -1294,7 +1370,7 @@ static DEFS: [Def; 80] = [
             credits(700),
             secs(14),
             8,
-            2,
+            Fx::from_int(2),
             garrison_buster(shelling(weapon(40, [55, 0, 0, 30], 50, 42), 5, 40, 12), 80),
         ),
         42,
@@ -1311,7 +1387,7 @@ static DEFS: [Def; 80] = [
             credits(800),
             secs(16),
             10,
-            3,
+            Fx::from_ratio(7, 2),
             garrison_buster(weapon(65, [0, 0, 0, 0], 30, 32), 95),
         ),
         72,
@@ -1328,7 +1404,7 @@ static DEFS: [Def; 80] = [
             credits(950),
             secs(20),
             10,
-            3,
+            Fx::from_ratio(7, 2),
             anti_air(weapon(45, [0, 33, 0, 0], 35, 20), 35),
         ),
         54,
@@ -1345,7 +1421,7 @@ static DEFS: [Def; 80] = [
             credits(700),
             secs(12),
             10,
-            2,
+            Fx::from_int(2),
             weapon(100, [0, 0, 88, 0], 18, 30),
         ),
         54,
@@ -1363,7 +1439,7 @@ static DEFS: [Def; 80] = [
                 credits(1550),
                 secs(24),
                 7,
-                3,
+                Fx::from_int(2),
                 weapon(60, [20, 0, 0, 0], 30, 20),
             ),
             shelling(weapon(215, [0, 0, 0, 0], 65, 50), 8, 40, 20),
@@ -1388,7 +1464,7 @@ static DEFS: [Def; 80] = [
                 credits(1075),
                 secs(17),
                 10,
-                3,
+                Fx::from_ratio(7, 2),
                 weapon(85, [0, 30, 0, 0], 35, 25),
             ),
             72,
@@ -1408,7 +1484,7 @@ static DEFS: [Def; 80] = [
             credits(375),
             secs(10),
             9,
-            2,
+            Fx::from_int(2),
             weapon(44, [0, 0, 0, 0], 20, 20),
         ),
         12,
@@ -1422,9 +1498,12 @@ static DEFS: [Def; 80] = [
     becoming(
         carrying(
             ranked(
-                with_armour(
-                    unit("GLA Battle Bus", Faction::Gla, 525, credits(750), 14, 15, false, None, NONE),
-                    Armour::Light,
+                with_radius(
+                    with_armour(
+                        unit("GLA Battle Bus", Faction::Gla, 525, credits(750), 14, 15, false, None, NONE),
+                        Armour::Light,
+                    ),
+                    Fx::from_ratio(7, 2),
                 ),
                 54,
                 100,
@@ -1445,7 +1524,7 @@ static DEFS: [Def; 80] = [
             credits(1250),
             secs(24),
             8,
-            3,
+            Fx::from_ratio(7, 2),
             shelling(weapon(70, [0, 0, 0, 0], 60, 18), 6, 50, 15),
         ),
         105,
@@ -1462,7 +1541,7 @@ static DEFS: [Def; 80] = [
             credits(1000),
             secs(16),
             10,
-            3,
+            Fx::from_ratio(7, 2),
             weapon(60, [0, 0, 35, 0], 35, 21),
         ),
         72,
@@ -1479,7 +1558,7 @@ static DEFS: [Def; 80] = [
             credits(875),
             secs(17),
             10,
-            3,
+            Fx::from_ratio(7, 2),
             garrison_buster(weapon(60, [50, 0, 0, 0], 35, 30), 50),
         ),
         54,
@@ -1496,7 +1575,7 @@ static DEFS: [Def; 80] = [
             credits(550),
             secs(12),
             16,
-            2,
+            Fx::from_int(2),
             weapon(11, [11, 0, 0, 0], 32, 12),
         ),
         23,
@@ -1512,7 +1591,7 @@ static DEFS: [Def; 80] = [
         credits(400),
         secs(13),
         16,
-        2,
+        Fx::from_int(2),
         weapon(185, [0, 0, 85, 0], 7, 10),
     ),
     // Battle Bunker (gu_battlebus_bunker, a structure blueprint): what the Battle Bus becomes.

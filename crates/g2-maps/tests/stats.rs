@@ -35,6 +35,9 @@ fn stats_agree_with_the_match() {
             w.entities().filter_map(|e| Some((e.id, e.owner?))).collect();
         let mut owner_of = owner_of;
         let (mut earned, mut kills, mut lost, mut gone) = (vec![0i64; n], vec![0u32; n], vec![0u32; n], vec![None; n]);
+        // Units inside a building or vehicle as of the last tick, and those that died with it
+        // (a loss with no kill).
+        let (mut inside, mut died_inside) = (Vec::new(), 0u32);
         let mut seen_units = vec![0u32; n];
         let mut seen: std::collections::BTreeSet<g2_sim::EntityId> = w.entities().map(|e| e.id).collect();
         while w.winner().is_none() && w.tick() < 30 * 60 * 30 {
@@ -47,18 +50,26 @@ fn stats_agree_with_the_match() {
                             kills[by.0 as usize] += 1;
                         }
                         lost[owner_of[&target].0 as usize] += 1;
+                        for &(_, o) in inside.iter().filter(|&&(c, _)| c == target) {
+                            lost[o] += 1;
+                            died_inside += 1;
+                        }
                     }
                     _ => {}
                 }
             }
+            inside = w.entities().filter_map(|e| Some((e.inside?, e.owner?.0 as usize))).collect();
             for e in w.entities() {
                 if seen.insert(e.id) {
                     let o = e.owner.unwrap();
-                    owner_of.insert(e.id, o);
                     // A support power's jets are launched, not built.
                     if rules().def(e.def).is_unit() && !rules().def(e.def).is_support_jet() {
                         seen_units[o.0 as usize] += 1;
                     }
+                }
+                // A civilian building belongs to whoever garrisons it.
+                if let Some(o) = e.owner {
+                    owner_of.insert(e.id, o);
                 }
             }
             for (p, g) in gone.iter_mut().enumerate() {
@@ -87,6 +98,6 @@ fn stats_agree_with_the_match() {
             assert_eq!(s.defeated_at.is_none(), id == winner, "{name} p{p}");
         }
         let total_kills: u32 = (0..n).map(|p| w.stats(PlayerId(p as u8)).kills).sum();
-        assert_eq!(total_kills, lost.iter().sum::<u32>(), "{name}: every loss is someone's kill");
+        assert_eq!(total_kills + died_inside, lost.iter().sum::<u32>(), "{name}: every other loss is someone's kill");
     }
 }

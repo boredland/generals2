@@ -32,6 +32,8 @@ Reference footage (local-only):
 
 Requirements: you can tell a faction from its silhouette and colour, models stay inside their sim footprint, and roofs are busy, because the camera mostly sees roofs. Buildings are layered industrial structures with three or more height levels: stepped roof tiers, rails and catwalks along roof edges, pipe runs, ribbed and seamed walls, recessed bays, corner trims, masts and dishes. Vehicles have tracks with road wheels and skirts (or wheels with fenders), a turret with mantlet and barrel, and stowage. Budget: at most 120 parts per building and 30 per unit (tests enforce both, and the footprint).
 
+Proportions are the alpha's: footprints are its `EntityRadius` and build grids, imported models are drawn at its own scale (one alpha unit, one world unit), and procedural vehicles are 1.5 times longer than their footprint is wide, the alpha's median for its vehicles. A procedural building is 1.75 × its radius wide, inside its build grid as the alpha's are: the EU war factory 21 wide (the alpha's mesh 21.6), the Aegis 10.5 long (9.7).
+
 - **EU**: warm mid-grey industrial panels (near-white blows out in the sun), orange hazard trims, teal team accents.
 - **APA**: dark steel, red team accents, tiered rooftops.
 - **GLA**: improvised, rust-brown. Sandbag rings, scrap sheets, crate and barrel yards, tent camps, and a lookout post on the supply stash; sand team colour.

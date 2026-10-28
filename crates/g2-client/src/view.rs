@@ -73,9 +73,9 @@ struct Assets3d {
     rubble: Handle<StandardMaterial>,
     /// A toxin cloud's low green haze.
     toxin: Handle<StandardMaterial>,
-    /// Imported alpha models by def name: scene, scale that fits it to its footprint, and
-    /// the offset (already scaled) that puts its footprint's centre on the entity.
-    alpha: BTreeMap<&'static str, (Handle<WorldAsset>, f32, Vec3)>,
+    /// Imported alpha models by def name: scene and the offset that puts its footprint's
+    /// centre on the entity.
+    alpha: BTreeMap<&'static str, (Handle<WorldAsset>, Vec3)>,
     /// A flat unit-radius ring, the team marker under alpha models.
     ring: Handle<Mesh>,
 }
@@ -228,7 +228,7 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     ));
     root.with_children(|c| {
         c.spawn((Body, Transform::default(), Visibility::default())).with_children(|b| match alpha {
-            Some((scene, scale, offset)) => {
+            Some((scene, offset)) => {
                 // The alpha's models carry no team colour: a thin ring on the ground in the
                 // team's colour keeps the sides apart, as the alpha's selection rings did.
                 // Civilian buildings change hands, so they have none; a garrison's pips show
@@ -248,10 +248,7 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
                     &[Vec3::ZERO]
                 };
                 for &at in spots {
-                    b.spawn((
-                        WorldAssetRoot(scene.clone()),
-                        Transform::from_translation(at + *offset).with_scale(Vec3::splat(*scale)),
-                    ));
+                    b.spawn((WorldAssetRoot(scene.clone()), Transform::from_translation(at + *offset)));
                 }
             }
             None => spawn_parts(b, assets, faction, team, &parts),
@@ -283,34 +280,25 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     root.id()
 }
 
-/// The alpha's models for our defs, each scaled so its footprint matches the def's (a
-/// building's widest side spans the procedural model's width, radius × 1.75; a vehicle's
-/// length its 2 × radius; a soldier stands 1.6 units tall, as ours do) and moved so the
-/// centre of its footprint sits on the entity: the alpha's origins are often off-centre.
-/// Height is left alone: the alpha's origin is at ground level, and parts below it (a
-/// derrick's well, 3.2 m down) belong under the ground.
+/// The alpha's models for our defs, at the alpha's own size: our footprints are its blueprints'
+/// (`g2-rules`: `EntityRadius`, build-grid half extents), in the same units as its meshes, so
+/// every model keeps the size it has next to every other, a tank against a war factory as in
+/// the alpha. Each is moved so the centre of its footprint sits on the entity: the alpha's
+/// origins are often off-centre. Height is left alone: the alpha's origin is at ground level,
+/// and parts below it (a derrick's well, 3.2 m down) belong under the ground.
 fn alpha_models(
     cache: &crate::alpha::Cache,
     server: &AssetServer,
-) -> BTreeMap<&'static str, (Handle<WorldAsset>, f32, Vec3)> {
+) -> BTreeMap<&'static str, (Handle<WorldAsset>, Vec3)> {
     let bounds = cache.bounds();
     let mut out = BTreeMap::new();
     for def in g2_rules::rules().defs {
         let Some((path, (lo, hi))) = cache.model(def, &bounds) else { continue };
-        let size = hi - lo;
-        let r = def.radius.to_f32();
-        let scale = if def.is_building() {
-            r * 1.75 / size.x.max(size.z)
-        } else if def.armour == g2_sim::Armour::Infantry {
-            1.6 / size.y
-        } else {
-            r * 2.0 / size.x.max(size.z)
-        };
         let centre = (lo + hi) / 2.0;
-        let offset = Vec3::new(-centre.x, 0.0, -centre.z) * scale;
+        let offset = Vec3::new(-centre.x, 0.0, -centre.z);
         let handle =
             server.load(GltfAssetLabel::Scene(0).from_asset(bevy::asset::AssetPath::from(path).with_source("alpha")));
-        out.insert(def.name, (handle, scale, offset));
+        out.insert(def.name, (handle, offset));
     }
     out
 }

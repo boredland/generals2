@@ -168,9 +168,9 @@ fn splash_hits_every_enemy_in_the_blast_and_no_friend() {
     let aegis = train(&mut w, P1, EU_DOZER, EU_SUPPLY, Vec2::from_int(290, 290), EU_HARVESTER);
     let (dozer, worker) = (first(&w, P1, EU_DOZER).unwrap(), first(&w, P0, GLA_WORKER).unwrap());
     // Everyone in place before the gun comes within range.
+    walk(&mut w, P1, aegis, Vec2::from_int(195, 207));
     walk(&mut w, P1, dozer, Vec2::from_int(195, 200));
-    walk(&mut w, P1, aegis, Vec2::from_int(195, 205));
-    walk(&mut w, P0, worker, Vec2::from_int(192, 196));
+    walk(&mut w, P0, worker, Vec2::from_int(190, 210));
     w.submit(P0, CommandKind::Move { units: vec![gun], target: Vec2::from_int(150, 202) });
     let blast = rules().def(GLA_TOXIN_ARTILLERY).weapon().unwrap().shell.unwrap().radius;
     let mut caught_friend = false;
@@ -187,7 +187,13 @@ fn splash_hits_every_enemy_in_the_blast_and_no_friend() {
         let inside =
             |id: EntityId| w.entity(id).is_some_and(|e| e.pos.distance(at) - rules().def(e.def).radius <= blast);
         for id in [dozer, aegis] {
-            assert_eq!(hit.contains(&id), inside(id), "an enemy is hit exactly when it is in the blast");
+            // A unit dead from an earlier shell has nothing to say about this one; one this
+            // shell killed is gone already, and its hit says it was inside.
+            if w.entity(id).is_none() && !hit.contains(&id) {
+                continue;
+            }
+            let gone = w.entity(id).is_none();
+            assert_eq!(hit.contains(&id), gone || inside(id), "an enemy is hit exactly when it is in the blast");
         }
         assert!(!hit.contains(&worker), "the gun's own worker is never hit");
         caught_friend |= inside(worker);

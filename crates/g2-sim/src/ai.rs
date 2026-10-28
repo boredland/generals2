@@ -20,10 +20,17 @@ use crate::world::{TICKS_PER_SECOND, World};
 const THINK_INTERVAL: u32 = TICKS_PER_SECOND;
 /// Idle combat units gather at the factory until there are this many, then attack together.
 const WAVE: usize = 5;
-/// Enemy units this close to one of our buildings trigger the whole army's defence.
-const DEFEND_RADIUS: Fx = Fx::from_int(50);
+/// Normal's first waves are bigger: around the alpha's larger buildings a wave of five met
+/// defenders it couldn't beat.
+const NORMAL_WAVE: usize = 7;
+/// Enemy units this close to the edge of one of our buildings trigger the whole army's
+/// defence; the zone grows with the buildings themselves.
+const DEFEND_RADIUS: Fx = Fx::from_int(40);
 /// A wave's own fight: enemies this close to its centre count against it.
 const BATTLE_RADIUS: Fx = Fx::from_int(60);
+/// Normal opens its second supply center by this tick even with its home pile still full: an
+/// economy that waits for the pile to run dry falls behind the Onslaught's later waves.
+const EXPAND_BY: u32 = 300 * TICKS_PER_SECOND;
 /// Constructors move home when an armed enemy comes this close.
 const DANGER_RADIUS: Fx = Fx::from_int(45);
 
@@ -347,13 +354,16 @@ impl Ai {
             let supply = find(|d| matches!(d.role(), Some(BuildingRole::SupplyCenter { .. })));
             let smart = self.level != AiLevel::Easy;
             // Normal: expand to the nearest pile with no supply center of ours close by,
-            // once the base's own pile is nearly spent; add a factory when credits pile up.
+            // once the base's own pile (within 88 of the command center's edge) is nearly spent,
+            // or by `EXPAND_BY`; add a factory when credits pile up.
+            let home_reach = Fx::from_int(88) + cc.map_or(Fx::ZERO, |c| rules.def(c.def).radius);
             let expansion = || {
                 let near_ours = |p: Vec2| depots.iter().any(|d| d.pos.distance(p) <= Fx::from_int(60));
-                let spent = world
-                    .nearest_pile(base)
-                    .and_then(|p| world.entity(p))
-                    .is_none_or(|p| p.resource < 2_000 || p.pos.distance(base) > Fx::from_int(90));
+                let spent = world.tick() >= EXPAND_BY
+                    || world
+                        .nearest_pile(base)
+                        .and_then(|p| world.entity(p))
+                        .is_none_or(|p| p.resource < 2_000 || p.pos.distance(base) > home_reach);
                 spent
                     .then(|| {
                         world
@@ -540,7 +550,7 @@ impl Ai {
                 && rules.def(e.def).is_unit()
                 && rules.def(e.def).weapon().is_some()
                 && world.sees(me, e)
-                && mine.iter().any(|b| rules.def(b.def).is_base() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
+                && near_base(world, mine, e.pos)
         });
         if let Some(intruder) = intruder {
             // Only units at home defend: a wave already under way keeps going, and a unit
@@ -549,7 +559,7 @@ impl Ai {
                 .iter()
                 .filter(|e| {
                     !matches!(e.order, Order::Attack { .. } | Order::AttackMove { engaged: Some(_), .. })
-                        && mine.iter().any(|b| rules.def(b.def).is_base() && b.pos.distance(e.pos) <= DEFEND_RADIUS)
+                        && near_base(world, mine, e.pos)
                 })
                 .map(|e| e.id)
                 .collect();
@@ -613,9 +623,7 @@ impl Ai {
         let seen_now = sum(&mut enemies.iter());
         // Slow fade (a 64th per second): an army that walked out of sight still exists.
         self.enemy_seen = (self.enemy_seen - self.enemy_seen / 64).max(seen_now);
-        // A held civilian building or a bunker is no base to defend or fall back to.
-        let buildings: Vec<&&Entity> = mine.iter().filter(|e| rules.def(e.def).is_base()).collect();
-        let near_base = |p: Vec2| buildings.iter().any(|b| b.pos.distance(p) <= DEFEND_RADIUS);
+        let near_base = |p: Vec2| near_base(world, mine, p);
         let at_home = |e: &&Entity| near_base(e.pos);
 
         // Constructors: away from armed enemies, back to the command center.
@@ -721,7 +729,7 @@ impl Ai {
         }
         let idle: Vec<&&Entity> = army.iter().filter(|e| e.order == Order::Idle).collect();
         let ready = sum(&mut idle.iter().copied());
-        if idle.len() >= WAVE
+        if idle.len() >= NORMAL_WAVE
             && ready * 2 >= self.enemy_seen * 3
             && let Some(target) = self.enemy_base(world, home)
         {
@@ -819,6 +827,15 @@ impl Ai {
         }
         best.map(|(_, p)| p)
     }
+}
+
+/// Whether `p` is within `DEFEND_RADIUS` of the edge of one of the base's buildings (a held
+/// civilian building or a bunker is no base to defend or fall back to).
+fn near_base(world: &World, mine: &[&Entity], p: Vec2) -> bool {
+    mine.iter().any(|b| {
+        let d = world.rules.def(b.def);
+        d.is_base() && b.pos.distance(p) <= DEFEND_RADIUS + d.radius
+    })
 }
 
 /// The `k`-th spiral cell around `around`, `step` apart, with both axes flipped to point at the

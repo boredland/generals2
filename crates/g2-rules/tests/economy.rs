@@ -149,11 +149,11 @@ fn collectors_deliver_to_the_nearest_center_with_room() {
 }
 
 /// Collectors must route between tightly packed buildings: none may sit still for 20 seconds
-/// on a gather run. The layout is pinned to the one that exposed two bugs, the AI's original
-/// placement around Crater Ridge's first start: supply center (60,60), power plant (80,64),
-/// command center (80,80), pile at (130,60), so every trip passes the 6.4-unit gap between
-/// supply center and power plant. Before pathfinding, EU harvesters wedged in it; with routes
-/// but unit-unit pushing, APA harvesters met head-on there and blocked each other. (The AI no
+/// on a gather run. The layout keeps the shape of the one that exposed two bugs (the AI's
+/// original placement around Crater Ridge's first start): supply center and power plant side
+/// by side with a narrow gap between them, across the path to the pile at (130,60), so every
+/// trip passes the gap. Before pathfinding, EU harvesters wedged in it; with routes but
+/// unit-unit pushing, APA harvesters met head-on there and blocked each other. (The AI no
 /// longer builds this layout, so the test places the buildings itself.)
 #[test]
 fn collectors_route_between_tightly_packed_buildings() {
@@ -162,8 +162,12 @@ fn collectors_route_between_tightly_packed_buildings() {
         (Faction::Apa, APA_CRANE, APA_SUPPLY, APA_POWER, APA_HARVESTER, 5),
     ] {
         let mut w = world(faction, 100_000);
-        let depot = build(&mut w, ctor, depot_def, Vec2::from_int(60, 60));
-        build(&mut w, ctor, power, Vec2::from_int(80, 64));
+        let depot_at = Vec2::from_int(100, 40);
+        let depot = build(&mut w, ctor, depot_def, depot_at);
+        // The power plant against the depot's north flank, a gap wider than a harvester
+        // (radius 2, the EU's 4) but no wider than two.
+        let gap = rules().def(depot_def).radius + rules().def(power).radius + g2_sim::Fx::from_int(9);
+        build(&mut w, ctor, power, depot_at + Vec2::new(g2_sim::Fx::from_int(4), gap));
         for _ in 0..count {
             assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: collector }), vec![]);
         }

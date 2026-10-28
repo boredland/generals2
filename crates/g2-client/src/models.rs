@@ -324,7 +324,9 @@ fn crate_yard(parts: &mut Vec<Part>, w: f32, d: f32, y: f32, seed: u32, rows: i3
 
 // ---- Buildings ---------------------------------------------------------------------------
 
-pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
+/// A building of `role`, `r` its footprint radius; `trains_infantry`: a factory drawn as a
+/// barracks or GLA camp rather than a war factory.
+pub fn building(faction: Faction, role: BuildingRole, r: f32, trains_infantry: bool) -> Vec<Part> {
     let mut p = Vec::new();
     let w = r * 1.75;
     match (faction, role) {
@@ -335,7 +337,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
         (_, BuildingRole::OilDerrick { .. }) => derrick(&mut p, faction, r),
         (Faction::Gla, BuildingRole::SupplyCenter { .. }) => stash(&mut p, w),
         (Faction::Gla, BuildingRole::CommandCenter) => fortress(&mut p, w),
-        (Faction::Gla, BuildingRole::Factory) if r < 8.0 => camp(&mut p, w),
+        (Faction::Gla, BuildingRole::Factory) if trains_infantry => camp(&mut p, w),
         (Faction::Gla, BuildingRole::Factory) => workshop(&mut p, w),
         (Faction::Gla, BuildingRole::Lab) => salvage_bay(&mut p, w),
         (Faction::Gla, _) => {
@@ -349,7 +351,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32) -> Vec<Part> {
         (_, BuildingRole::CommandCenter) => command_center(&mut p, faction, w),
         (_, BuildingRole::SupplyCenter { .. }) => depot(&mut p, faction, w),
         (_, BuildingRole::PowerPlant) => plant(&mut p, faction, w),
-        (_, BuildingRole::Factory) if r < 8.0 => barracks(&mut p, faction, w),
+        (_, BuildingRole::Factory) if trains_infantry => barracks(&mut p, faction, w),
         (_, BuildingRole::Factory) => war_factory(&mut p, faction, w),
         (_, BuildingRole::Lab) => lab(&mut p, faction, w),
     }
@@ -1227,6 +1229,11 @@ pub fn color(faction: Option<Faction>, slot: Slot) -> Color {
     }
 }
 
+/// The procedural vehicles are drawn about 2 × their radius long; the alpha's models are a
+/// median 1.5 times that next to the same `EntityRadius` (measured over its 26 vehicles we
+/// use), so ours are scaled up to match its proportions to the buildings.
+const VEHICLE_SCALE: f32 = 1.5;
+
 pub fn parts_for(def: &Def, faction: Option<Faction>) -> Vec<Part> {
     let r = def.radius.to_f32();
     match (def.class, faction) {
@@ -1238,7 +1245,21 @@ pub fn parts_for(def: &Def, faction: Option<Faction>) -> Vec<Part> {
             civilian(&mut p, r);
             p
         }
-        (Class::Building { role, .. }, Some(f)) => building(f, role, r),
+        (Class::Building { role, .. }, Some(f)) => {
+            let rules = g2_rules::rules();
+            let infantry = def.produces.iter().any(|&u| rules.def(u).armour == g2_sim::Armour::Infantry);
+            building(f, role, r, infantry)
+        }
+        // Vehicles at the alpha's proportions: its models are about 1.5 times as long as
+        // their footprint (`EntityRadius`) is wide, so they reach past it front and back.
+        (Class::Unit { .. }, Some(f)) if def.armour != g2_sim::Armour::Infantry && !def.is_support_jet() => {
+            let mut p = unit(f, def, r);
+            for part in &mut p {
+                part.at *= VEHICLE_SCALE;
+                part.size *= VEHICLE_SCALE;
+            }
+            p
+        }
         (Class::Unit { .. }, Some(f)) => unit(f, def, r),
         _ => Vec::new(),
     }
@@ -1255,9 +1276,10 @@ mod tests {
             let parts = parts_for(def, def.faction);
             assert!(!parts.is_empty(), "{} has no model", def.name);
             let r = def.radius.to_f32();
+            let reach_limit = if def.is_unit() && def.armour != g2_sim::Armour::Infantry { 2.0 } else { 1.3 };
             for p in &parts {
                 let reach = Vec2::new(p.at.x, p.at.z).length() - p.size.x.max(p.size.z) / 2.0;
-                assert!(reach <= r * 1.3, "{} part at {:?} pokes out of its {r} footprint", def.name, p.at);
+                assert!(reach <= r * reach_limit, "{} part at {:?} pokes out of its {r} footprint", def.name, p.at);
             }
         }
     }

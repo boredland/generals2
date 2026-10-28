@@ -146,8 +146,8 @@ fn aircraft_fly_straight_over_impassable_terrain() {
 #[test]
 fn only_weapons_that_target_the_air_hit_aircraft() {
     let mut w = world(Faction::Apa, Faction::Eu);
-    let factory = build(&mut w, P0, APA_FACTORY, Vec2::from_int(110, 80));
-    let apa_air = build(&mut w, P0, APA_AIRFIELD, Vec2::from_int(140, 50));
+    let factory = build(&mut w, P0, APA_FACTORY, Vec2::from_int(120, 80));
+    let apa_air = build(&mut w, P0, APA_AIRFIELD, Vec2::from_int(150, 45));
     let eu_air = build(&mut w, P1, EU_AIRFIELD, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
     let field = Vec2::from_int(200, 200);
     let tank = unit_at(&mut w, P0, factory, APA_WARLORD, field);
