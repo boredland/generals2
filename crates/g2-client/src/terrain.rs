@@ -1,20 +1,29 @@
 //! Terrain in the look of docs/STYLE.md: ochre and olive grass over tan dirt, worn light dirt
-//! roads, dark rocky ridges past the map edge, acacia-like trees and bushes. All generated
-//! here; no textures or game assets.
+//! roads with tyre ruts, scorched patches, dark rocky ridges past the map edge, acacias, palms
+//! and bushes, and small junk (crates, drums, sandbags, fences, poles, tyres, rubble, cars)
+//! along the roads and around the bases. All generated here; no textures or game assets.
 //!
 //! On the built-in map the layout is procedural and the playable area stays flat. On an
 //! imported Generals / Zero Hour map, the original's relief, painted ground classes, roads,
 //! water areas and tree positions drive the same procedural look. Terrain is visual only: the
 //! sim stays flat and models are lifted onto the ground (`Sim::to_world`).
 
+mod clutter;
+mod marks;
+mod shapes;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::pbr::{ExtendedMaterial, MaterialPlugin};
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use g2_maps::MapFile;
 
 use crate::sim::{Sim, to_world};
+use shapes::{Clutter, Prims};
+
+type GroundMaterial = ExtendedMaterial<StandardMaterial, marks::GroundMarks>;
 
 /// Vertex spacing in world units. Imported maps are larger, so they use a coarser grid; the
 /// source height map has one sample per 10/6 world units anyway.
@@ -29,8 +38,10 @@ pub struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, spawn_terrain.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
-            .add_systems(Update, (clear_under_buildings, update_fog).after(spawn_terrain));
+        bevy::asset::embedded_asset!(app, "terrain/ground.wesl");
+        app.add_plugins(MaterialPlugin::<GroundMaterial>::default())
+            .add_systems(Update, spawn_terrain.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
+            .add_systems(Update, (clear_under_buildings, hide_clutter, update_fog).after(spawn_terrain));
     }
 }
 
@@ -41,21 +52,13 @@ struct Scenery {
     radius: f32,
 }
 
-/// Props are placed once from the map; players build anywhere. Hide every prop that overlaps a
-/// shown building's footprint (an enemy building in the fog must not clear its trees, or the
-/// gap would give it away) or a ghost's (a remembered building destroyed out of sight: its
-/// trees growing back would give the kill away), and (under fog) every prop on ground the
-/// local player hasn't explored, since props stand taller than the fog sheet. Props never
-/// move, so this only reruns when the footprints or the explored area change.
-fn clear_under_buildings(
-    sim: Res<Sim>,
-    mut seen: Local<(Vec<(Vec2, f32)>, usize)>,
-    mut props: Query<(&Scenery, &mut Visibility)>,
-    fresh: Query<(), Added<Scenery>>,
-) {
-    if !fresh.is_empty() {
-        *seen = Default::default();
-    }
+/// What hides scenery: every shown building's footprint (an enemy building in the fog must
+/// not clear its trees, or the gap would give it away) and every ghost's (a remembered
+/// building destroyed out of sight: its trees growing back would give the kill away), and
+/// (under fog) ground the local player hasn't explored, since props stand taller than the fog
+/// sheet. Returns the footprints and the count of explored cells, which together change
+/// whenever the answer for any prop can.
+fn covers(sim: &Sim) -> (Vec<(Vec2, f32)>, usize) {
     let world = &sim.world;
     let ghosts = world
         .vision(sim.local)
@@ -72,15 +75,78 @@ fn clear_under_buildings(
         .collect();
     let v = world.vision(sim.local);
     let explored = (0..v.h).flat_map(|y| (0..v.w).map(move |x| (x, y))).filter(|&(x, y)| v.cell_state(x, y).0).count();
-    if (buildings.as_slice(), explored) == (seen.0.as_slice(), seen.1) {
+    (buildings, explored)
+}
+
+fn hidden(sim: &Sim, buildings: &[(Vec2, f32)], at: Vec2, radius: f32) -> bool {
+    buildings.iter().any(|&(c, r)| c.distance(at) < r + radius) || !sim.explored_at(at.x, at.y)
+}
+
+/// Props are placed once from the map; players build anywhere. Hides every prop `covers`
+/// says is covered. Props never move, so this only reruns when the footprints or the explored
+/// area change.
+fn clear_under_buildings(
+    sim: Res<Sim>,
+    mut seen: Local<(Vec<(Vec2, f32)>, usize)>,
+    mut props: Query<(&Scenery, &mut Visibility)>,
+    fresh: Query<(), Added<Scenery>>,
+) {
+    if !fresh.is_empty() {
+        *seen = Default::default();
+    }
+    let now = covers(&sim);
+    if now == *seen {
         return;
     }
     for (prop, mut vis) in &mut props {
-        let covered = buildings.iter().any(|&(c, r)| c.distance(prop.at) < r + prop.radius);
-        let hidden = covered || !sim.explored_at(prop.at.x, prop.at.y);
-        vis.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
+        let hide = hidden(&sim, &now.0, prop.at, prop.radius);
+        vis.set_if_neq(if hide { Visibility::Hidden } else { Visibility::Inherited });
     }
-    *seen = (buildings, explored);
+    *seen = now;
+}
+
+/// A patch of ground's clutter, merged into one mesh. Each item owns a run of the full index
+/// list, so hiding one (by the same rule as `clear_under_buildings`) just leaves its run out
+/// of the mesh's indices.
+#[derive(Component)]
+struct ClutterChunk {
+    mesh: Handle<Mesh>,
+    indices: Vec<u32>,
+    items: Vec<clutter::Run>,
+    shown: Vec<bool>,
+}
+
+fn hide_clutter(
+    sim: Res<Sim>,
+    mut seen: Local<(Vec<(Vec2, f32)>, usize)>,
+    mut chunks: Query<&mut ClutterChunk>,
+    mut meshes: ResMut<Assets<Mesh>>,
+) {
+    if chunks.iter_mut().any(|c| c.is_added()) {
+        *seen = Default::default();
+    }
+    let now = covers(&sim);
+    if now == *seen {
+        return;
+    }
+    for mut chunk in &mut chunks {
+        let shown: Vec<bool> = chunk.items.iter().map(|&(at, r, _)| !hidden(&sim, &now.0, at, r)).collect();
+        if shown == chunk.shown {
+            continue;
+        }
+        let indices: Vec<u32> = chunk
+            .items
+            .iter()
+            .zip(&shown)
+            .filter(|(_, show)| **show)
+            .flat_map(|((_, _, run), _)| chunk.indices[run.clone()].iter().copied())
+            .collect();
+        if let Some(mut mesh) = meshes.get_mut(&chunk.mesh) {
+            mesh.insert_indices(Indices::U32(indices));
+        }
+        chunk.shown = shown;
+    }
+    *seen = now;
 }
 
 /// Darkness drawn over the playable ground: unexplored, explored but not seen, and visible.
@@ -224,7 +290,25 @@ impl Road {
     fn distance(&self, p: Vec2) -> f32 {
         (0..=48).map(|i| self.point(i as f32 / 48.0).distance(p)).fold(f32::MAX, f32::min)
     }
+
+    /// Unit vector to the left of the direction of travel at `t`.
+    fn normal(&self, t: f32) -> Vec2 {
+        let along = (self.ctrl - self.a) * (1.0 - t) + (self.b - self.ctrl) * t;
+        along.perp().normalize_or(Vec2::Y)
+    }
+
+    fn length(&self) -> f32 {
+        (0..16).map(|i| self.point(i as f32 / 16.0).distance(self.point((i + 1) as f32 / 16.0))).sum()
+    }
 }
+
+/// How far from its start a base's buildings reach, footprint included. Measured: the AI's
+/// buildings away from resources, sampled every 10 s over 12-minute Normal and Easy matches
+/// (three faction pairings) on Crater Ridge, Tournament Desert and Red Rock, reach a median
+/// 34-36 units and 52-60 for nine in ten.
+const BASE_SITE: f32 = 52.0;
+/// Around a supply pile or oil well, the ground its supply center or derrick takes.
+const RESOURCE_SITE: f32 = 20.0;
 
 struct Layout<'a> {
     width: f32,
@@ -233,8 +317,18 @@ struct Layout<'a> {
     /// Command centers and resources: kept clear of trees and rocks. Small on purpose, so groves
     /// grow right up to the bases; later buildings hide what they cover (`clear_under_buildings`).
     clearings: Vec<(Vec2, f32)>,
-    /// Trampled dirt painted around bases and resources; larger than the scenery clearings.
+    /// Trampled dirt painted around bases, resources and civilian buildings; larger than the
+    /// scenery clearings.
     pads: Vec<(Vec2, f32)>,
+    /// Where buildings will stand: each base's build area, the ground beside each resource and
+    /// every civilian building's footprint. Clutter stays off all of it, so it never pokes
+    /// through a building or a base layout.
+    sites: Vec<(Vec2, f32)>,
+    /// Start positions, and each resource (true for an oil well).
+    bases: Vec<Vec2>,
+    resources: Vec<(Vec2, bool)>,
+    /// From the map's name: the same map always gets the same scatter, clutter and marks.
+    seed: u32,
     /// The original map when one is imported: heights, painted ground and water come from it.
     source: Option<&'a MapFile>,
 }
@@ -279,10 +373,20 @@ impl<'a> Layout<'a> {
         // Just past the command center (radius 10); everything else at a base is built later.
         let mut clearings: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, 13.0)).collect();
         let mut pads: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, 38.0)).collect();
-        for &(pos, _) in map.supply_piles.iter().chain(map.oil_wells.iter()) {
+        let mut sites: Vec<(Vec2, f32)> = spawns.iter().map(|&s| (s, BASE_SITE)).collect();
+        let mut resources = Vec::new();
+        for (k, &(pos, _)) in map.supply_piles.iter().chain(map.oil_wells.iter()).enumerate() {
             clearings.push((p(pos), 8.0));
             pads.push((p(pos), 16.0));
+            sites.push((p(pos), RESOURCE_SITE));
+            resources.push((p(pos), k >= map.supply_piles.len()));
         }
+        for &(pos, r) in &map.civilians {
+            pads.push((p(pos), r.to_f32() + 4.0));
+            sites.push((p(pos), r.to_f32() + 2.0));
+        }
+        // FNV-1a of the name.
+        let seed = map.name.bytes().fold(0x811c_9dc5u32, |h, b| (h ^ b as u32).wrapping_mul(0x0100_0193));
         match &sim.source {
             // The original road network, as straight segments between road points.
             Some(file) => {
@@ -319,6 +423,10 @@ impl<'a> Layout<'a> {
             roads,
             clearings,
             pads,
+            sites,
+            bases: spawns,
+            resources,
+            seed,
             source: sim.source.as_ref(),
         }
     }
@@ -402,6 +510,12 @@ impl<'a> Layout<'a> {
         let big = fbm(p.x * 0.012, p.y * 0.012, 4, 21);
         let fine = fbm(p.x * 0.25, p.y * 0.25, 3, 31);
         let grass = ochre.lerp(olive, ((fbm(p.x * 0.04, p.y * 0.04, 3, 41) - 0.35) * 1.6).clamp(0.0, 0.7));
+        // Mid-scale breakup, as in the footage, where the savanna is never one flat tone
+        // between the roads: bleached straw patches and darker, denser grass, 10-30 units across.
+        let straw = Vec3::new(0.62, 0.50, 0.30);
+        let bleach = ((fbm(p.x * 0.05, p.y * 0.05, 3, 43) - 0.55) * 3.0).clamp(0.0, 0.4);
+        let dense = ((0.42 - fbm(p.x * 0.07, p.y * 0.07, 3, 47)) * 3.0).clamp(0.0, 0.45);
+        let grass = grass.lerp(straw, bleach).lerp(olive * 0.85, dense);
         let mut c = match self.ground_mix(p) {
             // Mostly dry grass, with large dirt patches and fine breakup.
             None => {
@@ -425,16 +539,19 @@ impl<'a> Layout<'a> {
                 base.lerp(rock * (0.7 + fine * 0.6), cliff)
             }
         };
-        // Worn road: bright centre, soft shoulders, tyre-track streaks.
+        // Worn road: bright centre, soft shoulders; the tyre ruts are marks (`marks.rs`).
         let d = self.road(p);
         let edge = fbm(p.x * 0.15, p.y * 0.15, 2, 51) * 3.0;
         let on_road = (1.0 - ((d - ROAD_HALF_WIDTH + edge) / 4.0)).clamp(0.0, 1.0);
-        let tracks = if (d - 2.5).abs() < 0.6 { 0.06 } else { 0.0 };
-        c = c.lerp(road - Vec3::splat(tracks), on_road);
-        // Only a soft trampled patch at the very centre of a base; grass runs up to the buildings.
+        c = c.lerp(road, on_road);
+        // Bare compacted dirt under the bases and around resources, as the footage's bases
+        // stand on: solid out to about half the pad, then breaking up raggedly into the grass.
+        let compacted = Vec3::new(0.60, 0.46, 0.29);
+        let rag = fbm(p.x * 0.08, p.y * 0.08, 3, 53) - 0.5;
         for &(centre, r) in &self.pads {
-            let k = (1.0 - (centre.distance(p) - r * 0.25) / (r * 0.35)).clamp(0.0, 1.0);
-            c = c.lerp(dirt * 1.05, k * 0.45);
+            let x = centre.distance(p) / r + rag * 0.5;
+            let k = ((0.9 - x) / 0.4).clamp(0.0, 1.0);
+            c = c.lerp(compacted * (0.94 + fine * 0.12), k * 0.8);
         }
         // Water: wet dark shore and deep blue-green beds; the surface is a separate mesh.
         if let Some(depth) = self.water_depth(p) {
@@ -617,11 +734,25 @@ pub(crate) fn mip_chain(image: &mut Image) {
     image.data = Some(data);
     image.texture_descriptor.mip_level_count = levels;
 }
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 enum Prop {
     Acacia,
     Bush,
+    Palm,
     Rock,
+}
+
+impl Prop {
+    /// How far from its trunk (per unit of scale) clutter keeps: past the bush's lumps, or
+    /// clear of a tree's trunk and the low ends of a palm's fronds.
+    fn clearance(self) -> f32 {
+        match self {
+            Prop::Acacia => 1.5,
+            Prop::Bush => 1.8,
+            Prop::Palm => 2.0,
+            Prop::Rock => 2.4,
+        }
+    }
 }
 
 /// Scenery placement. Imported maps keep the original positions of every tree, bush and rock
@@ -655,6 +786,29 @@ fn scatter(layout: &Layout) -> Vec<(Prop, Vec2, f32, f32)> {
             }
         }
     }
+    // Road-side clumps, as along the footage's roads: a few bushes, and now and then a palm
+    // or two, on a shoulder every 20 units or so.
+    for (k, road) in layout.roads.iter().enumerate() {
+        let steps = (road.length() / 20.0) as u32;
+        for n in 0..steps {
+            let r = |q: u32| hash(k as i32, n as i32, layout.seed.wrapping_add(1600 + q));
+            if r(0) > 0.55 {
+                continue;
+            }
+            let t = (n as f32 + r(1)) / steps as f32;
+            let side = if r(2) < 0.5 { -1.0 } else { 1.0 };
+            let centre = road.point(t) + road.normal(t) * side * (ROAD_HALF_WIDTH + 5.0 + r(3) * 4.0);
+            let palms = if r(4) < 0.4 { 1 + (r(5) * 2.0) as u32 } else { 0 };
+            for m in 0..palms + 2 + (r(6) * 2.0) as u32 {
+                let p = centre + Vec2::from_angle(r(10 + m) * std::f32::consts::TAU) * r(20 + m) * 3.5;
+                let (kind, scale) =
+                    if m < palms { (Prop::Palm, 0.8 + r(30 + m) * 0.3) } else { (Prop::Bush, 0.6 + r(30 + m) * 0.45) };
+                if layout.is_clear(p, 2.0) && out.iter().all(|&(_, q, _, _)| q.distance(p) > 1.8) {
+                    out.push((kind, p, scale, r(40 + m) * std::f32::consts::TAU));
+                }
+            }
+        }
+    }
     out
 }
 
@@ -662,7 +816,9 @@ fn imported_scenery(layout: &Layout, file: &MapFile) -> Vec<(Prop, Vec2, f32, f3
     let mut out = Vec::new();
     for (k, o) in file.objects.iter().enumerate() {
         let template = o.name.rsplit('/').next().unwrap_or(&o.name).to_ascii_lowercase();
-        let kind = if template.starts_with("tree") || template.starts_with("cinetree") {
+        let kind = if template.starts_with("treepalm") {
+            Prop::Palm
+        } else if template.starts_with("tree") || template.starts_with("cinetree") {
             Prop::Acacia
         } else if template.starts_with("bush") {
             Prop::Bush
@@ -689,17 +845,26 @@ fn spawn_terrain(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut ground_materials: ResMut<Assets<GroundMaterial>>,
     mut images: ResMut<Assets<Image>>,
     sim: Res<Sim>,
 ) {
     let layout = Layout::from_sim(&sim);
-    let ground = materials.add(StandardMaterial {
-        // Detail is stored at /1.3 to fit 8 bits; scale back so it averages out near 1.
-        base_color: Color::linear_rgb(1.3, 1.3, 1.3),
-        base_color_texture: Some(images.add(detail_image())),
-        perceptual_roughness: 0.95,
-        reflectance: 0.2,
-        ..default()
+    let props = scatter(&layout);
+    let trees = props.iter().map(|&(kind, p, scale, _)| (p, kind.clearance() * scale)).collect();
+    let items = clutter::place(&layout, trees);
+    let wrecks: Vec<Vec2> = items.iter().filter(|i| i.kind == Clutter::Wreck).map(|i| i.at).collect();
+    let marks = images.add(marks::paint(&layout, &wrecks).image());
+    let ground = ground_materials.add(GroundMaterial {
+        base: StandardMaterial {
+            // Detail is stored at /1.3 to fit 8 bits; scale back so it averages out near 1.
+            base_color: Color::linear_rgb(1.3, 1.3, 1.3),
+            base_color_texture: Some(images.add(detail_image())),
+            perceptual_roughness: 0.95,
+            reflectance: 0.2,
+            ..default()
+        },
+        extension: marks::GroundMarks::new(&layout, marks),
     });
     commands.spawn((crate::menu::MatchEntity, Mesh3d(meshes.add(ground_mesh(&layout))), MeshMaterial3d(ground)));
     let (sheet, points) = fog_sheet(&layout);
@@ -735,114 +900,65 @@ fn spawn_terrain(
         }
     }
 
-    let mat = |m: &mut Assets<StandardMaterial>, c: Color| {
-        m.add(StandardMaterial { base_color: c, perceptual_roughness: 0.9, ..default() })
+    // Trees, bushes and clutter carry their colours per vertex, under one white material each.
+    let painted = |m: &mut Assets<StandardMaterial>, roughness: f32| {
+        m.add(StandardMaterial { base_color: Color::WHITE, perceptual_roughness: roughness, ..default() })
     };
-    let canopy = mat(&mut materials, Color::srgb(0.20, 0.24, 0.09));
-    let canopy_dark = mat(&mut materials, Color::srgb(0.13, 0.16, 0.07));
-    let canopy_dry = mat(&mut materials, Color::srgb(0.30, 0.28, 0.12));
-    let bark = mat(&mut materials, Color::srgb(0.22, 0.17, 0.12));
-    let stone = mat(&mut materials, Color::srgb(0.30, 0.27, 0.23));
-    let trunk = meshes.add(Cylinder::new(0.25, 1.0));
-    let crown = meshes.add(Sphere::new(1.0).mesh().ico(2).unwrap());
+    let foliage = painted(&mut materials, 0.9);
+    let junk = painted(&mut materials, 0.8);
+    let stone = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.30, 0.27, 0.23),
+        perceptual_roughness: 0.9,
+        ..default()
+    });
     let rock = meshes.add(Sphere::new(1.0).mesh().ico(1).unwrap());
+    let prims = Prims::new();
+    // A handful of prebuilt shapes per kind, each one mesh, so a map's thousands of trees
+    // draw a few meshes many times (an acacia was 16 meshes before).
+    let mut variants = |build: fn(&Prims, u32) -> Mesh, n: u32| -> Vec<Handle<Mesh>> {
+        (0..n).map(|v| meshes.add(build(&prims, v))).collect()
+    };
+    let acacias = variants(shapes::acacia, 8);
+    let bushes = variants(shapes::bush, 6);
+    let palms = variants(shapes::palm, 6);
 
-    for (kind, p, scale, yaw) in scatter(&layout) {
+    for (kind, p, scale, yaw) in props {
         let base = Vec3::new(p.x, layout.height(p), p.y);
-        let rot = Quat::from_rotation_y(yaw);
-        match kind {
-            Prop::Acacia => {
-                let h = 5.0 * scale;
-                // Per-tree variety from its position, so neighbours differ.
-                let r = |k: u32| hash(p.x as i32, p.y as i32, 1300 + k);
-                let lean = Vec3::new(r(0) - 0.5, 0.0, r(1) - 0.5) * 0.5;
-                commands
-                    .spawn((
-                        crate::menu::MatchEntity,
-                        // Reach of the farthest crown lump: limb tip (~1.7) + spread (~1.9) + lump
-                        // radius (~1.1), all × scale. Buildings clear props by this radius.
-                        Scenery { at: p, radius: 4.7 * scale },
-                        Transform::from_translation(base).with_rotation(rot),
-                        Visibility::default(),
-                    ))
-                    .with_children(|t| {
-                        // A slender trunk forking into two leaning limbs.
-                        let fork = Vec3::Y * h * 0.55 + lean * h * 0.3;
-                        let limb = |t: &mut ChildSpawnerCommands, from: Vec3, to: Vec3, thick: f32| {
-                            let d = to - from;
-                            t.spawn((
-                                Mesh3d(trunk.clone()),
-                                MeshMaterial3d(bark.clone()),
-                                Transform::from_translation((from + to) / 2.0)
-                                    .with_rotation(Quat::from_rotation_arc(Vec3::Y, d.normalize()))
-                                    .with_scale(Vec3::new(thick, d.length(), thick)),
-                            ));
-                        };
-                        limb(t, Vec3::ZERO, fork, 1.0);
-                        let tips = [Vec3::new(1.6, h, 0.6) * scale, Vec3::new(-1.3, h * 0.92, -0.9) * scale];
-                        for tip in tips {
-                            limb(t, fork, tip + lean, 0.6);
-                        }
-                        // Each crown is a flat cluster of small lumps around a limb tip: a broken,
-                        // leafy edge instead of a solid plate, with lit and shaded lumps mixed.
-                        let crowns = [(tips[0] + lean, 2.4), (tips[1] + lean, 2.0)];
-                        for (c, (at, spread)) in crowns.into_iter().enumerate() {
-                            for k in 0..6u32 {
-                                let n = c as u32 * 16 + k;
-                                let a = k as f32 / 6.0 * std::f32::consts::TAU + r(10 + n);
-                                let d = if k == 0 { 0.0 } else { spread * (0.45 + r(30 + n) * 0.35) };
-                                let off = Vec3::new(a.cos() * d, (r(50 + n) - 0.5) * 0.5, a.sin() * d) * scale;
-                                let s = (1.1 + r(70 + n) * 0.6) * scale;
-                                let m = match (k + c as u32) % 3 {
-                                    0 => &canopy,
-                                    1 => &canopy_dark,
-                                    _ => &canopy_dry,
-                                };
-                                t.spawn((
-                                    Mesh3d(crown.clone()),
-                                    MeshMaterial3d(m.clone()),
-                                    Transform::from_translation(at + off).with_scale(Vec3::new(s, s * 0.32, s)),
-                                ));
-                            }
-                        }
-                    });
-            }
-            Prop::Bush => {
-                // A low clump of two or three lumps rather than one ball.
-                let r = |k: u32| hash(p.x as i32, p.y as i32, 1400 + k);
-                commands
-                    .spawn((
-                        crate::menu::MatchEntity,
-                        Scenery { at: p, radius: 1.8 * scale },
-                        Transform::from_translation(base).with_rotation(rot),
-                        Visibility::default(),
-                    ))
-                    .with_children(|t| {
-                        for k in 0..3 {
-                            let m = if k == 1 { &canopy } else { &canopy_dark };
-                            let off = Vec3::new(r(k * 2) - 0.5, 0.0, r(k * 2 + 1) - 0.5) * 1.8 * scale;
-                            let s = (0.7 + r(10 + k) * 0.6) * scale;
-                            t.spawn((
-                                Mesh3d(crown.clone()),
-                                MeshMaterial3d(m.clone()),
-                                Transform::from_translation(off + Vec3::Y * 0.45 * s)
-                                    .with_scale(Vec3::new(1.1, 0.75, 1.0) * s),
-                            ));
-                        }
-                    });
-            }
-            Prop::Rock => {
-                commands.spawn((
-                    crate::menu::MatchEntity,
-                    Scenery { at: p, radius: 2.4 * scale },
-                    Mesh3d(rock.clone()),
-                    MeshMaterial3d(stone.clone()),
-                    Transform::from_translation(base + Vec3::Y * 0.3)
-                        .with_rotation(rot)
-                        .with_scale(Vec3::new(2.4, 1.2, 1.8) * scale),
-                ));
-            }
-        }
+        // Per-tree variant from its position, so neighbours differ.
+        let r = hash(p.x as i32, p.y as i32, 1300);
+        let pick = |set: &[Handle<Mesh>]| set[(r * set.len() as f32) as usize % set.len()].clone();
+        let (mesh, material, radius, tf) = match kind {
+            // Reach of the farthest crown lump: limb tip (~1.7) + spread (~1.9) + lump radius
+            // (~1.1), all × scale. Buildings clear props by this radius.
+            Prop::Acacia => (pick(&acacias), &foliage, 4.7, Transform::from_translation(base)),
+            Prop::Bush => (pick(&bushes), &foliage, 1.8, Transform::from_translation(base)),
+            // A frond's length plus the trunk's bend.
+            Prop::Palm => (pick(&palms), &foliage, 4.5, Transform::from_translation(base)),
+            Prop::Rock => (
+                rock.clone(),
+                &stone,
+                2.4,
+                Transform::from_translation(base + Vec3::Y * 0.3).with_scale(Vec3::new(2.4, 1.2, 1.8)),
+            ),
+        };
+        commands.spawn((
+            crate::menu::MatchEntity,
+            Scenery { at: p, radius: radius * scale },
+            Mesh3d(mesh),
+            MeshMaterial3d(material.clone()),
+            Transform { rotation: Quat::from_rotation_y(yaw), scale: tf.scale * scale, ..tf },
+        ));
+    }
+    for (shape, runs) in clutter::chunks(&layout, &prims, &items) {
+        let indices = shape.indices.clone();
+        let mesh = meshes.add(shape.mesh());
+        let shown = vec![true; runs.len()];
+        commands.spawn((
+            crate::menu::MatchEntity,
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(junk.clone()),
+            ClutterChunk { mesh, indices, items: runs, shown },
+        ));
     }
     // Boulders along the ridges: dark rocky rims at the map edges.
     let (w, h) = (layout.width, layout.height);
@@ -1275,5 +1391,118 @@ mod tests {
                 assert!((-0.01..=w + 0.01).contains(&p[0]) && (-0.01..=h + 0.01).contains(&p[2]), "{p:?}");
             }
         }
+    }
+
+    /// Clutter, on the built-in map and on imported ones (Tournament Desert has civilian
+    /// buildings and props of its own, Red Rock is the densest): plenty of it, and none on a
+    /// base's build area, a resource's site or a civilian building, on a road (only an
+    /// imported map's own cars and street lamps may be), in water, or on a tree.
+    #[test]
+    fn clutter_stays_off_bases_resources_buildings_and_roads() {
+        for sim in [built_in(), imported("zh:Tournament Desert"), imported("zh:Red Rock")] {
+            let layout = Layout::from_sim(&sim);
+            let props = scatter(&layout);
+            let trees: Vec<(Vec2, f32)> = props.iter().map(|&(k, p, s, _)| (p, k.clearance() * s)).collect();
+            let items = clutter::place(&layout, trees.clone());
+            let name = &sim.world.map.name;
+            assert!(items.len() > 80, "{name}: {} items", items.len());
+            let map = &sim.world.map;
+            let p = |v: g2_sim::Vec2| Vec2::new(v.x.to_f32(), v.y.to_f32());
+            for item in &items {
+                for (at, r) in item.footprint() {
+                    for &s in &map.spawns {
+                        assert!(p(s).distance(at) > BASE_SITE + r, "{name}: {item:?} in a base");
+                    }
+                    for &(res, _) in map.supply_piles.iter().chain(&map.oil_wells) {
+                        assert!(p(res).distance(at) > RESOURCE_SITE + r, "{name}: {item:?} at a resource");
+                    }
+                    for &(c, cr) in &map.civilians {
+                        assert!(p(c).distance(at) > cr.to_f32() + r, "{name}: {item:?} in a building");
+                    }
+                    let parked = layout.source.is_some() && item.kind.kerbside();
+                    assert!(parked || layout.road(at) > ROAD_HALF_WIDTH, "{name}: {item:?} on a road");
+                    assert!(layout.water_depth(at).is_none() && layout.border(at) < 0.05, "{name}: {item:?}");
+                    assert!(trees.iter().all(|&(t, tr)| t.distance(at) > tr + r), "{name}: {item:?} on a tree");
+                }
+            }
+        }
+    }
+
+    /// The same map always gets the same scenery, clutter and ground marks; a different map
+    /// gets different ones.
+    #[test]
+    fn scenery_clutter_and_marks_are_deterministic_per_map() {
+        let build = |sim: &Sim| {
+            let layout = Layout::from_sim(sim);
+            let props = scatter(&layout);
+            let trees = props.iter().map(|&(k, p, s, _)| (p, k.clearance() * s)).collect();
+            let items = clutter::place(&layout, trees);
+            let marks = marks::paint(&layout, &[]).image().data.unwrap();
+            (props, items, marks)
+        };
+        let (a, b) = (build(&built_in()), build(&built_in()));
+        assert!(a.0 == b.0 && a.1 == b.1 && a.2 == b.2, "Crater Ridge built twice differs");
+        let (c, d) = (build(&imported("zh:Tournament Desert")), build(&imported("zh:Tournament Desert")));
+        assert!(c.0 == d.0 && c.1 == d.1 && c.2 == d.2, "Tournament Desert built twice differs");
+        assert_ne!(a.1, c.1);
+    }
+
+    /// Roads carry tyre ruts and the open field scorch marks, both inside the texture.
+    #[test]
+    fn marks_wear_the_roads_and_scorch_the_field() {
+        let sim = built_in();
+        let layout = Layout::from_sim(&sim);
+        let m = marks::paint(&layout, &[]);
+        let mut rutted = 0;
+        let road = &layout.roads[0];
+        for i in 0..200 {
+            let t = i as f32 / 200.0;
+            // Across the road at this point: some texel is darkened by a rut.
+            if (-40..=40).any(|k| m.at(road.point(t) + road.normal(t) * k as f32 * 0.1).0 < 0.9) {
+                rutted += 1;
+            }
+        }
+        assert!(rutted > 100, "ruts at {rutted} of 200 points along the main road");
+        let scorched = (0..400 * 400).filter(|n| m.at(Vec2::new((n % 400) as f32, (n / 400) as f32)).2 > 0.5).count();
+        assert!(scorched > 100, "{scorched} scorched units");
+        for &(c, r) in &layout.sites {
+            assert!(m.at(c).2 < 0.01 && m.at(c + Vec2::X * r * 0.5).2 < 0.01, "a scorch in a base or resource site");
+        }
+    }
+
+    /// A clutter chunk drops an item's triangles when a building covers it, and gets them back
+    /// when the building is gone.
+    #[test]
+    fn clutter_under_a_building_is_hidden_and_returns() {
+        let mut sim = built_in();
+        sim.fog = false;
+        let cc = sim.world.entities().find(|e| sim.world.rules.def(e.def).is_building()).unwrap();
+        let (at, owner) = (to_world(cc.pos).xz(), cc.owner.unwrap());
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default())).init_asset::<Mesh>();
+        app.insert_resource(sim).add_systems(Update, hide_clutter);
+        let prims = Prims::new();
+        let mut shape = shapes::Shape::default();
+        let mut items = Vec::new();
+        for (k, p) in [at, at + Vec2::splat(200.0)].into_iter().enumerate() {
+            let start = shape.indices.len();
+            let place = bevy::math::Affine3A::from_translation(Vec3::new(p.x, 0.0, p.y));
+            shapes::clutter(&prims, &mut shape, Clutter::Crates(2), place, k as u32);
+            items.push((p, Clutter::Crates(2).radius(), start..shape.indices.len()));
+        }
+        let (all, far) = (shape.indices.len(), items[1].2.len());
+        let indices = shape.indices.clone();
+        let mesh = app.world_mut().resource_mut::<Assets<Mesh>>().add(shape.mesh());
+        app.world_mut().spawn(ClutterChunk { mesh: mesh.clone(), indices, shown: vec![true; 2], items });
+        let count = |app: &App| app.world().resource::<Assets<Mesh>>().get(&mesh).unwrap().indices().unwrap().len();
+        app.update();
+        assert_eq!(count(&app), far, "only the far crates are drawn");
+        let mut sim = app.world_mut().resource_mut::<Sim>();
+        sim.world.submit(owner, g2_sim::CommandKind::Surrender);
+        for _ in 0..10 {
+            sim.world.step();
+        }
+        app.update();
+        assert_eq!(count(&app), all, "both drawn once the base is gone");
     }
 }

@@ -23,10 +23,14 @@ Reference footage (local-only):
 
 ## Terrain (`terrain.rs`)
 
-- Dry savanna in warm brown-ochre (the footage's open ground measures about sRGB 135/103/62), with olive only in scattered patches, bare dirt, dark speckle and noise at several scales. A tiling procedural detail texture adds dark tuft clumps, lit blades and grit, so the ground is busy at every zoom.
-- Light worn **dirt roads** link the bases, supply piles and oil wells, so the economy routes are readable at a glance.
-- Acacias standing apart: a slender forked trunk under flat clumped crowns of lit and shaded lumps, casting wide broken shadows; low multi-lump bushes; boulders. Kept off roads, base areas and resources.
+- Dry savanna in warm brown-ochre (the footage's open ground measures about sRGB 135/103/62), with olive only in scattered patches, bleached straw and denser darker grass 10-30 units across, bare dirt, dark speckle and noise at several scales. A tiling procedural detail texture adds dark tuft clumps, lit blades and grit, so the ground is busy at every zoom.
+- Light worn **dirt roads** link the bases, supply piles and oil wells, so the economy routes are readable at a glance. Each carries two lanes of **tyre ruts**, wandering and worn away in places, about 15% darker than the road as in the footage.
+- **Ground marks** (`terrain/marks.rs`): a map-wide texture (3 texels per unit) the ground's shader applies before lighting, for what the 2-3-unit ground grid can't hold: the ruts, pale paired **vehicle tracks** across the grass from the bases out and to their resources, and ragged near-black **scorch** patches (the footage's sRGB 30/15/2 on 102/75/23) in the open field and under every wreck. Bases and resource sites stay unscorched.
+- **Compacted dirt pads** under every base, resource and civilian building: solid out to about half the pad, then breaking up raggedly into the grass, as the footage's bases stand on bare ground.
+- Acacias standing apart: a slender forked trunk under flat clumped crowns of lit and shaded lumps, casting wide broken shadows; low multi-lump bushes; boulders. **Palms** (a ringed curving trunk, drooping fronds, a few dead ones hanging) and bush clumps line the roads' shoulders; an imported map's palms stay palms, at their original positions. Kept off roads, base areas and resources.
+- **Clutter** (`terrain/clutter.rs`, shapes in `terrain/shapes.rs`): crates, oil drums, sandbag walls, old fences, utility poles, tyre stacks, rubble piles and civilian cars (dusty, or burnt out on their rims). Poles line long roads and junk sits on their shoulders; sandbags, supplies and fences ring each base just outside its build area (52 units: nine in ten of the AI's buildings stand within it); drums stand by oil wells, crates by supply piles; rubble, tyres and wrecks dot the field. Sizes come from the retail props' INI geometry. An imported map keeps its own civilian props (fences, drums, crates, sandbags, cars, street lamps) where its author put them. Clutter is visual only and never stands on a base's build area, a resource site, a civilian building, a road (an imported map's own cars and lamps excepted), water, a slope or a tree; buildings and unexplored ground hide it like the other scenery.
 - Dark rocky ridges frame the playable area; the vignette takes the edges to black.
+- Cost: trees are a few prebuilt single-mesh variants each (8 acacias, 6 bushes, 6 palms) and a 48-unit patch's clutter is one merged mesh, so scenery is about one mesh per tree. Headless at 1280×720 on the build host's integrated Radeon (shared with other jobs, so ±2 ms between runs): Crater Ridge base view 6,287 → 2,825 meshes, 8.4 → 8.6 ms a frame; battle view 8.7 → 10.6 ms; Tournament Desert base 6,734 → 2,964 meshes, 8.9 → 8.8 ms; Red Rock, the densest map, 37,115 → 5,242 meshes, 9.8 → 10.3 ms (with the imported alpha 35,823 → 3,950 meshes, 11.2-12.8 → 10.6-13.6 ms over three runs each).
 
 ## Models (`models.rs`)
 
@@ -99,4 +103,3 @@ Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6
 - Artillery barrels can't pitch: parts have no pitch rotation (`models.rs` `Part`).
 - Surface wear repeats every 4 m and doesn't follow a building's shape: no rust under ledges or grime gathered in corners, as hand-painted textures have (`surface.rs`).
 - The HUD is our plain panels, not the footage's framed style (`hud.rs`).
-- Each acacia is 16 meshes; merging a crown's lumps into one prebuilt mesh would cut that to 4 if tree-dense maps prove slow (`terrain.rs`).
