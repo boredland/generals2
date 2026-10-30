@@ -216,7 +216,7 @@ pub struct World {
     pub(crate) players: Vec<Player>,
     pub(crate) entities: Entities,
     pending: Vec<Command>,
-    events: Vec<Event>,
+    pub(crate) events: Vec<Event>,
     pub(crate) ai: Vec<Option<Ai>>,
     /// Every human command processed so far, in processing order. AI commands are excluded:
     /// replays re-run the AI, so recording them would apply them twice.
@@ -225,7 +225,7 @@ pub struct World {
     checkpoints: Vec<(u32, u64)>,
     /// Blocked cells, rebuilt whenever the set of statics changes. A pure function of hashed
     /// state (static entities and the map), so it needs no hash of its own.
-    nav: crate::nav::Grid,
+    pub(crate) nav: crate::nav::Grid,
     /// Hash of the statics the grid was built from; when it changes, every unit replans.
     nav_key: u64,
     /// `(shooter, shooter's owner, target, damage, splash)` fired this tick, applied together
@@ -240,11 +240,28 @@ pub struct World {
     /// units act, so targeting only ever uses what is visible at the start of the tick.
     pub(crate) visions: Vec<crate::fog::Vision>,
     /// Per-player totals (index = player), output only.
-    stats: Vec<Stats>,
+    pub(crate) stats: Vec<Stats>,
+    /// The mission in play (`crate::mission`); `None` in a skirmish.
+    pub(crate) mission: Option<crate::mission::Run>,
 }
 
 impl World {
     pub fn new(setup: &MatchSetup, rules: &'static Rules) -> World {
+        World::start(setup, rules, None)
+    }
+
+    /// A match of mission `id`: the mission places every side's forces instead of the
+    /// skirmish's command center and constructor at each start. `setup` seats its sides
+    /// (`Mission::setup`).
+    pub fn with_mission(setup: &MatchSetup, rules: &'static Rules, id: crate::mission::MissionId) -> World {
+        World::start(setup, rules, Some(id))
+    }
+
+    /// `new` or `with_mission`, as `mission` says: how replays start their match.
+    pub fn start(setup: &MatchSetup, rules: &'static Rules, mission: Option<crate::mission::MissionId>) -> World {
+        if let Some(id) = mission {
+            assert!(rules.missions[id.0 as usize].seats(&setup.players), "the setup doesn't seat mission {}", id.0);
+        }
         assert!(setup.players.len() <= setup.map.spawns.len(), "map has fewer spawns than players");
         for p in &setup.players {
             if let Some(g) = p.general {
@@ -281,6 +298,7 @@ impl World {
             visions: setup.players.iter().map(|_| crate::fog::Vision::new(setup.map.width, setup.map.height)).collect(),
             stats: vec![Stats::default(); setup.players.len()],
             checkpoints: Vec::new(),
+            mission: None,
         };
         for &(pos, amount) in &setup.map.supply_piles {
             world.spawn_neutral(rules.supply_pile(), pos, amount);
@@ -313,8 +331,9 @@ impl World {
                 rank: p.rank,
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
-            // The onslaught has no base: its waves are all there is of it.
-            if p.ai == Some(AiLevel::Onslaught) {
+            // The onslaught has no base: its waves are all there is of it. A mission places
+            // every side's forces itself.
+            if p.ai == Some(AiLevel::Onslaught) || mission.is_some() {
                 continue;
             }
             let spawn = setup.map.spawns[i];
@@ -325,6 +344,9 @@ impl World {
             let offset = offset * world.toward_centre(spawn);
             world.spawn_owned(dozer, owner, world.map.clamp(spawn + Vec2::new(Fx::ZERO, offset)));
             debug_assert!(world.entities.get(cc_id).is_some());
+        }
+        if let Some(id) = mission {
+            world.start_mission(id);
         }
         world.update_power();
         world.update_vision();
@@ -366,7 +388,7 @@ impl World {
     }
 
     /// At full health, including any health upgrades the owner already researched.
-    fn spawn_owned(&mut self, def: DefId, owner: PlayerId, pos: Vec2) -> EntityId {
+    pub(crate) fn spawn_owned(&mut self, def: DefId, owner: PlayerId, pos: Vec2) -> EntityId {
         let hp = self.max_hp_of(Some(owner), def);
         self.entities.spawn(|id| Entity { owner: Some(owner), ..Self::blank_entity(id, def, hp, pos) })
     }
@@ -430,6 +452,7 @@ impl World {
             length_ticks: self.tick,
             commands: self.log.clone(),
             hashes: self.checkpoints.clone(),
+            mission: self.mission.as_ref().map(|m| m.id),
         }
     }
 
@@ -442,8 +465,12 @@ impl World {
         self.ai.get(player.0 as usize).and_then(|a| a.as_ref()).map(|a| a.level())
     }
 
-    /// The last player standing, once every other player is defeated.
+    /// The last player standing, once every other player is defeated. In a mission, the
+    /// mission's result decides: the player (slot 0) on a win, the first enemy on a loss.
     pub fn winner(&self) -> Option<PlayerId> {
+        if let Some(run) = &self.mission {
+            return run.result.map(|won| if won { crate::mission::PLAYER } else { PlayerId(1) });
+        }
         let mut alive = self.players.iter().enumerate().filter(|(_, p)| !p.defeated);
         let (first, _) = alive.next()?;
         alive.next().is_none().then_some(PlayerId(first as u8))
@@ -695,6 +722,8 @@ impl World {
         // After separation, so a transport pushed aside carries its passengers along.
         self.carry_occupants();
         self.update_derricks();
+        // Before defeat, so the side a mission's result puts out goes in the same tick.
+        self.update_mission();
         // Defeat first, so an eliminated player's remaining units go in the same tick.
         self.update_defeat();
         self.cleanup();
@@ -2526,6 +2555,11 @@ impl World {
     }
 
     fn update_defeat(&mut self) {
+        // A mission's sides leave through its result (`update_mission`), not by losing
+        // their base: a mission may start a side without one.
+        if self.mission.is_some() {
+            return;
+        }
         for (i, p) in self.players.iter_mut().enumerate() {
             if p.defeated {
                 continue;
@@ -2607,7 +2641,7 @@ fn in_band(w: crate::defs::Weapon, gap: Fx, flying: bool) -> bool {
 /// The `k`-th point of a fixed ring pattern around a centre, `r` away along one of eight
 /// directions (diagonals at 7/10 of `r` on each axis, near enough to a circle); later laps are
 /// farther out. Exact in fixed point, so every machine places the same points.
-fn around(k: u32, r: Fx) -> Vec2 {
+pub(crate) fn around(k: u32, r: Fx) -> Vec2 {
     const DIRS: [(i64, i64); 8] = [(10, 0), (7, 7), (0, 10), (-7, 7), (-10, 0), (-7, -7), (0, -10), (7, -7)];
     let (x, y) = DIRS[k as usize % 8];
     let lap = Fx::from_int(1 + k as i64 / 8);

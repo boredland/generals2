@@ -9,6 +9,9 @@
 //!             to a path holding {}, e.g. clip/{}.png); `--hover-slot N` shows the tooltip of
 //!             build-grid button N (from 0) as if hovered, for the `--select`ed building
 //!
+//! `--mission N|KEY` plays a mission of the campaign (1-4, or its key, e.g. `first-light`) on
+//! its own map and forces instead of a skirmish; with `--spectate` (or `--screenshot`) the
+//! Normal AI plays your side.
 //! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
 //! mode: no base, waves on a schedule, and you win by outlasting the last one.
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
@@ -44,6 +47,7 @@ mod importer;
 mod input;
 mod look;
 mod menu;
+mod mission_hud;
 mod models;
 mod movie;
 mod net;
@@ -100,6 +104,8 @@ struct Args {
     host: Option<u16>,
     /// Join the network match hosted at this `host:port`.
     join: Option<String>,
+    /// Play this mission of the campaign instead of a skirmish.
+    mission: Option<g2_sim::MissionId>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -127,6 +133,7 @@ fn parse_args() -> Result<Args, String> {
         size: (1280, 720),
         host: None,
         join: None,
+        mission: None,
     };
     let mut it = std::env::args().skip(1);
     let faction = |v: Option<String>| match v.as_deref() {
@@ -147,6 +154,7 @@ fn parse_args() -> Result<Args, String> {
                 | "--spectate"
                 | "--host"
                 | "--join"
+                | "--mission"
         );
         match flag.as_str() {
             "--map" => a.map = it.next().ok_or("--map needs a name")?,
@@ -178,9 +186,10 @@ fn parse_args() -> Result<Args, String> {
                     Some("generals") => menu::Screen::Generals,
                     Some("alpha") => menu::Screen::Alpha,
                     Some("options") => menu::Screen::Options,
+                    Some("missions") => menu::Screen::Missions,
                     other => {
                         return Err(format!(
-                            "--menu expects main|controls|setup|pause|end|generals|alpha|options, got {other:?}"
+                            "--menu expects main|controls|setup|pause|end|generals|alpha|options|missions, got {other:?}"
                         ));
                     }
                 })
@@ -227,6 +236,18 @@ fn parse_args() -> Result<Args, String> {
             }
             "--host" => a.host = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--host needs a port")?),
             "--join" => a.join = Some(it.next().ok_or("--join needs host:port")?),
+            "--mission" => {
+                let v = it.next().ok_or("--mission needs a number or a key")?;
+                let rules = g2_rules::rules();
+                let id = match v.parse::<usize>() {
+                    Ok(n) if (1..=rules.missions.len()).contains(&n) => g2_sim::MissionId(n as u16 - 1),
+                    _ => rules.find_mission(&v).ok_or_else(|| {
+                        let keys: Vec<&str> = rules.missions.iter().map(|m| m.key).collect();
+                        format!("--mission expects 1-{} or one of {}, got {v:?}", rules.missions.len(), keys.join(", "))
+                    })?,
+                };
+                a.mission = Some(id);
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -235,6 +256,9 @@ fn parse_args() -> Result<Args, String> {
     }
     if a.host.is_some() && a.join.is_some() {
         return Err("--host or --join, not both".into());
+    }
+    if a.mission.is_some() && (a.host.is_some() || a.join.is_some()) {
+        return Err("--mission is played alone: no --host or --join".into());
     }
     Ok(a)
 }
@@ -261,7 +285,13 @@ fn main() -> AppExit {
     };
     match args.screenshot {
         Some(path) => {
-            let ui = menu::Ui { screen: args.menu.unwrap_or(menu::Screen::Match), paused: args.paused, ..default() };
+            let ui = menu::Ui {
+                screen: args.menu.unwrap_or(menu::Screen::Match),
+                paused: args.paused,
+                mission: args.mission.unwrap_or(g2_sim::MissionId(0)),
+                in_mission: args.mission.is_some(),
+                ..default()
+            };
             let capture = headless::Capture {
                 ticks: args.ticks,
                 path,
@@ -276,12 +306,17 @@ fn main() -> AppExit {
             };
             headless::run(sim, ui, capture)
         }
-        None => windowed(sim, args.record, args.direct),
+        None => windowed(sim, args.record, args.direct, args.mission),
     }
 }
 
 fn load_sim(args: &Args) -> Result<Sim, String> {
     let spectate = args.spectate || args.screenshot.is_some();
+    if let Some(id) = args.mission {
+        let mut sim = Sim::mission(id, spectate.then_some(g2_sim::AiLevel::Normal), args.seed)?;
+        sim.fog = !args.reveal;
+        return Ok(sim);
+    }
     let source = if args.map.contains(':') {
         Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &args.map)?)
     } else {
@@ -352,7 +387,7 @@ fn join_sim(addr: &str, reveal: bool) -> Result<Sim, String> {
         None => g2_maps::resolve(&setup.map)?,
     };
     setup.check(&map, g2_rules::rules())?;
-    if setup.players.len() != 2 || setup.players.iter().any(|p| p.ai.is_some()) {
+    if setup.players.len() != 2 || setup.players.iter().any(|p| p.ai.is_some()) || setup.mission.is_some() {
         return Err("the host offered a match that isn't two players against each other".into());
     }
     net::accept(&link);
@@ -363,9 +398,10 @@ fn join_sim(addr: &str, reveal: bool) -> Result<Sim, String> {
     Ok(sim)
 }
 
-fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
+fn windowed(mut sim: Sim, record: Option<String>, direct: bool, mission: Option<g2_sim::MissionId>) -> AppExit {
     // The menu covers a frozen battlefield; a flag-chosen match starts running at once.
-    let mut ui = menu::Ui::default();
+    let mut ui =
+        menu::Ui { in_mission: mission.is_some(), mission: mission.unwrap_or(g2_sim::MissionId(0)), ..default() };
     if direct {
         ui.screen = menu::Screen::Match;
     } else {
@@ -387,7 +423,7 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
         camera::CameraPlugin,
         input::InputPlugin,
         hud::HudPlugin,
-        (tooltip::TooltipPlugin, alerts::AlertsPlugin),
+        (tooltip::TooltipPlugin, alerts::AlertsPlugin, mission_hud::MissionHudPlugin),
         audio::SoundPlugin,
         movie::MoviePlugin,
         rig::RigPlugin,
@@ -525,6 +561,7 @@ mod headless {
             crate::hud::HudPlugin,
             crate::tooltip::TooltipPlugin,
             crate::alerts::AlertsPlugin,
+            crate::mission_hud::MissionHudPlugin,
             crate::rig::RigPlugin,
         ))
         .insert_resource(hits)
