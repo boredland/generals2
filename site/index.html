@@ -140,13 +140,13 @@
 <main>
   <section class="hero">
     <video src="media/hero.webm" poster="media/hero-poster.jpg" autoplay muted loop playsinline aria-hidden="true"></video>
-    <img src="media/hero-poster.jpg" alt="APA and GLA units fighting on Crater Ridge at 4:41, the game's camera without its HUD">
+    <img src="media/hero-poster.jpg" alt="APA and GLA armies fighting on Crater Ridge at 5:27, smoke and toxin over the field, the game's camera without its HUD">
     <div class="veil"></div>
     <div class="copy">
       <h1>Open RTS <span class="glow">— hold the line.</span></h1>
       <p>A deterministic real-time strategy engine written in Rust, in the spirit of the cancelled
-        <em>Generals 2</em>. Pick one of fourteen generals, build an economy, field an army, and take on the AI
-        or the Onslaught's waves on the original Generals and Zero Hour maps.</p>
+        <em>Generals 2</em>. Pick one of fourteen generals, build an economy, field an army, and take on the AI,
+        the Onslaught's waves alone or with a friend, or a short campaign, on the original Generals and Zero Hour maps.</p>
       <div class="cta">
         <a class="btn" href="https://github.com/boredland/generals2/releases/latest">Download</a>
         <a class="btn ghost" href="https://github.com/boredland/generals2">Browse the source</a>
@@ -169,20 +169,26 @@
       <h3>Skirmish, your way</h3>
       <p>Up to <b>8 players</b> (human or AI) on <b>85 original Generals and Zero Hour
         maps</b> plus a built-in one, bridges included. Pick factions, generals, starting credits,
-        fog and seed in the setup screen.</p>
+        fog and seed in the setup screen, or play a four-mission <b>campaign</b>.</p>
+    </div>
+    <div class="card">
+      <h3>Together or against each other</h3>
+      <p>A <b>LAN lobby</b> finds games on your network; play head to head, or side by side in
+        <b>co-op Onslaught</b> against scheduled waves. Allies share vision and win together.</p>
     </div>
     <div class="card">
       <h3>Two AI levels</h3>
       <p><b>Easy</b> sends waves. <b>Normal</b> weighs every fight before it attacks, retreats
         units that are losing, defends against raiders and expands when its supply runs low.
-        Across all 86 skirmish maps Normal beats Easy 1,256 to 283 (9 of 1,548 matches past 20 minutes).</p>
+        Across all 86 skirmish maps Normal beats Easy 1,401 to 143 (4 of 1,548 matches past 20 minutes).</p>
     </div>
     <div class="card">
       <h3>Three factions</h3>
       <p>EU, APA and GLA, each with its own economy shape, armour and general, combat units
         from rifles to artillery and helicopters, a base defence, upgrades and veteran ranks.
         Infantry garrison buildings; GLA rebels hide in stealth. Numbers come from the 2013
-        alpha's own data where the archive has it; the rest are labelled placeholders.</p>
+        alpha's own data where the archive has it; the rest are placeholders tuned by measured
+        matches, so every faction wins 43–57% of them.</p>
     </div>
     <div class="card">
       <h3>Fog of war</h3>
@@ -197,8 +203,9 @@
     </div>
     <div class="card">
       <h3>The field remembers</h3>
-      <p>Tracers, shell arcs, blasts and wreckage where things died. All decoration only: the
-        sim never depends on a single pixel of it.</p>
+      <p>Tracers, shell arcs and blasts; damaged buildings smoke and burn, wrecks smoulder, tanks
+        leave tread marks and dust, and shells leave craters. All decoration only: the sim never
+        depends on a single pixel of it.</p>
     </div>
   </div>
 
@@ -209,15 +216,23 @@
     game draws its own procedural models and HUD instead.</p>
   <figure class="clip">
     <video src="media/gameplay.webm" poster="media/gameplay-poster.jpg" controls muted loop playsinline preload="metadata"></video>
-    <figcaption>Thirty seconds of play at real speed (APA against GLA, Normal AIs, 4:40 to 5:10 on
-      Crater Ridge): tanks trade fire in the field, then the fighting moves to the APA base.
-      Rendered headless, one sim tick a frame
+    <figcaption>Thirty seconds of play at real speed (APA against GLA, Normal AIs, 5:20 to 5:50 on
+      Crater Ridge, the busiest half minute of the match): the armies trade fire, burning wrecks
+      smoulder and shells leave craters. Rendered headless, one sim tick a frame
       (<code>--frames 900</code>), the camera drifting after the fighting.</figcaption>
   </figure>
   <div class="shots">
     <figure>
-      <img src="img/menu.png" alt="The Open RTS main menu over an APA base: a gold-framed column of Skirmish, Onslaught, Generals, Controls and Exit Game">
+      <img src="img/menu.png" alt="The Open RTS main menu over an APA base: a gold-framed column of Missions, Skirmish, Onslaught, Network, Generals, 2013 Alpha, Options, Controls and Exit Game">
       <figcaption>The main menu, laid out as Command &amp; Conquer: Generals&#39; own, over the frozen battlefield.</figcaption>
+    </figure>
+    <figure>
+      <img src="img/missions.png" alt="The Missions page: four missions down the left, First Light open and the rest locked, its briefing, map preview and objectives">
+      <figcaption>The campaign: four missions, each unlocked by winning the one before, with briefing, map and objectives.</figcaption>
+    </figure>
+    <figure>
+      <img src="img/lobby.png" alt="The LAN lobby: player name, the players and games lists, host port, side, and Host, Join and Direct Connect">
+      <figcaption>The LAN lobby, as Generals&#39;: games on your network show up in the list; host one, join one or connect to an address.</figcaption>
     </figure>
     <figure>
       <img src="img/setup.png" alt="The skirmish page: eight player rows with colour, faction and general, the map preview, starting cash, fog and seed">
@@ -228,8 +243,8 @@
       <figcaption>The Generals screen: fourteen generals, each with a rank you earn by playing and eight perks to buy and slot.</figcaption>
     </figure>
     <figure>
-      <img src="img/base.png" alt="A GLA base under General Junkyard with the war factory selected: six vehicles in the build grid, the Ambush power in the power list">
-      <figcaption>GLA under Junkyard: the war factory trains the Shrapnel Tank in place of the Scorpion, plus the Battle Bus and Black Market Artillery. G arms the general's Ambush, F2 the GPS Scrambler.</figcaption>
+      <img src="img/base.png" alt="A GLA base under General Junkyard at three minutes with the war factory selected: six vehicles in the build tray, the Ambush power counting down">
+      <figcaption>GLA under Junkyard at three minutes: the war factory trains the Shrapnel Tank in place of the Scorpion, plus the Battle Bus and Black Market Artillery. G arms the general's Ambush, F2 the GPS Scrambler.</figcaption>
     </figure>
     <figure>
       <img src="img/battle.png" alt="An EU base under General Cutting Edge at four minutes, war factory selected: Aegis, Assault APC and Heavy Assault Laser in the build grid">
@@ -254,8 +269,11 @@
     <tr><th>Select</th><td>Left click / drag; Shift adds to the selection</td></tr>
     <tr><th>Orders</th><td>Right click: enemy → attack, supply → gather, foundation → help build, ground → move.
       Ctrl + right click attack-moves.</td></tr>
-    <tr><th>Build</th><td>Constructor selected: <b>1–9</b> or a build-grid button picks a building, click places, Esc cancels</td></tr>
-    <tr><th>Produce</th><td>Building selected: <b>1–9</b> or a build-grid button queues units, Backspace cancels the last</td></tr>
+    <tr><th>Build</th><td>Constructor selected: click a build-grid button, click places, Esc cancels</td></tr>
+    <tr><th>Produce</th><td>Building selected: click a build-grid button to queue units, Backspace cancels the last;
+      right click the ground sets a rally point</td></tr>
+    <tr><th>Groups</th><td>Ctrl + <b>1–0</b> makes a control group, <b>1–0</b> selects it (twice: jump to it);
+      <b>Z</b> selects everything on screen, <b>X</b> every unit of the selected kinds, <b>V</b> jumps to the latest alert</td></tr>
     <tr><th>Camera</th><td>WASD / arrows / screen edge to pan, wheel zooms, Q/E rotates, click the minimap to jump</td></tr>
     <tr><th>Game</th><td>Space pauses, <b>+ / −</b> game speed, Esc opens the menu, F10 surrenders, <b>M</b> mutes</td></tr>
     <tr><th>Extras</th><td><b>G</b> arms your general's power, <b>F1–F3</b> your faction's support powers (click to aim), <b>T</b> deploys artillery, <b>E</b> empties a garrison, <b>Tab</b> selects the next collector</td></tr>
@@ -280,21 +298,22 @@ cargo test --workspace</pre>
   <div class="grid">
     <div class="card">
       <h3>What is in</h3>
-      <p>Skirmish vs AI or another player over the network, an Onslaught mode of scheduled waves, on 86 maps (85 original, one built in), walkable bridges, three
+      <p>Skirmish vs AI or another player over the network or a LAN lobby, co-op and solo Onslaught
+        modes of scheduled waves, a four-mission campaign, on 86 maps (85 original, one built in), walkable bridges, three
         factions, fog, stealth, artillery, helicopters, garrisons, upgrades, veterancy, synthesized sound,
         fourteen generals with their own units, modifiers, an active power that grows with rank and a perk tree you rank up by playing, airstrikes
         and spy sorties flown by jets that anti-air can shoot down, replays, a deterministic core.</p>
     </div>
     <div class="card">
       <h3>What is not</h3>
-      <p>A network lobby, campaign, units' special abilities, art of its own beyond procedural shapes; the
-        alpha's music and voices only play from an imported copy. The balance is
-        unexamined by design — the numbers are sourced, not tuned.</p>
+      <p>Internet play, units' special abilities, art of its own beyond procedural shapes and
+        textures; the alpha's music and voices only play from an imported copy. The balance is
+        measured, not designed: placeholders are tuned until the AIs' matches come out even.</p>
     </div>
     <div class="card">
       <h3>The 2013 alpha</h3>
       <p>If you have the closed-alpha client, the main menu's <b>2013 Alpha</b> page (pick its <code>CnC.exe</code>) decodes it into
-        a cache on your machine; the game then uses its models, sounds, voices, music and HUD.
+        a cache on your machine; the game then uses its models, animations, sounds, voices, music and HUD.
         Neither the alpha nor the cache is in this repository or the downloads; the screenshots
         above show it.</p>
     </div>
