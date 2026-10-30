@@ -4,6 +4,7 @@
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [--coop] [match flags as above]   two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
+//!   g2-client [match flags] --teams 1122                    a team game: a team digit (0-4) per player
 //!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera closest|close|medium|far] [--select DEF] [--hover-slot N] [--movie-frame N] [--frames N] [--no-hud] [...]
 //!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
 //!             to a path holding {}, e.g. clip/{}.png); `--hover-slot N` shows the tooltip of
@@ -114,6 +115,9 @@ struct Args {
     join: Option<String>,
     /// Play this mission of the campaign instead of a skirmish.
     mission: Option<g2_sim::MissionId>,
+    /// One team per player (0: none), as many players as digits: a team game with the skirmish
+    /// page's teams. Players past the second play the next faction in turn, at the `--ai` level.
+    teams: Option<Vec<u8>>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -144,6 +148,7 @@ fn parse_args() -> Result<Args, String> {
         coop: false,
         join: None,
         mission: None,
+        teams: None,
     };
     let mut it = std::env::args().skip(1);
     let faction = |v: Option<String>| match v.as_deref() {
@@ -166,6 +171,7 @@ fn parse_args() -> Result<Args, String> {
                 | "--join"
                 | "--mission"
                 | "--coop"
+                | "--teams"
         );
         match flag.as_str() {
             "--map" => a.map = it.next().ok_or("--map needs a name")?,
@@ -266,6 +272,18 @@ fn parse_args() -> Result<Args, String> {
                 a.mission = Some(id);
             }
             "--coop" => a.coop = true,
+            "--teams" => {
+                let v = it.next().ok_or("--teams needs a team digit per player, e.g. 1122")?;
+                let teams: Option<Vec<u8>> =
+                    v.chars().map(|c| c.to_digit(10).filter(|&d| d <= 4).map(|d| d as u8)).collect();
+                match teams {
+                    Some(t) if t.len() >= 2 && t[0] != 0 && t.iter().all(|&x| x == t[0]) => {
+                        return Err("--teams puts every player on one team: there is no one to fight".into());
+                    }
+                    Some(t) if t.len() >= 2 => a.teams = Some(t),
+                    _ => return Err(format!("--teams expects a team (0-4) per player, two or more, got {v:?}")),
+                }
+            }
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -277,6 +295,9 @@ fn parse_args() -> Result<Args, String> {
     }
     if a.mission.is_some() && (a.host.is_some() || a.join.is_some()) {
         return Err("--mission is played alone: no --host or --join".into());
+    }
+    if a.teams.is_some() && (a.coop || a.host.is_some() || a.join.is_some() || a.mission.is_some()) {
+        return Err("--teams sets a skirmish: no --coop, --host, --join or --mission".into());
     }
     // Headless, `--coop` sets the hosted game the `--menu netgame` page shows.
     if a.coop && a.host.is_none() && a.screenshot.is_none() {
@@ -307,13 +328,26 @@ fn main() -> AppExit {
     };
     match args.screenshot {
         Some(path) => {
-            let ui = menu::Ui {
+            let mut ui = menu::Ui {
                 screen: args.menu.unwrap_or(menu::Screen::Match),
                 paused: args.paused,
                 mission: args.mission.unwrap_or(g2_sim::MissionId(0)),
                 in_mission: args.mission.is_some(),
                 ..default()
             };
+            // The skirmish page shows the match the flags set up, the local seat as the player's.
+            if args.mission.is_none() {
+                ui.config.map = args.map.clone();
+                ui.config.seed = args.seed;
+                ui.config.slots = (sim.setup.players.iter().enumerate())
+                    .map(|(i, p)| menu::Slot {
+                        faction: p.faction,
+                        general: p.general,
+                        ai: p.ai.filter(|_| i != 0),
+                        team: p.team,
+                    })
+                    .collect();
+            }
             // The lobby pages show a live session: the lobby looking on this network, the game
             // options a game hosted here (on any free port, unlisted) with its seat open.
             let net = match ui.screen {
@@ -404,6 +438,20 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
         players[0].team = net::COOP_TEAM;
         players[1].team = net::COOP_TEAM;
         players.push(net::waves(net::wave_faction(args.factions)));
+    }
+    if let Some(teams) = &args.teams {
+        if map.spawns.len() < teams.len() {
+            return Err(format!("{} has {} starts for {} players", args.map, map.spawns.len(), teams.len()));
+        }
+        for i in 2..teams.len() {
+            let faction = g2_sim::Faction::ALL[(args.factions[1] as usize + i - 1) % g2_sim::Faction::ALL.len()];
+            let perks = g2_sim::ai::ai_perks(g2_rules::rules(), None, args.ai);
+            let (ai, rank) = (Some(args.ai), g2_sim::ai::ai_rank(args.ai));
+            players.push(PlayerSetup { faction, starting_credits: 5_000, ai, general: None, perks, rank, team: 0 });
+        }
+        for (p, &team) in players.iter_mut().zip(teams) {
+            p.team = team;
+        }
     }
     let mut sim = Sim::new(map, source, args.seed, players);
     sim.fog = !args.reveal;

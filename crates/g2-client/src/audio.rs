@@ -37,7 +37,12 @@ impl Plugin for SoundPlugin {
             .init_resource::<Muted>()
             .add_systems(Startup, load_sounds)
             // Before the menu applies its queued actions, so each one is heard as a click.
-            .add_systems(Update, (toggle_mute, play_cues, speak, play_music).chain().before(crate::menu::MenuSet));
+            .add_systems(
+                Update,
+                (toggle_mute.run_if(not(crate::menu::typing)), play_cues, speak, play_music)
+                    .chain()
+                    .before(crate::menu::MenuSet),
+            );
     }
 }
 
@@ -1041,5 +1046,71 @@ mod tests {
         let fresh = Sim::new(crater_ridge(), None, 4, Sim::players([Faction::Eu, Faction::Gla], false));
         crate::menu::swap_world(app.world_mut(), fresh);
         assert!(app.world().resource::<crate::sim::Heard>().0.is_empty(), "the swap dropped the old match's cues");
+    }
+
+    /// Letters typed into a lobby field go to the field alone: 'm' doesn't mute and 'g' doesn't
+    /// arm the general's power (ready, so it would). Once typing ends, M mutes; in the match, G
+    /// arms. Keys arrive as the window sends them, through bevy's input plugin.
+    #[test]
+    fn typing_in_a_field_takes_the_keys() {
+        use crate::menu::{Act, MenuPlugin, Pending, Screen, Ui};
+        use bevy::input::ButtonState;
+        use bevy::input::keyboard::{Key, KeyboardInput};
+        let mut players = Sim::players([Faction::Eu, Faction::Gla], false);
+        players[0].general = Some(g2_rules::generals::BULLDOG);
+        let mut sim = Sim::new(crater_ridge(), None, 3, players);
+        for _ in 0..g2_rules::rules().general(g2_rules::generals::BULLDOG).power.unwrap().first_ticks {
+            sim.world.step();
+        }
+        sim.speed = 0;
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            bevy::audio::AudioPlugin::default(),
+            bevy::input::InputPlugin,
+        ))
+        .insert_resource(sim)
+        .init_resource::<crate::input::Selection>()
+        .init_resource::<crate::input::Placement>()
+        .init_resource::<crate::input::PowerAim>()
+        .init_resource::<crate::view::Mirror>()
+        .init_resource::<crate::settings::Settings>()
+        .init_resource::<crate::profile::Profile>()
+        .add_plugins((crate::sim::SimPlugin, MenuPlugin { blocking: true }, SoundPlugin))
+        .add_systems(Update, crate::input::keyboard.in_set(crate::input::InputSet).run_if(crate::menu::playing));
+        let key = |app: &mut App, code: KeyCode, logical: Key| {
+            for state in [ButtonState::Pressed, ButtonState::Released] {
+                let window = Entity::PLACEHOLDER;
+                let (key_code, logical_key) = (code, logical.clone());
+                app.world_mut().write_message(KeyboardInput {
+                    key_code,
+                    logical_key,
+                    state,
+                    text: None,
+                    repeat: false,
+                    window,
+                });
+                app.update();
+            }
+        };
+        let letter = |app: &mut App, code: KeyCode, c: &str| key(app, code, Key::Character(c.into()));
+        let state = |app: &App| {
+            let w = app.world();
+            (w.resource::<Muted>().0, w.resource::<crate::input::PowerAim>().0, w.resource::<Ui>().lobby.name.clone())
+        };
+        app.world_mut().resource_mut::<Ui>().screen = Screen::Lobby;
+        app.world_mut().resource_mut::<Pending>().0.push(Act::Type(Some(crate::lobby::Entry::Name)));
+        app.update();
+        app.world_mut().resource_mut::<Ui>().lobby.name.clear();
+        letter(&mut app, KeyCode::KeyM, "m");
+        letter(&mut app, KeyCode::KeyG, "g");
+        assert_eq!(state(&app), (false, None, "mg".to_owned()), "typed, not muted, not armed");
+        key(&mut app, KeyCode::Enter, Key::Enter);
+        letter(&mut app, KeyCode::KeyM, "m");
+        assert_eq!(state(&app), (true, None, "mg".to_owned()), "done typing: M mutes");
+        app.world_mut().resource_mut::<Ui>().screen = Screen::Match;
+        letter(&mut app, KeyCode::KeyG, "g");
+        assert_eq!(state(&app).1, Some(0), "in the match, G arms the ready power");
     }
 }

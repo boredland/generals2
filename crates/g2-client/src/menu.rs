@@ -65,8 +65,10 @@ pub enum Act {
     /// A skirmish row's Player cell: an AI steps Easy, Normal, Onslaught, then the last row
     /// closes (two players always stay); an Open row adds an AI player.
     CyclePlayer(usize),
-    CycleFaction(usize),
-    CycleGeneral(usize),
+    /// A skirmish row's Faction cell: the next faction, or general of it, as the LAN page's.
+    CycleSide(usize),
+    /// A skirmish row's Team cell: no team, then teams 1 to 4.
+    CycleTeam(usize),
     /// Opens the map selection over the skirmish page, or closes it keeping the pick (ACCEPT).
     ToggleMapList,
     /// Closes the map selection and restores the map from before it opened (its BACK).
@@ -174,6 +176,8 @@ pub struct Slot {
     pub faction: Faction,
     pub general: Option<GeneralId>,
     pub ai: Option<AiLevel>,
+    /// `PlayerSetup::team`: 0 alone, else allied with every slot of the same team.
+    pub team: u8,
 }
 
 /// Everything the setup screen edits, and everything a match needs to start.
@@ -191,8 +195,8 @@ impl Default for SkirmishConfig {
         SkirmishConfig {
             map: "Crater Ridge".to_owned(),
             slots: vec![
-                Slot { faction: Faction::Eu, general: None, ai: None },
-                Slot { faction: Faction::Gla, general: None, ai: Some(AiLevel::Normal) },
+                Slot { faction: Faction::Eu, general: None, ai: None, team: 0 },
+                Slot { faction: Faction::Gla, general: None, ai: Some(AiLevel::Normal), team: 0 },
             ],
             credits: 5_000,
             fog: true,
@@ -204,8 +208,11 @@ impl Default for SkirmishConfig {
 impl SkirmishConfig {
     /// Builds the match this config describes. Slot 0 is the human player (`Sim::local`), who
     /// plays their general at `rank` with `perks` slotted (from their profile); AI slots pick
-    /// their own.
+    /// their own. Refused when every player is on one team: there would be no one to fight.
     pub fn build(&self, perks: &[PerkId], rank: u8) -> Result<Sim, String> {
+        if self.slots[0].team != 0 && self.slots.iter().all(|s| s.team == self.slots[0].team) {
+            return Err("Every player is on one team: there is no one to fight.".to_owned());
+        }
         let source = if self.map.contains(':') {
             Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &self.map)?)
         } else {
@@ -237,7 +244,7 @@ impl SkirmishConfig {
                     None if i == 0 && s.general.is_some() => rank,
                     None => 1,
                 },
-                team: 0,
+                team: s.team,
             })
             .collect();
         let mut sim = Sim::new(map, source, self.seed, players);
@@ -256,7 +263,7 @@ impl SkirmishConfig {
 
     fn add_slot(&mut self) {
         let faction = Faction::ALL[self.slots.len() % Faction::ALL.len()];
-        self.slots.push(Slot { faction, general: None, ai: Some(AiLevel::Normal) });
+        self.slots.push(Slot { faction, general: None, ai: Some(AiLevel::Normal), team: 0 });
     }
 }
 
@@ -273,6 +280,8 @@ pub struct Ui {
     pub shown_general: GeneralId,
     /// The last Generals screen refusal, shown until the next action there.
     pub refused: Option<Refused>,
+    /// Why START GAME was last refused on the skirmish page, shown until the next action.
+    pub start_refused: Option<String>,
     /// The experience the finished match earned, for the end screen; set once per match.
     pub earned: Option<(GeneralId, u32)>,
     /// The settings as they were when the options page opened, for BACK.
@@ -296,6 +305,7 @@ impl Default for Ui {
             map_select: None,
             shown_general: GeneralId(0),
             refused: None,
+            start_refused: None,
             earned: None,
             options_before: None,
             mission: g2_sim::MissionId(0),
@@ -319,9 +329,15 @@ struct MapList(Vec<g2_maps::SkirmishMap>);
 struct MapListChannel(std::sync::Mutex<mpsc::Receiver<Vec<g2_maps::SkirmishMap>>>);
 
 /// Whether gameplay input (orders, camera) is accepted: no menu covers the match. Tests that
-/// run without a menu count as playing.
+/// run without a menu count as playing. The lobby's text fields are on pages that cover it, so
+/// letters typed there never reach the game.
 pub fn playing(ui: Option<Res<Ui>>) -> bool {
     ui.is_none_or(|u| u.screen == Screen::Match && !u.paused)
+}
+
+/// Whether a lobby text field takes the keys, so the global keys (M mutes) leave them to it.
+pub fn typing(ui: Option<Res<Ui>>) -> bool {
+    ui.is_some_and(|u| u.lobby.typing.is_some())
 }
 
 /// True once per `MatchEpoch` bump, so scene systems run again after a world swap (and once at
@@ -508,6 +524,9 @@ fn apply(world: &mut World) {
 }
 
 fn apply_one(world: &mut World, act: Act) {
+    if world.resource::<Ui>().start_refused.is_some() {
+        world.resource_mut::<Ui>().start_refused = None;
+    }
     match act {
         Act::QuitGame => {
             world.write_message(AppExit::Success);
@@ -552,7 +571,7 @@ fn apply_one(world: &mut World, act: Act) {
                     ui.paused = false;
                     world.resource_mut::<Sim>().speed = 1;
                 }
-                Err(e) => error!("cannot start match: {e}"),
+                Err(e) => world.resource_mut::<Ui>().start_refused = Some(e),
             }
         }
         // Everything below only edits `Ui` and the live `Sim`. The two borrow the world
@@ -652,16 +671,14 @@ fn apply_one(world: &mut World, act: Act) {
                     }
                 }
             }
-            Act::CycleFaction(i) => {
+            Act::CycleSide(i) => {
                 if let Some(s) = world.resource_mut::<Ui>().config.slots.get_mut(i) {
-                    let f = s.faction as usize;
-                    s.faction = Faction::ALL[(f + 1) % Faction::ALL.len()];
-                    s.general = None;
+                    (s.faction, s.general) = crate::lobby::next_side(s.faction, s.general);
                 }
             }
-            Act::CycleGeneral(i) => {
+            Act::CycleTeam(i) => {
                 if let Some(s) = world.resource_mut::<Ui>().config.slots.get_mut(i) {
-                    s.general = next_general(s.faction, s.general);
+                    s.team = (s.team + 1) % (MAX_TEAMS + 1);
                 }
             }
             Act::ToggleMapList => {
@@ -835,6 +852,9 @@ const MAPS_PER_PAGE: usize = 12;
 
 /// Generals' skirmish page has eight player rows.
 const MAX_PLAYERS: usize = 8;
+
+/// Generals' Team combo holds no team and teams 1 to 4.
+const MAX_TEAMS: u8 = 4;
 
 fn map_list(world: &World) -> Option<&Vec<g2_maps::SkirmishMap>> {
     world.get_resource::<MapList>().map(|m| &m.0)
@@ -1465,7 +1485,7 @@ fn setup(
     let onslaught = ui.config.slots.iter().any(|s| s.ai == Some(AiLevel::Onslaught));
     page(c, kit, if onslaught { "ONSLAUGHT" } else { "SKIRMISH" });
     for (s, x0, x1) in
-        [("Players", 72.0, 216.0), ("Color", 224.0, 284.0), ("Faction", 292.0, 372.0), ("General", 380.0, 520.0)]
+        [("Players", 72.0, 216.0), ("Color", 224.0, 308.0), ("Faction", 316.0, 424.0), ("Team", 432.0, 544.0)]
     {
         heading(c, kit, s, rect(x0, 87.0, x1, 111.0));
     }
@@ -1479,11 +1499,10 @@ fn setup(
                     None => fixed(c, kit, "Player", at(72.0, 216.0), WHITE),
                     Some(level) => cell(c, kit, ai_name(level), Act::CyclePlayer(i), at(72.0, 216.0)),
                 }
-                frame(c, at(224.0, 284.0), Look::Cell.fill(false), RUST.with_alpha(0.6));
-                c.spawn((rect(229.0, y + 6.0, 279.0, y + 18.0), BackgroundColor(crate::models::TEAM_PALETTE[colour])));
-                cell(c, kit, faction_tag(slot.faction), Act::CycleFaction(i), at(292.0, 372.0));
-                let general = slot.general.map_or("No General", |g| rules.general(g).name);
-                cell(c, kit, general, Act::CycleGeneral(i), at(380.0, 520.0));
+                frame(c, at(224.0, 308.0), Look::Cell.fill(false), RUST.with_alpha(0.6));
+                c.spawn((rect(229.0, y + 6.0, 303.0, y + 18.0), BackgroundColor(crate::models::TEAM_PALETTE[colour])));
+                cell(c, kit, &side_name(slot.faction, slot.general, true), Act::CycleSide(i), at(316.0, 424.0));
+                cell(c, kit, &team_name(slot.team), Act::CycleTeam(i), at(432.0, 508.0));
             }
             None if i < starts => cell(c, kit, "Open", Act::CyclePlayer(i), at(72.0, 216.0)),
             None => fixed(c, kit, "Closed", at(72.0, 216.0), INK_OFF),
@@ -1534,8 +1553,8 @@ fn setup(
         "Onslaught: the enemy has no base. Ten waves of its army come at you, the first at 2:30, then one \
          every 75 seconds; outlast the last one."
     } else {
-        "Skirmish: destroy every enemy building and unit. Click an AI player to set it Easy, Normal or \
-         Onslaught; an Open seat adds one."
+        "Skirmish: destroy every enemy building and unit. Players on one team are allies and win \
+         together. Click an AI player to set it Easy, Normal or Onslaught; an Open seat adds one."
     };
     c.spawn(Node {
         flex_direction: FlexDirection::Column,
@@ -1550,6 +1569,9 @@ fn setup(
             GOLD,
             true,
         ));
+        if let Some(why) = &ui.start_refused {
+            info.spawn(kit.text(why, 13.0, INK_HOT, true));
+        }
         info.spawn(kit.text(mode, 12.0, WHITE, false));
     });
     button(c, kit, "START GAME", Act::Start, Look::Button, rect(94.0, 509.0, 268.0, 545.0), 16.0);
@@ -1617,6 +1639,11 @@ fn entry(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, e: crate::lobby::Entr
         BorderColor::all(if typing { GOLD } else { Look::Cell.edge(false) }),
     ))
     .with_child(kit.text(&text, 12.0, WHITE, false));
+}
+
+/// A Team cell, as Generals' combo: "-" for no team.
+fn team_name(team: u8) -> String {
+    if team == 0 { "-".to_owned() } else { format!("Team {team}") }
 }
 
 /// A side as the lobby lists it: the faction, or the general with its faction's tag. `short`
@@ -1770,8 +1797,7 @@ fn net_game(
         } else {
             fixed(c, kit, &side, at(323.0, 431.0), WHITE);
         }
-        let team = setup.players[i].team;
-        fixed(c, kit, &(if team == 0 { "-".to_owned() } else { format!("Team {team}") }), at(439.0, 515.0), WHITE);
+        fixed(c, kit, &team_name(setup.players[i].team), at(439.0, 515.0), WHITE);
     }
     // The map: preview, name, the host's buttons.
     heading(c, kit, "Map Preview", rect(547.0, 94.0, 711.0, 118.0));
@@ -2261,7 +2287,7 @@ mod tests {
         let old_scene = app.world_mut().spawn(MatchEntity).id();
         act(&mut app, Act::OpenSetup);
         assert_eq!(screen(&app), Screen::Setup);
-        act(&mut app, Act::CycleFaction(1));
+        act(&mut app, Act::CycleSide(1));
         act(&mut app, Act::CycleCredits);
         act(&mut app, Act::Start);
         assert_eq!(screen(&app), Screen::Match);
@@ -2269,7 +2295,8 @@ mod tests {
         assert!(w.get_entity(old_scene).is_err(), "the old scene is gone");
         assert!(w.get_entity(window).is_ok(), "the window survives a swap");
         let sim = w.resource::<Sim>();
-        assert_eq!(sim.world.players()[1].faction, Faction::Eu, "GLA cycles on to EU (Faction::ALL wraps)");
+        let first_gla = next_general(Faction::Gla, None);
+        assert_eq!((sim.world.players()[1].faction, sim.world.players()[1].general), (Faction::Gla, first_gla));
         assert_eq!(sim.world.player(PlayerId(0)).credits, 10_000, "credits from the setup screen");
         assert_eq!(sim.world.tick(), 0, "a fresh world");
         assert_eq!(sim.speed, 1);
@@ -2311,8 +2338,8 @@ mod tests {
     }
 
     /// Setup edits respect the map: seats stay within its starts and at least two, the
-    /// player's own row has no AI level, an AI steps Easy, Normal, Onslaught and back, and a
-    /// general only fits its own faction.
+    /// player's own row has no AI level, an AI steps Easy, Normal, Onslaught and back, a
+    /// general only fits its own faction, and a Team cell steps no team, 1 to 4, and back.
     #[test]
     fn setup_edits_stay_valid() {
         let (mut app, _) = app();
@@ -2330,12 +2357,26 @@ mod tests {
             .collect();
         let (easy, normal, onslaught) = (Some(AiLevel::Easy), Some(AiLevel::Normal), Some(AiLevel::Onslaught));
         assert_eq!(levels, [onslaught, easy, normal, onslaught], "two players stay: Onslaught wraps to Easy");
-        act(&mut app, Act::CycleGeneral(0));
-        let cfg = slots(&app);
-        let g = cfg[0].general.expect("EU has a general");
-        assert_eq!(g2_rules::rules().general(g).faction, cfg[0].faction);
-        act(&mut app, Act::CycleFaction(0));
-        assert_eq!(slots(&app)[0].general, None, "a new faction drops the general");
+        // The Faction cell steps through each faction and then its generals, as the LAN page's.
+        let mut generals = Vec::new();
+        loop {
+            act(&mut app, Act::CycleSide(0));
+            match slots(&app)[0].clone() {
+                Slot { faction: Faction::Eu, general: Some(g), .. } => generals.push(g),
+                s => {
+                    assert_eq!((s.faction, s.general), (Faction::Apa, None), "EU's generals, then APA");
+                    break;
+                }
+            }
+        }
+        assert!(!generals.is_empty() && generals.iter().all(|&g| g2_rules::rules().general(g).faction == Faction::Eu));
+        let teams: Vec<u8> = (0..5)
+            .map(|_| {
+                act(&mut app, Act::CycleTeam(1));
+                slots(&app)[1].team
+            })
+            .collect();
+        assert_eq!(teams, [1, 2, 3, 4, 0], "the Team cell steps 1-4 and back to none");
     }
 
     /// A many-start map takes more players through its Open seats, the last one closes again
@@ -2367,6 +2408,37 @@ mod tests {
         assert_eq!(config(&app).slots.len(), 3, "the last seat closes after Onslaught");
         act(&mut app, Act::Start);
         assert_eq!(app.world().resource::<Sim>().world.players().len(), 3);
+    }
+
+    /// Teams set on the skirmish page play as set: a 2v2 starts with them, and a match with
+    /// every player on one team is refused (shown, nothing starts) until a team changes.
+    #[test]
+    fn teams_reach_the_match_and_one_team_alone_is_refused() {
+        let (mut app, _) = app();
+        let maps = g2_maps::skirmish_maps(&g2_maps::vendored_root());
+        let i = maps.iter().position(|m| m.name == "gen:Tournament Tundra").expect("listed");
+        act(&mut app, Act::OpenSetup);
+        act(&mut app, Act::ToggleMapList);
+        act(&mut app, Act::MapPick(i));
+        act(&mut app, Act::ToggleMapList);
+        act(&mut app, Act::CyclePlayer(2));
+        act(&mut app, Act::CyclePlayer(3));
+        for seat in 0..4 {
+            act(&mut app, Act::CycleTeam(seat));
+        }
+        act(&mut app, Act::Start);
+        assert_eq!(screen(&app), Screen::Setup, "four allies have no one to fight");
+        assert!(app.world().resource::<Ui>().start_refused.is_some(), "and the page says why");
+        assert_eq!(app.world().resource::<Sim>().world.players().len(), 2, "the old world stays");
+        for seat in [2, 3] {
+            act(&mut app, Act::CycleTeam(seat));
+        }
+        assert!(app.world().resource::<Ui>().start_refused.is_none(), "the next action clears it");
+        act(&mut app, Act::Start);
+        assert_eq!(screen(&app), Screen::Match);
+        let w = &app.world().resource::<Sim>().world;
+        assert_eq!(w.players().iter().map(|p| p.team).collect::<Vec<_>>(), [1, 1, 2, 2]);
+        assert!(w.allied(PlayerId(0), PlayerId(1)) && !w.allied(PlayerId(1), PlayerId(2)));
     }
 
     /// Orders and camera input are accepted only while a match runs unpaused.
@@ -2465,8 +2537,8 @@ mod tests {
             profile.slot(BULLDOG, BD_PROTECTOR_I).unwrap();
         }
         let xp = app.world().resource::<Profile>().progress(BULLDOG).xp;
-        act(&mut app, Act::CycleGeneral(0));
-        act(&mut app, Act::CycleGeneral(1));
+        act(&mut app, Act::CycleSide(0));
+        act(&mut app, Act::CycleSide(1));
         act(&mut app, Act::Start);
         let w = &app.world().resource::<Sim>().world;
         assert_eq!(w.player(PlayerId(0)).perks, vec![BD_PROTECTOR_I]);
