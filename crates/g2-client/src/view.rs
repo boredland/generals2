@@ -101,6 +101,10 @@ impl From<Slot> for SlotKey {
     }
 }
 
+/// The view's frame systems, so others (`rig.rs`) can run after the mirror is in sync.
+#[derive(SystemSet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ViewSet;
+
 pub struct ViewPlugin;
 
 impl Plugin for ViewPlugin {
@@ -120,6 +124,7 @@ impl Plugin for ViewPlugin {
                 sync_clouds,
             )
                 .chain()
+                .in_set(ViewSet)
                 .after(crate::menu::MenuSet),
         );
     }

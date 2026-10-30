@@ -44,6 +44,30 @@ impl Cache {
         self.0.join(format!("models/{asset}.glb")).is_file().then(|| (format!("models/{asset}.glb"), b))
     }
 
+    /// The clips of the model drawn for `def`, from the import's `animations/` (see
+    /// `g2_frostbite::import`): the skeleton's clip file in the `alpha` asset source and
+    /// every clip as (index in that file, seconds, root-motion travel, name). `None` when
+    /// the model has no animated skeleton (or the import predates animations).
+    pub fn clips(&self, def: &Def) -> Option<(String, Vec<ClipInfo>)> {
+        let model = format!("_rts/art/{}", model_for(def.name)?);
+        let index = std::fs::read_to_string(self.0.join("animations/index.txt")).ok()?;
+        let skeleton = index.lines().find_map(|l| l.strip_prefix(&model)?.strip_prefix(' '))?;
+        let list = std::fs::read_to_string(self.0.join(format!("animations/{skeleton}.txt"))).ok()?;
+        let clips = list
+            .lines()
+            .filter_map(|l| {
+                let mut it = l.splitn(4, ' ');
+                Some(ClipInfo {
+                    index: it.next()?.parse().ok()?,
+                    seconds: it.next()?.parse().ok()?,
+                    travel: it.next()?.parse().ok()?,
+                    name: it.next()?.to_owned(),
+                })
+            })
+            .collect();
+        Some((format!("animations/{skeleton}.glb"), clips))
+    }
+
     /// `models/bounds.txt`: asset path → (min, max).
     pub fn bounds(&self) -> BTreeMap<String, (Vec3, Vec3)> {
         let text = std::fs::read_to_string(self.0.join("models/bounds.txt")).unwrap_or_default();
@@ -65,6 +89,136 @@ impl Cache {
         }
         (0..).map(|i| self.0.join(format!("{asset} {i}.wav"))).take_while(|p| p.is_file()).collect()
     }
+}
+
+/// One of the alpha's clips in the import.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClipInfo {
+    pub index: usize,
+    pub seconds: f32,
+    /// How far its root motion carries the unit over one play (0 in place).
+    pub travel: f32,
+    pub name: String,
+}
+
+/// What a unit's or building's model shows, by what its sim entity is doing (`rig.rs`).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub enum Action {
+    /// Standing, or a building at work. Units with no idle clip hold their bind pose.
+    Idle,
+    Moving,
+    Attacking,
+    Dying,
+}
+
+impl Action {
+    pub const ALL: [Action; 4] = [Action::Idle, Action::Moving, Action::Attacking, Action::Dying];
+}
+
+/// The alpha's clip for each of a model's actions, by clip name: its controllers' names
+/// say what each is for (`AtnA` attention, the standing idle; `Run`/`Mov` moving; `AtkA`
+/// firing; `Die`; `Hvr` a helicopter's hover; a derrick's `Looping` pump). Soldiers of one
+/// skeleton share the `RifleShared`/`RPGShared` runs and deaths, as the alpha's blueprints
+/// do (`RifleShared_Die*` is reached from every rifle soldier's actor). `None` where the
+/// alpha has no clip for it, or none worth playing: ground vehicles' `Mov` clips only rock
+/// the chassis, and their wheels and turrets already follow the sim in `rig.rs`.
+pub fn clip_for(def: &str, action: Action) -> Option<&'static str> {
+    use Action::*;
+    let rifle = |a: Action| match a {
+        Moving => Some("RifleShared_RunFwd"),
+        Dying => Some("RifleShared_DieA"),
+        _ => None,
+    };
+    let rocket = |a: Action| match a {
+        Moving => Some("RPGShared_RunFwd"),
+        Dying => Some("RPGShared_DieA"),
+        _ => None,
+    };
+    Some(match (def, action) {
+        ("EU Recon Squad", Idle) => "EU_RifleSoldier_AtnA",
+        ("EU Recon Squad", Attacking) => "EU_RifleSoldier_AtkA",
+        ("EU Recon Squad", a) => rifle(a)?,
+        ("EU Rocket Squad", Idle) => "EU_RocketSoldier_AtnA",
+        ("EU Rocket Squad", Attacking) => "EU_RocketSoldier_AtkA",
+        ("EU Rocket Squad", a) => rocket(a)?,
+        ("APA Red Guard", Idle) => "AU_RifleSoldier_AtnA",
+        ("APA Red Guard", Attacking) => "AU_RifleSoldier_AtkA",
+        ("APA Red Guard", a) => rifle(a)?,
+        ("APA Tank Hunter", Idle) => "AU_RocketSoldier_AtnA",
+        ("APA Tank Hunter", Attacking) => "AU_RocketSoldier_AtkA",
+        ("APA Tank Hunter", a) => rocket(a)?,
+        ("GLA Rabble Squad", Idle) => "GU_RebelSoldier_AtnA",
+        ("GLA Rabble Squad", Moving) => "GU_RebelSoldier_RunFwd1",
+        ("GLA Rabble Squad", Attacking) => "GU_RebelSoldier_AtkA",
+        ("GLA Rabble Squad", a) => rifle(a)?,
+        ("GLA RPG Squad", Idle) => "GU_LightRPGTrooper_AtnB",
+        ("GLA RPG Squad", Moving) => "GU_LightRPGTrooper_RunFwd1",
+        ("GLA RPG Squad", Attacking) => "GU_LightRPGTrooper_AtkA",
+        ("GLA RPG Squad", a) => rocket(a)?,
+        ("EU Shock Troopers", Idle) => "EU_ShockTrooper_AtnA",
+        ("EU Shock Troopers", Moving) => "EU_ShockTrooper_RunFwdA_HoldingGun",
+        ("EU Shock Troopers", Attacking) => "EU_ShockTrooper_AtkA",
+        ("EU Shock Troopers", Dying) => "EU_ShockTrooper_DieA",
+        ("EU Sniper Team", Idle) => "EU_EliteSniperSoldier_AtnA",
+        ("EU Sniper Team", Moving) => "EU_EliteSniperSoldier_Run0A",
+        ("EU Sniper Team", Attacking) => "EU_EliteSniperSoldier_AtkA",
+        ("EU Sniper Team", Dying) => "EU_EliteSniperSoldier_DieA",
+        ("APA Inferno Squad", Idle) => "AU_EliteFlame_AtnA",
+        ("APA Inferno Squad", Moving) => "EliteShared_RunFwdA",
+        ("APA Inferno Squad", Attacking) => "AU_EliteFlame_AtkA",
+        ("APA Inferno Squad", Dying) => "EliteShared_DieA",
+        ("APA Napalm Mortar Squad", Idle) => "AU_EliteNapalm_Shoot_AtnA",
+        ("APA Napalm Mortar Squad", Moving) => "AU_EliteNapalm_Shoot_RunA",
+        ("APA Napalm Mortar Squad", Attacking) => "AU_EliteNapalm_Shoot_AtkA",
+        ("APA Napalm Mortar Squad", Dying) => "AU_EliteNapalm_Shoot_DieA",
+        ("APA Saboteurs", Idle) => "AU_Saboteur_AtnB",
+        ("APA Saboteurs", Moving) => "AU_Saboteur_RunFwd",
+        ("APA Saboteurs", Attacking) => "AU_Saboteur_AtkA",
+        ("APA Saboteurs", Dying) => "AU_Saboteur_DieA",
+        ("APA Urban Assault Squad", Idle) => "AU_UrbanAssaultTrooper_AtnA",
+        ("APA Urban Assault Squad", Moving) => "AU_UrbanAssaultTrooper_Run0A",
+        ("APA Urban Assault Squad", Attacking) => "AU_UrbanAssaultTrooper_AtkA",
+        ("APA Urban Assault Squad", Dying) => "AU_UrbanAssaultTrooper_DieA",
+        ("GLA Worker", Idle) => "GU_ConstructionUnit_AtnA",
+        ("GLA Worker", Moving) => "GU_ConstructionUnit_MovA",
+        ("GLA Worker", Attacking) => "GU_ConstructionUnit_BldA",
+        ("GLA Worker", Dying) => "GU_ConstructionUnit_DieA",
+        ("EU Bulldozer", Attacking) => "EU_ConstructionUnit_BldA",
+        ("APA Crane", Attacking) => "AU_ConstructionUnit_BldA",
+        ("EU Harvester", Idle | Moving) => "EU_Harvester_Hvr1",
+        ("EU Harvester", Attacking) => "EU_Harvester_PicA",
+        ("EU Valkyrie", Idle | Moving) => "EU_HeavyRocketHelo_Hvr1",
+        ("EU Valkyrie", Attacking) => "EU_HeavyRocketHelo_Atka",
+        ("EU Longbow", Idle | Moving) => "EU_LightRocketHelo_HvrA",
+        ("EU Longbow", Attacking) => "EU_LightRocketHelo_Atka",
+        ("APA Mantis", Idle | Moving | Attacking) => "AU_LightGunHelo_Hvr1",
+        ("GLA Toxin Chopper", Idle | Moving) => "GU_LightChemicalHelo_Hvr1",
+        ("GLA Toxin Chopper", Attacking) => "GU_LightChemicalHelo_Atka",
+        ("EU Oil Derrick", Idle) => "ES_OilDerrick_Looping",
+        ("APA Oil Derrick", Idle) => "AS_OilDerrick_Looping",
+        ("GLA Oil Derrick", Idle) => "GS_OilDerrick_Looping",
+        ("EU Power Plant", Idle) => "ES_PowerPlant_IdlA",
+        ("APA Power Plant", Idle) => "AS_Powerplant_IdlA",
+        ("APA Command Center", Idle) => "AS_CommandCenter_IdleMainRadar",
+        ("EU Command Center", Idle) => "ES_CommandCenter_MainRadar_RotA",
+        ("GLA Command Center", Idle) => "GS_CommandCenter_Idle_RodaA",
+        ("EU Supply Center", Idle) => "ES_SupplyCenter_IdlA",
+        ("APA Supply Center", Idle) => "AS_SupplyCenter_IdlA",
+        ("GLA Supply Stash", Idle) => "GS_SupplyCenter_IdleA",
+        ("EU War Factory", Idle) => "ES_WarFactory_FanSpin",
+        ("APA War Factory", Idle) => "AS_WarFactory_IdlA",
+        ("GLA War Factory", Idle) => "GS_WarFactory_IdlA",
+        ("APA Barracks", Idle) => "AS_Barracks_IdlA",
+        ("GLA Barracks", Idle) => "GS_Barracks_IdlA",
+        ("EU Tech Lab", Idle) => "ES_TechStructureA_IdlA",
+        ("EU Advanced Tech Lab", Idle) => "ES_TechStructureB_IdlA",
+        ("GLA Salvage Bay", Idle) => "GS_TechStructureB_IdlA",
+        ("EU Airfield", Idle) => "ES_Airfield_IdleA",
+        ("APA Airfield", Idle) => "AS_Airfield_IdlA",
+        ("GLA Battle Bus" | "GLA Battle Bunker", Idle) => "GU_BattleBus_Radar",
+        ("APA Sunstorm", Idle | Moving | Attacking) => "AU_HeavyNukeArtillery_CoreSpin",
+        _ => return None,
+    })
 }
 
 /// Our defs' look-alikes in the alpha, by role: each faction's own building or the unit of
@@ -386,6 +540,35 @@ mod tests {
             // Support jets are never selected or ordered, so they have nothing to answer.
             if !def.is_building() && !def.is_support_jet() {
                 assert!(voice_for(def.name).is_some(), "{} has no alpha voice", def.name);
+            }
+        }
+    }
+
+    /// Against a real import with animations (`G2_ALPHA_CACHE`; skipped when unset or when
+    /// the import predates animations): every clip `clip_for` names is in the clips of the
+    /// def's own skeleton, so a misspelt or misplaced name fails; every soldier squad runs,
+    /// and its run carries it forward (its stride is what paces the feet in `rig.rs`).
+    #[test]
+    fn every_named_clip_is_in_its_models_import() {
+        let Some(dir) = std::env::var_os("G2_ALPHA_CACHE") else { return };
+        let cache = Cache(PathBuf::from(dir));
+        if !cache.0.join("animations/index.txt").is_file() {
+            return;
+        }
+        for def in g2_rules::rules().defs.iter().filter(|d| model_for(d.name).is_some()) {
+            let names: Vec<&str> = Action::ALL.iter().filter_map(|&a| clip_for(def.name, a)).collect();
+            if names.is_empty() {
+                continue;
+            }
+            let (_, clips) = cache.clips(def).unwrap_or_else(|| panic!("{}: no clips in the import", def.name));
+            for n in names {
+                assert!(clips.iter().any(|c| c.name == n), "{}: no clip {n}", def.name);
+            }
+            assert!(clips.iter().any(|c| c.name == "BindPose"), "{}: no bind pose", def.name);
+            if def.armour == g2_sim::Armour::Infantry {
+                let run = clip_for(def.name, Action::Moving).unwrap_or_else(|| panic!("{}: no run", def.name));
+                let run = clips.iter().find(|c| c.name == run).unwrap();
+                assert!(run.travel > 1.0 && run.seconds > 0.3, "{}: {run:?} goes nowhere", def.name);
             }
         }
     }

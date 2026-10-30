@@ -87,7 +87,7 @@ The headless screenshot mode prints the mesh count and the average time of 30 re
 Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6XKby6Qz5oI]`. Matched now: ground colour (within about 10%), centre brightness (117-125 against 125-142 sRGB luminance), contact shadows, tree silhouettes. Still open, largest first:
 
 - Few ambient effects: no smoke from stacks or dust under vehicles (`view.rs`).
-- No animation: rotors, treads, walking infantry, pumpjacks (`view.rs`, `models.rs`).
+- Procedural models barely animate: rotors spin, but treads, infantry and pumpjacks stand still (`view.rs`, `models.rs`). An imported alpha plays its own clips instead (`rig.rs`, `docs/alpha-animation.md`).
 - Building walls read flat: the footage's painted panel texture and wear can't come from primitives alone; a procedural panel/grime texture per slot would (`view.rs` materials).
 - EU roofs are nearly one tone; the footage has more orange trim and darker roof plates (`models.rs`).
 - Artillery barrels can't pitch: parts have no pitch rotation (`models.rs` `Part`).

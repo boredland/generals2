@@ -398,8 +398,16 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>], skeleton: Option<&Ske
         json += &format!(r#","images":[{}],"textures":[{}]"#, images.join(","), textures_json.join(","));
     }
     json.push('}');
+    glb(json, bin)
+}
+
+/// The binary container: the JSON chunk (space-padded) and the binary chunk (4-aligned).
+fn glb(mut json: String, mut bin: Vec<u8>) -> Vec<u8> {
     while !json.len().is_multiple_of(4) {
         json.push(' ');
+    }
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
     }
     let mut glb = Vec::with_capacity(28 + json.len() + bin.len());
     glb.extend(b"glTF");
@@ -412,6 +420,198 @@ pub fn to_glb(mesh: &MeshSet, textures: &[Option<String>], skeleton: Option<&Ske
     glb.extend(b"BIN\0");
     glb.extend(bin);
     glb
+}
+
+/// A binary glTF of `skeleton`'s joints alone, nodes named, nested and placed as `to_glb`
+/// writes them (so the paths of names from the root joint, which is what an animation
+/// targets, are the same as the skinned model's), with each clip as a named animation.
+///
+/// The ANT rigs turn `AITrajectory` a quarter turn that the skeletons' bind poses don't
+/// have, and their joints below it turn it back: here its rotation is folded into the
+/// joints below it and it keeps its bind pose. Over 475 joints of every rig, folded clips
+/// sit a median 16 degrees from the bind pose at their first key, unfolded 90. Root motion
+/// (`AITrajectory`'s translation) is not in the clips. Joints a clip leaves out hold their
+/// bind pose, so switching clips never leaves a joint where the last one put it. Values
+/// are mirrored in X like the bones (a quaternion's y and z, a translation's x negate).
+pub fn clips_to_glb(skeleton: &Skeleton, clips: &[crate::ant::Clip]) -> Vec<u8> {
+    use crate::ant::Path;
+    let sk = skeleton;
+    let model: Vec<[f32; 16]> = sk.model_pose.iter().map(mirror_x).collect();
+    let local: Vec<[f32; 16]> = (0..sk.names.len())
+        .map(|i| match sk.parents[i] {
+            Some(p) => mul(&invert_rigid(&model[p]), &model[i]),
+            None => model[i],
+        })
+        .collect();
+    // Joints as rotation and translation (glTF forbids animating a node given by `matrix`).
+    let mut nodes = Vec::new();
+    for (i, name) in sk.names.iter().enumerate() {
+        let children: Vec<String> =
+            (0..sk.names.len()).filter(|&c| sk.parents[c] == Some(i)).map(|c| c.to_string()).collect();
+        let children =
+            if children.is_empty() { String::new() } else { format!(r#","children":[{}]"#, children.join(",")) };
+        nodes.push(format!(
+            r#"{{"name":{},"rotation":[{}],"translation":[{}]{children}}}"#,
+            json_str(name),
+            floats(&quat_of(&local[i])),
+            floats(&local[i][12..15])
+        ));
+    }
+    let roots: Vec<String> = (0..sk.names.len()).filter(|&i| sk.parents[i].is_none()).map(|i| i.to_string()).collect();
+    let traj = sk.names.iter().position(|n| n == "AITrajectory");
+    let mut bin: Vec<u8> = Vec::new();
+    let (mut views, mut accessors, mut animations) = (Vec::new(), Vec::new(), Vec::new());
+    let mut push = |bin: &mut Vec<u8>, data: &[f32], ty: &str, count: usize, minmax: bool| -> usize {
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        views.push(format!(r#"{{"buffer":0,"byteOffset":{},"byteLength":{}}}"#, bin.len(), 4 * data.len()));
+        bin.extend(f32_bytes(data.iter()));
+        let bounds = if minmax {
+            let (lo, hi) = data.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &t| (lo.min(t), hi.max(t)));
+            format!(r#","min":[{lo}],"max":[{hi}]"#)
+        } else {
+            String::new()
+        };
+        accessors.push(format!(
+            r#"{{"bufferView":{},"componentType":5126,"count":{count},"type":"{ty}"{bounds}}}"#,
+            views.len() - 1
+        ));
+        accessors.len() - 1
+    };
+    // Every constant track shares one input: a single key at 0.
+    let at_zero = push(&mut bin, &[0.0], "SCALAR", 1, true);
+    for clip in clips {
+        let n = clip.times.len();
+        let times: Vec<f32> = clip.times.iter().map(|&t| f32::from(t) / clip.fps).collect();
+        let input = push(&mut bin, &times, "SCALAR", n, true);
+        let track = |bone: usize, path: Path| {
+            clip.tracks.iter().find(|t| t.path == path && t.joint == sk.names[bone]).map(|t| t.keys.as_slice())
+        };
+        // The trajectory's turn as the clip has it, relative to its bind pose (which it keeps):
+        // `bind⁻¹ · key`, in Frostbite's space, carried into the joints below it.
+        let traj_bind = traj.map(|t| {
+            let local = match sk.parents[t] {
+                Some(p) => mul(&invert_rigid(&sk.model_pose[p]), &sk.model_pose[t]),
+                None => sk.model_pose[t],
+            };
+            let q = quat_of(&local);
+            [-q[0], -q[1], -q[2], q[3]]
+        });
+        let traj_rot: Option<Vec<[f32; 4]>> = traj
+            .and_then(|t| track(t, Path::Rotation))
+            .map(|keys| keys.iter().map(|&k| quat_mul(traj_bind.unwrap(), k)).collect());
+        let traj_rot = traj_rot.as_deref();
+        let (mut channels, mut samplers) = (Vec::new(), Vec::new());
+        for (bone, rest) in local.iter().enumerate() {
+            let folded = traj.is_some() && sk.parents[bone] == traj;
+            let fold = |k: usize| traj_rot.filter(|_| folded).map(|r| r[k.min(r.len() - 1)]);
+            let (rot, trans) = if Some(bone) == traj {
+                (None, None)
+            } else {
+                (track(bone, Path::Rotation), track(bone, Path::Translation))
+            };
+            // A folded joint takes as many keys as it or the trajectory has.
+            let keys_of = |keys: Option<&[[f32; 4]]>| {
+                let keys = keys?;
+                Some(keys.len().max(if folded { traj_rot.map_or(0, <[_]>::len) } else { 0 }))
+            };
+            let mut out_rot = Vec::new();
+            match (rot, keys_of(rot)) {
+                (Some(keys), Some(len)) => {
+                    for k in 0..len {
+                        let q = keys[k.min(keys.len() - 1)];
+                        let q = fold(k).map_or(q, |r| quat_mul(r, q));
+                        out_rot.extend([q[0], -q[1], -q[2], q[3]]);
+                    }
+                }
+                _ => out_rot.extend(quat_of(rest)),
+            }
+            let mut out_trans = Vec::new();
+            match (trans, keys_of(trans)) {
+                (Some(keys), Some(len)) => {
+                    for k in 0..len {
+                        let t = keys[k.min(keys.len() - 1)];
+                        let t = fold(k).map_or([t[0], t[1], t[2]], |r| quat_rotate(r, [t[0], t[1], t[2]]));
+                        out_trans.extend([-t[0], t[1], t[2]]);
+                    }
+                }
+                _ => out_trans.extend(&rest[12..15]),
+            }
+            for (data, path, ty, width) in [(&out_rot, "rotation", "VEC4", 4), (&out_trans, "translation", "VEC3", 3)] {
+                let count = data.len() / width;
+                let output = push(&mut bin, data, ty, count, false);
+                let input = if count == 1 { at_zero } else { input };
+                samplers.push(format!(r#"{{"input":{input},"output":{output},"interpolation":"LINEAR"}}"#));
+                channels.push(format!(
+                    r#"{{"sampler":{},"target":{{"node":{bone},"path":"{path}"}}}}"#,
+                    samplers.len() - 1
+                ));
+            }
+        }
+        animations.push(format!(
+            r#"{{"name":{},"channels":[{}],"samplers":[{}]}}"#,
+            json_str(&clip.name),
+            channels.join(","),
+            samplers.join(",")
+        ));
+    }
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0","generator":"g2-frostbite"}},"scene":0,"scenes":[{{"nodes":[{}]}}],"nodes":[{}],"animations":[{}],"accessors":[{}],"bufferViews":[{}],"buffers":[{{"byteLength":{}}}]}}"#,
+        roots.join(","),
+        nodes.join(","),
+        animations.join(","),
+        accessors.join(","),
+        views.join(","),
+        bin.len().next_multiple_of(4),
+    );
+    glb(json, bin)
+}
+
+/// Hamilton product `a·b` of `xyzw` quaternions.
+fn quat_mul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    let [ax, ay, az, aw] = a;
+    let [bx, by, bz, bw] = b;
+    [
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+        aw * bw - ax * bx - ay * by - az * bz,
+    ]
+}
+
+/// `v` turned by the unit quaternion `q`.
+fn quat_rotate(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+    let r = quat_mul(quat_mul(q, [v[0], v[1], v[2], 0.0]), [-q[0], -q[1], -q[2], q[3]]);
+    [r[0], r[1], r[2]]
+}
+
+/// The rotation of a rigid column-major 4x4 as an `xyzw` quaternion.
+fn quat_of(m: &[f32; 16]) -> [f32; 4] {
+    let e = |row: usize, col: usize| m[col * 4 + row];
+    let trace = e(0, 0) + e(1, 1) + e(2, 2);
+    let q = if trace > 0.0 {
+        let s = (trace + 1.0).sqrt() * 2.0;
+        [(e(2, 1) - e(1, 2)) / s, (e(0, 2) - e(2, 0)) / s, (e(1, 0) - e(0, 1)) / s, s / 4.0]
+    } else {
+        let i = if e(0, 0) >= e(1, 1) && e(0, 0) >= e(2, 2) {
+            0
+        } else if e(1, 1) >= e(2, 2) {
+            1
+        } else {
+            2
+        };
+        let (j, k) = ((i + 1) % 3, (i + 2) % 3);
+        let s = (1.0 + e(i, i) - e(j, j) - e(k, k)).sqrt() * 2.0;
+        let mut q = [0.0; 4];
+        q[i] = s / 4.0;
+        q[j] = (e(j, i) + e(i, j)) / s;
+        q[k] = (e(k, i) + e(i, k)) / s;
+        q[3] = (e(k, j) - e(j, k)) / s;
+        q
+    };
+    let n = q.iter().map(|x| x * x).sum::<f32>().sqrt();
+    q.map(|x| x / n)
 }
 
 /// `S·m·S` with S = diag(-1, 1, 1, 1): a transform in Frostbite's handedness as glTF's.
@@ -451,7 +651,7 @@ fn invert_rigid(m: &[f32; 16]) -> [f32; 16] {
     out
 }
 
-fn floats(m: &[f32; 16]) -> String {
+fn floats(m: &[f32]) -> String {
     m.iter().map(f32::to_string).collect::<Vec<_>>().join(",")
 }
 
@@ -570,5 +770,79 @@ mod tests {
         let identity: [f32; 16] = std::array::from_fn(|i| if i % 5 == 0 { 1.0 } else { 0.0 });
         assert!(skinning.iter().zip(identity).all(|(a, b)| (a - b).abs() < 1e-5), "{skinning:?}");
         assert!(world.iter().zip(model[2]).all(|(a, b)| (a - b).abs() < 1e-5));
+    }
+
+    /// The clip file: joints by name as TRS nodes at their bind pose, and per clip a named
+    /// animation over every joint. A clip key equal to the bind pose writes the node's own
+    /// rotation and translation (mirrored as the bones are), a joint the clip leaves out
+    /// holds its bind pose, and a trajectory turn of a quarter turn is folded into the joint
+    /// below it: the trajectory's channel stays at its bind pose, the child takes the turn.
+    #[test]
+    fn clip_file_keys_mirror_like_the_bones_and_fold_the_trajectory() {
+        use crate::ant::{Clip, Path, Track};
+        let rot = |a: f32| -> [f32; 16] {
+            let (s, c) = a.sin_cos();
+            [c, 0.0, -s, 0.0, 0.0, 1.0, 0.0, 0.0, s, 0.0, c, 0.0, 0.0, 0.0, 0.0, 1.0]
+        };
+        let mut hips = rot(0.4);
+        hips[12..15].copy_from_slice(&[0.3, 1.0, -0.2]);
+        let sk = Skeleton {
+            names: vec!["Reference".into(), "AITrajectory".into(), "Hips".into(), "Head".into()],
+            parents: vec![None, Some(0), Some(1), Some(2)],
+            model_pose: vec![rot(0.0), rot(0.0), hips, hips],
+        };
+        // Hips' bind pose in Frostbite's space, as a clip would key it.
+        let q = quat_of(&hips);
+        let quarter = [0.0, -std::f32::consts::FRAC_1_SQRT_2, 0.0, std::f32::consts::FRAC_1_SQRT_2];
+        let clip = Clip {
+            name: "Run".into(),
+            fps: 30.0,
+            frames: 15,
+            times: vec![0, 15],
+            tracks: vec![
+                Track { joint: "Hips".into(), path: Path::Rotation, keys: vec![q, q] },
+                Track { joint: "Hips".into(), path: Path::Translation, keys: vec![[0.3, 1.0, -0.2, 0.0]; 2] },
+                Track { joint: "AITrajectory".into(), path: Path::Rotation, keys: vec![quarter; 2] },
+            ],
+            travel: 0.0,
+            unit_error: Vec::new(),
+        };
+        let glb = clips_to_glb(&sk, &[clip]);
+        let json_len = u32::from_le_bytes(glb[12..16].try_into().unwrap()) as usize;
+        let json = std::str::from_utf8(&glb[20..20 + json_len]).unwrap();
+        let bin = &glb[20 + json_len + 8..];
+        assert!(json.contains(r#""animations":[{"name":"Run""#) && !json.contains(r#""matrix""#));
+        // Four joints, two channels each.
+        assert_eq!(json.matches(r#""target":{"node":"#).count(), 8);
+        // Accessor `i`'s floats, through its buffer view.
+        let accessors: Vec<&str> = json.split(r#"{"bufferView":"#).skip(1).collect();
+        let views: Vec<&str> = json.split(r#"{"buffer":0,"byteOffset":"#).skip(1).collect();
+        let floats = |sampler_output: usize| -> Vec<f32> {
+            let a = accessors[sampler_output];
+            let view: usize = a[..a.find(',').unwrap()].parse().unwrap();
+            let v = views[view];
+            let offset: usize = v[..v.find(',').unwrap()].parse().unwrap();
+            let len: usize = v[v.find("byteLength\":").unwrap() + 12..v.find('}').unwrap()].parse().unwrap();
+            bin[offset..offset + len].chunks(4).map(|b| f32::from_le_bytes(b.try_into().unwrap())).collect()
+        };
+        // The samplers of joint `bone`: rotation then translation, in joint order.
+        let outputs: Vec<usize> =
+            json.split(r#""output":"#).skip(1).map(|s| s[..s.find(',').unwrap()].parse().unwrap()).collect();
+        let close = |a: &[f32], b: &[f32]| a.len() == b.len() && a.iter().zip(b).all(|(x, y)| (x - y).abs() < 1e-5);
+        let model: Vec<[f32; 16]> = sk.model_pose.iter().map(mirror_x).collect();
+        let local = |i: usize| match sk.parents[i] {
+            Some(p) => mul(&invert_rigid(&model[p]), &model[i]),
+            None => model[i],
+        };
+        // The trajectory holds its bind pose (identity here) despite its clip key.
+        assert!(close(&floats(outputs[2]), &quat_of(&local(1))), "trajectory kept at bind");
+        // Hips: the bind-pose key, turned by the folded quarter turn: a quarter turn about
+        // Y on top of its bind rotation, mirrored (Y and Z negate, so the turn flips sign).
+        let hips_rot = floats(outputs[4]);
+        let turned =
+            quat_mul([0.0, std::f32::consts::FRAC_1_SQRT_2, 0.0, std::f32::consts::FRAC_1_SQRT_2], quat_of(&local(2)));
+        assert!(close(&hips_rot[..4], &turned), "{hips_rot:?} against {turned:?}");
+        // Head is in no track: it holds its bind pose, one key.
+        assert!(close(&floats(outputs[6]), &quat_of(&local(3))) && close(&floats(outputs[7]), &local(3)[12..15]));
     }
 }
