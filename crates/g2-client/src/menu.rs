@@ -926,12 +926,12 @@ impl Look {
     }
 }
 
-/// The menus' typeface: DejaVu Sans Condensed, bundled (Bitstream Vera licence), in place of
-/// the condensed faces Generals' shell is set in.
+/// The menus' and the HUD's typeface: DejaVu Sans Condensed, bundled (Bitstream Vera licence),
+/// in place of the condensed faces Generals' shell is set in.
 #[derive(Resource)]
 pub struct MenuFonts {
-    regular: Handle<Font>,
-    bold: Handle<Font>,
+    pub(crate) regular: Handle<Font>,
+    pub(crate) bold: Handle<Font>,
 }
 
 fn load_fonts(mut commands: Commands, fonts: Option<ResMut<Assets<Font>>>) {

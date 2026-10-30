@@ -1,33 +1,49 @@
-//! HUD (docs/STYLE.md): conventional RTS zones (minimap bottom-left, selection
-//! and production bottom-right, clock top-centre) in our own panel design, gunmetal with teal
-//! accents. Every element shows live sim data; nothing is decorative.
+//! HUD (docs/STYLE.md): conventional RTS zones (minimap bottom-left, selection and production
+//! bottom-right, clock top-centre) in our own framed design: bevelled gunmetal plates with a
+//! trim line in the local player's faction colour (`art.rs`). Every element shows live sim
+//! data; the frames are the only decoration.
 //!
 //! - Top centre: a compact match bar with both factions' tags around the clock.
 //! - Top left: menu label; top right: neutral project label (no EA trademarks in the UI).
-//! - Bottom left: minimap with team and resource dots; power and money above it.
-//! - Bottom right: selection panel (name, health, status, training queue with progress) and the
-//!   numbered 3×3 build/production grid for the selection's hotkeys.
+//! - Bottom left: a header strip with power (figures and a load meter) and credits over the
+//!   minimap, which sits in a recessed bezel, with team and resource dots.
+//! - Bottom centre: the support powers as framed tiles with a cooldown sweep.
+//! - Bottom right: the selection card (a class silhouette in a portrait bezel, name, health,
+//!   status, training queue with progress) and the 3×3 build/production tray, each button with
+//!   its class icon, name, price and the progress of what it is training.
 //! - World overlays: collector count over own supply centers (red at the faction cap), health bars
 //!   over the selection and damaged entities.
 //!
-//! Not shown until the systems exist: generals/perks, abilities, experience.
+//! Everything scales with the window's height over 720 lines, so the HUD keeps its share of the
+//! screen (and its text stays legible) at 1080p and above.
 
+mod art;
+
+use bevy::color::Mix;
 use bevy::prelude::*;
+use bevy::ui::RelativeCursorPosition;
+use g2_sim::entity::Product;
 use g2_sim::{Class, Faction, TICKS_PER_SECOND};
 
 use crate::camera::RtsCamera;
 use crate::input::{Placement, PowerAim, Selection};
 use crate::sim::Sim;
+use art::{Face, Icon};
 
 pub(crate) const PANEL: Color = Color::srgba(0.07, 0.08, 0.09, 0.92);
 pub(crate) const PANEL_EDGE: Color = Color::srgb(0.24, 0.27, 0.29);
-pub(crate) const SLOT: Color = Color::srgba(0.13, 0.15, 0.17, 0.95);
 pub(crate) const TEAL: Color = Color::srgb(0.18, 0.78, 0.86);
 const MONEY: Color = Color::srgb(0.35, 0.95, 0.35);
 const XP: Color = Color::srgb(0.98, 0.86, 0.12);
+/// Prices the player can't pay, and a power drain over supply.
+const SHORT: Color = Color::srgb(0.95, 0.32, 0.25);
 pub(crate) const TEXT: Color = Color::srgb(0.88, 0.90, 0.90);
 pub(crate) const DIM: Color = Color::srgb(0.55, 0.58, 0.60);
+/// Status lines on the plates: lighter than `DIM`, which is too faint on gunmetal at 12 px.
+const INFO: Color = Color::srgb(0.70, 0.74, 0.76);
 const MINIMAP: f32 = 196.0;
+/// The keys that arm each power slot (`input::POWER_KEYS`), as the tiles label them.
+const POWER_LABELS: [&str; 4] = ["G", "F1", "F2", "F3"];
 
 #[derive(Component)]
 pub(crate) enum Field {
@@ -40,16 +56,31 @@ pub(crate) enum Field {
     Money,
     /// The general's power: "G <name>" when ready, else its countdown; hidden without one.
     GeneralPower,
+    /// What an armed power or special shot waits for ("click to aim"); empty otherwise. The
+    /// power tiles show the rest of what `GeneralPower` says.
+    Aim,
     /// Countdown to the next Onslaught wave; empty without an Onslaught opponent.
     Waves,
     Status,
     SelName,
     SelInfo,
     Queue,
-    QueueBar,
+    /// A build-tray button's name.
     GridCell(usize),
+    /// A build-tray button's price, red when the player can't pay it.
+    GridCost(usize),
     /// An alpha build button's corner text: its price (the icon names the def).
     GridTag(usize),
+}
+
+/// A bar that fills to a live fraction: power drawn of supplied, the selection's health, the
+/// training item's progress, and each build button's share of it.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum Meter {
+    Power,
+    Health,
+    Queue,
+    Grid(usize),
 }
 
 #[derive(Component)]
@@ -61,6 +92,34 @@ pub(crate) struct MinimapView;
 /// A build-grid button's icon in the alpha HUD, shown when its cell has something to build.
 #[derive(Component)]
 struct GridIcon(usize);
+
+/// A build-tray button's class silhouette in our HUD.
+#[derive(Component)]
+struct GridGlyph(usize);
+
+/// How many of a build-tray button's item the selection has queued.
+#[derive(Component)]
+struct GridCount(usize);
+
+/// The selection card's silhouette, hidden without a selection.
+#[derive(Component)]
+struct Portrait;
+
+/// The selection card's health bar's track, hidden without a selection.
+#[derive(Component)]
+struct HealthTrack;
+
+/// A support-power tile's face, by power slot (as `input::POWER_KEYS`).
+#[derive(Component)]
+pub(crate) struct PowerTile(pub u8);
+
+/// The shade over a recharging power's tile, swept away clockwise as it charges.
+#[derive(Component)]
+struct PowerSweep(u8);
+
+/// A power tile's countdown, READY, or AIM.
+#[derive(Component)]
+struct PowerTimer(u8);
 
 #[derive(Component)]
 struct QueueRow;
@@ -87,7 +146,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_alpha_layout)
+        app.add_systems(Startup, (load_alpha_layout, art::make))
             .add_systems(
                 Update,
                 spawn.run_if(crate::menu::scene_start.or_eager(resized_in_match)).after(crate::menu::MenuSet),
@@ -95,7 +154,8 @@ impl Plugin for HudPlugin {
             .add_systems(
                 Update,
                 (update_fields, tags, minimap, overlays, popups, grid_icons, selection_portrait).after(spawn),
-            );
+            )
+            .add_systems(Update, (meters, grid_faces, power_tiles, portrait).after(spawn));
     }
 }
 
@@ -204,6 +264,8 @@ pub(crate) fn abs(left: Val, right: Val, top: Val, bottom: Val) -> Node {
     Node { position_type: PositionType::Absolute, left, right, top, bottom, ..default() }
 }
 
+/// A small plain panel for transient pop-ups (tooltips and the like), which stay lighter than
+/// the framed plates.
 pub(crate) fn panel_node(mut node: Node) -> impl Bundle {
     node.border = UiRect::all(px(1));
     node.padding = UiRect::all(px(6));
@@ -223,11 +285,55 @@ fn faction_initial(f: Faction) -> &'static str {
 #[derive(Resource)]
 pub struct HeadlessScreen(pub Vec2);
 
+/// Sizes and type for one HUD build: everything is laid out for 1280×720 and scaled by `k`, so
+/// the HUD keeps its share of the screen at any size.
+struct Pen {
+    k: f32,
+    regular: Option<Handle<Font>>,
+    bold: Option<Handle<Font>>,
+}
+
+impl Pen {
+    fn new(screen: Vec2, fonts: Option<&crate::menu::MenuFonts>) -> Self {
+        Pen {
+            // The bottom plates span about 1130 of 1280 columns, so a narrower window scales
+            // by its width; below 0.85 the 11 px labels would drop under 10 px.
+            k: (screen.y / 720.0).min(screen.x / 1280.0).clamp(0.85, 3.0),
+            regular: fonts.map(|f| f.regular.clone()),
+            bold: fonts.map(|f| f.bold.clone()),
+        }
+    }
+
+    fn px(&self, v: f32) -> Val {
+        px(v * self.k)
+    }
+
+    fn text(&self, s: &str, size: f32, color: Color, bold: bool) -> impl Bundle {
+        let mut font = TextFont { font_size: FontSize::Px(size * self.k), ..default() };
+        if let Some(f) = if bold { &self.bold } else { &self.regular } {
+            font.font = f.clone().into();
+        }
+        (Text::new(s), font, TextColor(color))
+    }
+}
+
+/// A tight drop shadow for text on the world or on bright trim; the 4 px default reads as a
+/// doubled label at these sizes.
+fn shadow() -> TextShadow {
+    TextShadow { offset: Vec2::splat(1.0), ..default() }
+}
+
+/// The bottom-left plate's width: the minimap, its bezel (5 a side) and the plate's padding.
+const LEFT_PLATE: f32 = MINIMAP + 10.0 + 24.0;
+
+#[allow(clippy::too_many_arguments)]
 fn spawn(
     mut commands: Commands,
     sim: Res<Sim>,
     layout: Option<Res<crate::alpha_hud::Layout>>,
     server: Option<Res<AssetServer>>,
+    art: Option<Res<art::HudArt>>,
+    fonts: Option<Res<crate::menu::MenuFonts>>,
     window: Query<&Window>,
     headless: Option<Res<HeadlessScreen>>,
     old: Query<Entity, With<HudRoot>>,
@@ -241,38 +347,57 @@ fn spawn(
         (None, Some(h)) => h.0,
         (None, None) => Vec2::new(1280.0, 720.0),
     };
-    if let (Some(layout), Some(server)) = (layout, server) {
-        let faction = world.player(sim.local).faction;
-        if crate::alpha_hud::spawn(&mut commands, &layout, &server, faction, screen) {
-            spawn_alpha_extras(&mut commands);
-            return;
-        }
+    let faction = world.player(sim.local).faction;
+    if let (Some(layout), Some(server)) = (layout, server)
+        && crate::alpha_hud::spawn(&mut commands, &layout, &server, faction, screen)
+    {
+        spawn_alpha_extras(&mut commands);
+        return;
     }
+    let Some(art) = art else { return };
+    let kit = art.kit(faction);
+    let trim = art::trim(faction);
+    let pen = Pen::new(screen, fonts.as_deref());
+    let k = pen.k;
+    let plate = || art::sliced(kit.plate.clone(), art::PLATE_EDGE, k);
+    let well = || art::sliced(kit.well.clone(), art::WELL_EDGE, k);
+    // Inside a bottom plate: clear of its bevel and trim, and of the cut corners on top.
+    let plate_pad = UiRect::new(pen.px(12.0), pen.px(12.0), pen.px(13.0), pen.px(9.0));
 
     // Top left: the in-match menu key; top right: neutral project label (no EA trademarks).
-    commands.spawn((root(), abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, DIM)));
-    commands.spawn((root(), abs(auto(), px(14), px(8), auto()), text("OPEN RTS", 12.0, DIM)));
+    commands.spawn((
+        root(),
+        abs(pen.px(14.0), auto(), pen.px(8.0), auto()),
+        pen.text("ESC  MENU", 13.0, TEXT, true),
+        shadow(),
+    ));
+    commands.spawn((
+        root(),
+        abs(auto(), pen.px(14.0), pen.px(8.0), auto()),
+        pen.text("OPEN RTS", 12.0, DIM, true),
+        shadow(),
+    ));
 
-    // Top centre: one compact match bar: own tag, clock, then every opponent's tag in its
-    // team colour (struck out once defeated); a general shows after its faction.
+    // Top centre: one compact match bar hanging from the top edge, its top rim above the
+    // screen: own tag, clock, then every opponent's tag in its team colour (dimmed once
+    // defeated); a general shows after its faction.
     commands
         .spawn((
             root(),
             Node {
                 position_type: PositionType::Absolute,
-                top: px(6),
+                top: pen.px(-7.0),
                 left: percent(50),
-                margin: UiRect::left(px(-210)),
-                width: px(420),
-                padding: UiRect::axes(px(8), px(3)),
+                margin: UiRect::left(pen.px(-220.0)),
+                width: pen.px(440.0),
+                height: pen.px(38.0),
+                padding: UiRect::new(pen.px(14.0), pen.px(14.0), pen.px(8.0), pen.px(6.0)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                column_gap: px(12),
-                border: UiRect::bottom(px(2)),
+                column_gap: pen.px(14.0),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
-            BorderColor::all(TEAL),
+            art::sliced(kit.bar.clone(), art::BAR_EDGE, k),
             HudPanel,
         ))
         .with_children(|t| {
@@ -282,125 +407,290 @@ fn spawn(
             };
             for (i, p) in world.players().iter().enumerate() {
                 let id = g2_sim::PlayerId(i as u8);
-                t.spawn((text(&label(p), 12.0, sim.team_color(id)), Field::Tag(id)));
+                t.spawn((pen.text(&label(p), 12.0, sim.team_color(id), true), Field::Tag(id)));
                 if id == sim.local {
-                    t.spawn((text("0:00:00", 15.0, TEXT), Field::Clock));
+                    t.spawn((pen.text("0:00:00", 16.0, TEXT, true), Field::Clock));
                 }
             }
         });
+    // Onslaught's wave countdown under the bar, and the status line (link, placement, pause,
+    // speed) under that.
+    for (top, field) in [(36.0, Field::Waves), (58.0, Field::Status)] {
+        let mut line = abs(percent(50), auto(), pen.px(top), auto());
+        line.margin = UiRect::left(pen.px(-220.0));
+        line.width = pen.px(440.0);
+        line.justify_content = JustifyContent::Center;
+        commands.spawn((root(), line)).with_children(|s| {
+            s.spawn((pen.text("", 14.0, XP, true), shadow(), field));
+        });
+    }
 
-    // Bottom left: power/money strip above the minimap.
+    // Bottom left: the header strip (power with its load meter, credits) over the minimap in
+    // its bezel.
     let mut corner = abs(px(0), auto(), auto(), px(0));
     corner.flex_direction = FlexDirection::Column;
-    commands.spawn((root(), panel_node(corner), HudPanel)).with_children(|p| {
-        p.spawn(Node {
-            width: px(MINIMAP),
-            justify_content: JustifyContent::SpaceBetween,
-            column_gap: px(6),
-            ..default()
-        })
-        .with_children(|s| {
-            s.spawn((text("PWR 0/0", 12.0, XP), Field::Power));
-            s.spawn((text("$0", 13.0, MONEY), Field::Money));
-        });
-        p.spawn((text("", 12.0, TEXT), Field::GeneralPower));
-        p.spawn((text("", 12.0, XP), Field::Waves));
+    corner.width = pen.px(LEFT_PLATE);
+    corner.padding = plate_pad;
+    commands.spawn((root(), corner, plate(), HudPanel)).with_children(|p| {
         p.spawn((
             Node {
-                width: px(MINIMAP),
-                height: px(MINIMAP),
-                margin: UiRect::top(px(4)),
+                height: pen.px(22.0),
+                padding: UiRect::horizontal(pen.px(6.0)),
+                margin: UiRect::bottom(pen.px(5.0)),
                 border: UiRect::all(px(1)),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.10, 0.11, 0.08)),
-            BorderColor::all(PANEL_EDGE),
-            MinimapView,
-        ));
+            BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                ColorStop::auto(Color::srgba(0.0, 0.0, 0.0, 0.8)),
+                ColorStop::auto(Color::srgba(0.06, 0.07, 0.08, 0.8)),
+            ])),
+            BorderColor::all(trim.with_alpha(0.4)),
+        ))
+        .with_children(|h| {
+            h.spawn(Node { align_items: AlignItems::Center, column_gap: pen.px(6.0), ..default() }).with_children(
+                |pw| {
+                    pw.spawn((pen.text("PWR 0/0", 12.0, XP, true), Field::Power));
+                    // GLA runs without power: no meter to fill.
+                    if faction.uses_power() {
+                        pw.spawn((
+                            Node { width: pen.px(44.0), height: pen.px(6.0), ..default() },
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                        ))
+                        .with_child((
+                            Node { width: percent(0), height: percent(100), ..default() },
+                            BackgroundColor(XP),
+                            Meter::Power,
+                        ));
+                    }
+                },
+            );
+            h.spawn((pen.text("$0", 14.0, MONEY, true), Field::Money));
+        });
+        p.spawn((Node { padding: UiRect::all(pen.px(5.0)), ..default() }, well())).with_children(|w| {
+            w.spawn((
+                // The fog layer overshoots the map by part of a cell; the bezel's edge cuts it.
+                Node { width: pen.px(MINIMAP), height: pen.px(MINIMAP), overflow: Overflow::clip(), ..default() },
+                BackgroundColor(Color::srgb(0.10, 0.11, 0.08)),
+                MinimapView,
+            ));
+        });
     });
 
-    // Bottom right: selection panel with queue and the production grid.
-    commands
-        .spawn((
-            root(),
-            panel_node(Node {
-                position_type: PositionType::Absolute,
-                right: px(0),
-                bottom: px(0),
-                width: px(360),
-                flex_direction: FlexDirection::Column,
-                row_gap: px(4),
-                ..default()
-            }),
-            HudPanel,
-        ))
-        .with_children(|p| {
-            p.spawn((text("", 14.0, TEXT), Field::SelName));
-            p.spawn((text("", 12.0, DIM), Field::SelInfo));
-            // Training row: hidden (display none) until the selection has something queued.
-            p.spawn((
-                Node { align_items: AlignItems::Center, column_gap: px(6), display: Display::None, ..default() },
-                QueueRow,
+    // Bottom centre, beside the minimap: the general's and the faction's support powers as
+    // tiles, with the line that says what an armed power waits for above them.
+    let powers: Vec<(usize, g2_sim::defs::Power)> =
+        sim.powers().into_iter().enumerate().filter_map(|(slot, p)| Some((slot, p?))).collect();
+    let tray_left = LEFT_PLATE + 4.0;
+    let mut hint = abs(pen.px(tray_left + 8.0), auto(), auto(), pen.px(118.0));
+    hint.width = pen.px(420.0);
+    commands.spawn((root(), hint)).with_children(|h| {
+        h.spawn((pen.text("", 13.0, XP, true), shadow(), Field::Aim));
+    });
+    if !powers.is_empty() {
+        let mut tray = abs(pen.px(tray_left), auto(), auto(), px(0));
+        tray.column_gap = pen.px(4.0);
+        tray.padding = plate_pad;
+        commands.spawn((root(), tray, plate(), HudPanel)).with_children(|t| {
+            for (slot, p) in powers {
+                power_tile(t, &pen, &art, kit, slot, &p);
+            }
+        });
+    }
+
+    // Bottom right: the selection card (portrait, name, health, status, training) beside the
+    // 3×3 build tray.
+    let mut right = abs(auto(), px(0), auto(), px(0));
+    right.column_gap = pen.px(10.0);
+    right.padding = plate_pad;
+    commands.spawn((root(), right, plate(), HudPanel)).with_children(|p| {
+        p.spawn(Node { width: pen.px(236.0), column_gap: pen.px(8.0), ..default() }).with_children(|c| {
+            c.spawn((
+                Node {
+                    width: pen.px(78.0),
+                    height: pen.px(78.0),
+                    padding: UiRect::all(pen.px(5.0)),
+                    flex_shrink: 0.0,
+                    ..default()
+                },
+                well(),
             ))
-            .with_children(|q| {
-                q.spawn((text("", 12.0, TEXT), Field::Queue));
-                q.spawn((
-                    Node { width: px(90), height: px(8), ..default() },
-                    BackgroundColor(Color::srgb(0.05, 0.05, 0.05)),
+            .with_children(|w| {
+                w.spawn((
+                    Node {
+                        width: percent(100),
+                        height: percent(100),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundGradient::from(RadialGradient::new(
+                        UiPosition::CENTER,
+                        RadialGradientShape::FarthestCorner,
+                        vec![
+                            ColorStop::auto(trim.mix(&Color::BLACK, 0.72)),
+                            ColorStop::auto(Color::srgb(0.02, 0.02, 0.03)),
+                        ],
+                    )),
                 ))
-                .with_children(|bar| {
-                    bar.spawn((
-                        Node { width: percent(0), height: percent(100), ..default() },
-                        BackgroundColor(TEAL),
-                        Field::QueueBar,
-                    ));
-                });
+                .with_child((
+                    Node { width: pen.px(56.0), height: pen.px(56.0), ..default() },
+                    ImageNode::new(art.icon(Icon::Building)),
+                    Visibility::Hidden,
+                    Portrait,
+                ));
             });
-            p.spawn(Node {
-                display: Display::Grid,
-                grid_template_columns: RepeatedGridTrack::flex(3, 1.0),
-                row_gap: px(3),
-                column_gap: px(3),
-                ..default()
-            })
-            .with_children(|g| {
-                for i in 0..9 {
-                    g.spawn((
+            c.spawn(Node { flex_direction: FlexDirection::Column, flex_grow: 1.0, row_gap: pen.px(3.0), ..default() })
+                .with_children(|col| {
+                    col.spawn((pen.text("", 14.0, TEXT, true), Field::SelName));
+                    col.spawn((
+                        Node { height: pen.px(5.0), ..default() },
+                        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                        Visibility::Hidden,
+                        HealthTrack,
+                    ))
+                    .with_child((
+                        Node { width: percent(0), height: percent(100), ..default() },
+                        BackgroundColor(MONEY),
+                        Meter::Health,
+                    ));
+                    col.spawn((pen.text("", 11.0, INFO, false), Field::SelInfo));
+                    // Training: hidden (display none) until the selection has something queued.
+                    col.spawn((
                         Node {
-                            height: px(30),
-                            border: UiRect::all(px(1)),
-                            padding: UiRect::horizontal(px(4)),
-                            align_items: AlignItems::Center,
+                            flex_direction: FlexDirection::Column,
+                            row_gap: pen.px(2.0),
+                            display: Display::None,
                             ..default()
                         },
-                        BackgroundColor(SLOT),
-                        BorderColor::all(PANEL_EDGE),
-                        GridButton(i),
+                        QueueRow,
                     ))
-                    .with_children(|c| {
-                        c.spawn((text(&format!("{}", i + 1), 11.0, DIM), Field::GridCell(i)));
+                    .with_children(|q| {
+                        q.spawn((pen.text("", 11.0, TEXT, false), Field::Queue));
+                        q.spawn((
+                            Node { height: pen.px(6.0), ..default() },
+                            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+                        ))
+                        .with_child((
+                            Node { width: percent(0), height: percent(100), ..default() },
+                            BackgroundColor(trim),
+                            Meter::Queue,
+                        ));
                     });
-                }
-            });
+                });
         });
-
-    // Status line (pause/speed/victory), centred above the bottom panels.
-    commands
-        .spawn((
-            root(),
+        p.spawn((
             Node {
-                position_type: PositionType::Absolute,
-                top: px(58),
-                left: percent(50),
-                margin: UiRect::left(px(-200)),
-                width: px(400),
-                justify_content: JustifyContent::Center,
+                display: Display::Grid,
+                grid_template_columns: RepeatedGridTrack::px(3, 96.0 * k),
+                row_gap: pen.px(3.0),
+                column_gap: pen.px(3.0),
+                padding: UiRect::all(pen.px(3.0)),
                 ..default()
             },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
         ))
-        .with_children(|s| {
-            s.spawn((text("", 14.0, XP), Field::Status));
+        .with_children(|g| {
+            for i in 0..9 {
+                grid_button(g, &pen, &art, kit, trim, i);
+            }
         });
+    });
+}
+
+/// One build-tray button: the slot's class icon, name and price on a framed face, the progress
+/// of what the selection is training from it along the bottom edge, and the count queued.
+fn grid_button(g: &mut ChildSpawnerCommands, pen: &Pen, art: &art::HudArt, kit: &art::Kit, trim: Color, i: usize) {
+    g.spawn((
+        Node {
+            height: pen.px(48.0),
+            padding: UiRect::new(pen.px(5.0), pen.px(4.0), pen.px(3.0), pen.px(5.0)),
+            column_gap: pen.px(4.0),
+            align_items: AlignItems::Center,
+            overflow: Overflow::clip(),
+            ..default()
+        },
+        art::sliced(kit.face(Face::Off), art::FACE_EDGE, pen.k),
+        RelativeCursorPosition::default(),
+        GridButton(i),
+    ))
+    .with_children(|b| {
+        b.spawn((
+            Node { width: pen.px(26.0), height: pen.px(26.0), flex_shrink: 0.0, ..default() },
+            ImageNode::new(art.icon(Icon::Vehicle)),
+            Visibility::Hidden,
+            GridGlyph(i),
+        ));
+        b.spawn(Node { flex_direction: FlexDirection::Column, flex_grow: 1.0, flex_shrink: 1.0, ..default() })
+            .with_children(|t| {
+                t.spawn((pen.text("", 10.5, TEXT, true), Field::GridCell(i)));
+                t.spawn((pen.text("", 11.0, MONEY, false), Field::GridCost(i)));
+            });
+        let mut track = abs(pen.px(4.0), pen.px(4.0), auto(), pen.px(3.0));
+        track.height = pen.px(3.0);
+        b.spawn(track).with_child((
+            Node { width: percent(0), height: percent(100), ..default() },
+            BackgroundColor(trim),
+            Meter::Grid(i),
+        ));
+        b.spawn((abs(auto(), pen.px(5.0), pen.px(2.0), auto()), pen.text("", 11.0, XP, true), shadow(), GridCount(i)));
+    });
+}
+
+/// One support-power tile: its icon on a framed face with its key, a sweep that uncovers the
+/// face as the power recharges, the time left (or READY), and its name under it.
+fn power_tile(
+    t: &mut ChildSpawnerCommands,
+    pen: &Pen,
+    art: &art::HudArt,
+    kit: &art::Kit,
+    slot: usize,
+    power: &g2_sim::defs::Power,
+) {
+    t.spawn(Node {
+        width: pen.px(72.0),
+        flex_direction: FlexDirection::Column,
+        align_items: AlignItems::Center,
+        row_gap: pen.px(3.0),
+        ..default()
+    })
+    .with_children(|c| {
+        c.spawn((
+            Node {
+                width: pen.px(56.0),
+                height: pen.px(56.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            art::sliced(kit.face(Face::Off), art::FACE_EDGE, pen.k),
+            PowerTile(slot as u8),
+        ))
+        .with_children(|f| {
+            f.spawn((
+                Node { width: pen.px(38.0), height: pen.px(38.0), ..default() },
+                ImageNode::new(art.icon(Icon::of_power(&power.kind))),
+            ));
+            f.spawn((
+                abs(pen.px(2.0), pen.px(2.0), pen.px(2.0), pen.px(2.0)),
+                BackgroundGradient::default(),
+                PowerSweep(slot as u8),
+            ));
+            f.spawn((
+                abs(pen.px(5.0), auto(), pen.px(2.0), auto()),
+                pen.text(POWER_LABELS[slot], 10.0, TEXT, true),
+                shadow(),
+            ));
+            let mut foot = abs(px(0), px(0), auto(), pen.px(3.0));
+            foot.justify_content = JustifyContent::Center;
+            f.spawn(foot).with_child((pen.text("", 11.0, TEXT, true), shadow(), PowerTimer(slot as u8)));
+        });
+        c.spawn((
+            pen.text(&power.name.to_uppercase(), 10.0, INFO, true),
+            TextLayout::default().with_justify(Justify::Center),
+        ));
+    });
 }
 
 /// What the alpha bar has no slot for, placed where its own debug and message windows sat:
@@ -446,7 +736,7 @@ fn spawn_alpha_extras(commands: &mut Commands) {
                 bar.spawn((
                     Node { width: percent(0), height: percent(100), ..default() },
                     BackgroundColor(Color::srgb(0.98, 0.89, 0.02)),
-                    Field::QueueBar,
+                    Meter::Queue,
                 ));
             });
         });
@@ -528,6 +818,226 @@ fn selection_portrait(
     }
 }
 
+/// Fills the meters: power drawn of supplied (red over supply), the selection's health (green,
+/// yellow, red as the world bars), the first training item's progress, and that progress again
+/// along the build button it came from.
+fn meters(sim: Res<Sim>, sel: Res<Selection>, mut bars: Query<(&Meter, &mut Node, &mut BackgroundColor)>) {
+    let world = &sim.world;
+    let me = world.player(sim.local);
+    let focus = sel.0.first().and_then(|&id| world.entity(id));
+    let training = focus
+        .and_then(|e| e.queue.first().zip(e.owner))
+        .map(|(p, owner)| (p.item, p.progress_halves as f32 / (world.item_ticks(owner, p.item) * 2).max(1) as f32));
+    let menu = build_menu(&sim, &sel);
+    for (meter, mut node, mut color) in &mut bars {
+        let frac = match *meter {
+            Meter::Power => {
+                let over = me.power_drain > me.power_supply;
+                color.set_if_neq(BackgroundColor(if over { SHORT } else { XP }));
+                me.power_drain as f32 / me.power_supply.max(1) as f32
+            }
+            Meter::Health => focus.map_or(0.0, |e| {
+                let f = e.hp as f32 / world.max_hp(e).max(1) as f32;
+                color.set_if_neq(BackgroundColor(health_color(f)));
+                f
+            }),
+            Meter::Queue => training.map_or(0.0, |(_, f)| f),
+            Meter::Grid(i) => match (training, menu.get(i)) {
+                (Some((item, f)), Some(&slot)) if slot.is(item) => f,
+                _ => 0.0,
+            },
+        };
+        let width = percent(frac.clamp(0.0, 1.0) * 100.0);
+        if node.width != width {
+            node.width = width;
+        }
+    }
+}
+
+/// Health bar colour: green above half, yellow above a quarter, red below.
+fn health_color(frac: f32) -> Color {
+    if frac > 0.5 {
+        Color::srgb(0.3, 0.95, 0.3)
+    } else if frac > 0.25 {
+        Color::srgb(0.95, 0.85, 0.2)
+    } else {
+        Color::srgb(0.95, 0.25, 0.2)
+    }
+}
+
+/// Sets each build-tray button's face and icon from its slot: off when empty or unaffordable,
+/// pressed while held or while its building is being placed, lit under the cursor; and the
+/// count of its item in the selection's queue.
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn grid_faces(
+    sim: Res<Sim>,
+    sel: Res<Selection>,
+    placing: Res<Placement>,
+    art: Option<Res<art::HudArt>>,
+    mouse: Option<Res<ButtonInput<MouseButton>>>,
+    mut faces: Query<(&GridButton, &RelativeCursorPosition, &mut ImageNode), (Without<GridIcon>, Without<GridGlyph>)>,
+    mut glyphs: Query<(&GridGlyph, &mut ImageNode, &mut Visibility), Without<GridButton>>,
+    mut counts: Query<(&GridCount, &mut Text)>,
+) {
+    let Some(art) = art else { return };
+    let world = &sim.world;
+    let kit = art.kit(world.player(sim.local).faction);
+    let credits = world.player(sim.local).credits;
+    let menu = build_menu(&sim, &sel);
+    let held = mouse.is_some_and(|m| m.pressed(MouseButton::Left));
+    let queue = sel.0.first().and_then(|&id| world.entity(id)).map_or(&[][..], |e| &e.queue[..]);
+    let usable = |i: usize| menu.get(i).is_some_and(|&slot| slot_cost(&sim, slot) <= credits);
+    for (button, cursor, mut img) in &mut faces {
+        let slot = menu.get(button.0).copied();
+        let face = match slot {
+            Some(Slot::Def(d)) if placing.0 == Some(d) => Face::Pressed,
+            _ if !usable(button.0) => Face::Off,
+            _ if cursor.cursor_over() && held => Face::Pressed,
+            _ if cursor.cursor_over() => Face::Hover,
+            _ => Face::Idle,
+        };
+        let want = kit.face(face);
+        if img.image != want {
+            img.image = want;
+        }
+    }
+    for (glyph, mut img, mut vis) in &mut glyphs {
+        let Some(&slot) = menu.get(glyph.0) else {
+            vis.set_if_neq(Visibility::Hidden);
+            continue;
+        };
+        let icon = art.icon(match slot {
+            Slot::Def(d) => Icon::of_def(world.rules.def(d)),
+            Slot::Upgrade(_) => Icon::Upgrade,
+        });
+        if img.image != icon {
+            img.image = icon;
+        }
+        // An unaffordable button's icon fades with its face.
+        let tint = if usable(glyph.0) { Color::WHITE } else { Color::srgba(1.0, 1.0, 1.0, 0.35) };
+        if img.color != tint {
+            img.color = tint;
+        }
+        vis.set_if_neq(Visibility::Inherited);
+    }
+    for (count, mut t) in &mut counts {
+        let n = menu.get(count.0).map_or(0, |&slot| queue.iter().filter(|p| slot.is(p.item)).count());
+        let want = if n > 0 { format!("{n}") } else { String::new() };
+        if t.0 != want {
+            t.0 = want;
+        }
+    }
+}
+
+/// Each support-power tile: lit when ready, pressed while being aimed, dim while recharging
+/// or unavailable; a dark sweep over the part of the charge still to come (clockwise from
+/// the top, as a clock hand); and the time left, READY, or AIM.
+#[allow(clippy::type_complexity)]
+fn power_tiles(
+    sim: Res<Sim>,
+    art: Option<Res<art::HudArt>>,
+    aim: Option<Res<PowerAim>>,
+    mut faces: Query<(&PowerTile, &mut ImageNode)>,
+    mut sweeps: Query<(&PowerSweep, &mut BackgroundGradient)>,
+    mut timers: Query<(&PowerTimer, &mut Text, &mut TextColor)>,
+) {
+    let Some(art) = art else { return };
+    let faction = sim.world.player(sim.local).faction;
+    let (kit, trim) = (art.kit(faction), art::trim(faction));
+    let aim = aim.and_then(|a| a.0);
+    let powers = sim.powers();
+    let wait = |slot: u8| sim.power_wait(slot);
+    for (tile, mut img) in &mut faces {
+        let face = match wait(tile.0) {
+            _ if aim == Some(tile.0) => Face::Pressed,
+            Some(0) => Face::Hover,
+            Some(_) => Face::Idle,
+            None => Face::Off,
+        };
+        let want = kit.face(face);
+        if img.image != want {
+            img.image = want;
+        }
+    }
+    for (sweep, mut grad) in &mut sweeps {
+        // A charge runs `first_ticks` at the start and `cooldown_ticks` after each use (the
+        // same figure for every power so far); the longer one keeps the sweep from jumping.
+        let total =
+            powers.get(sweep.0 as usize).copied().flatten().map_or(1, |p| p.cooldown_ticks.max(p.first_ticks).max(1));
+        let left = match wait(sweep.0) {
+            Some(t) => (t as f32 / total as f32).min(1.0),
+            None => 1.0,
+        };
+        let shade = Color::srgba(0.0, 0.0, 0.0, 0.68);
+        let want = if left <= 0.0 {
+            BackgroundGradient::default()
+        } else {
+            // The charged part is clear, with a glow in the trim colour fading in behind the
+            // hand so the sweep reads on a dark face; the part still to charge is shaded.
+            let done = (1.0 - left) * std::f32::consts::TAU;
+            BackgroundGradient::from(ConicGradient::new(
+                UiPosition::CENTER,
+                vec![
+                    AngularColorStop::new(Color::NONE, 0.0),
+                    AngularColorStop::new(trim.with_alpha(0.0), (done - 0.9).max(0.0)),
+                    AngularColorStop::new(trim.with_alpha(0.4), done),
+                    AngularColorStop::new(shade, done),
+                    AngularColorStop::new(shade, std::f32::consts::TAU),
+                ],
+            ))
+        };
+        if *grad != want {
+            *grad = want;
+        }
+    }
+    for (timer, mut t, mut color) in &mut timers {
+        let (want, c) = match wait(timer.0) {
+            _ if aim == Some(timer.0) => ("AIM".to_owned(), XP),
+            Some(0) => ("READY".to_owned(), MONEY),
+            Some(w) => {
+                let s = w.div_ceil(TICKS_PER_SECOND);
+                (format!("{}:{:02}", s / 60, s % 60), TEXT)
+            }
+            None => ("-".to_owned(), DIM),
+        };
+        if t.0 != want {
+            t.0 = want;
+        }
+        color.set_if_neq(TextColor(c));
+    }
+}
+
+/// The selection card's silhouette of the selected def's class, tinted toward the faction
+/// trim, and its health bar; both hidden without a selection.
+#[allow(clippy::type_complexity)]
+fn portrait(
+    sim: Res<Sim>,
+    sel: Res<Selection>,
+    art: Option<Res<art::HudArt>>,
+    mut icon: Query<(&mut ImageNode, &mut Visibility), With<Portrait>>,
+    mut track: Query<&mut Visibility, (With<HealthTrack>, Without<Portrait>)>,
+) {
+    let Some(art) = art else { return };
+    let world = &sim.world;
+    let focus = sel.0.first().and_then(|&id| world.entity(id));
+    let shown = if focus.is_some() { Visibility::Inherited } else { Visibility::Hidden };
+    for mut v in &mut track {
+        v.set_if_neq(shown);
+    }
+    let Ok((mut img, mut vis)) = icon.single_mut() else { return };
+    vis.set_if_neq(shown);
+    if let Some(e) = focus {
+        let want = art.icon(Icon::of_def(world.rules.def(e.def)));
+        if img.image != want {
+            img.image = want;
+        }
+        let tint = Color::WHITE.mix(&art::trim(world.player(sim.local).faction), 0.3);
+        if img.color != tint {
+            img.color = tint;
+        }
+    }
+}
+
 /// One entry of the build grid: a building to place, a unit to train, an upgrade to research.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Slot {
@@ -548,6 +1058,15 @@ impl Slot {
         match self {
             Slot::Def(d) => crate::alpha_hud::icon_for(rules.def(d).name).map(|(icon, _)| icon),
             Slot::Upgrade(u) => crate::alpha_hud::upgrade_icon(rules.upgrade(u).name),
+        }
+    }
+
+    /// Whether a production queue item is this slot's.
+    fn is(self, item: Product) -> bool {
+        match (self, item) {
+            (Slot::Def(d), Product::Unit(u)) => d == u,
+            (Slot::Upgrade(a), Product::Upgrade(b)) => a == b,
+            _ => false,
         }
     }
 }
@@ -607,7 +1126,7 @@ fn update_fields(
     sel: Res<Selection>,
     placing: Res<Placement>,
     aim: Option<Res<PowerAim>>,
-    mut fields: Query<(&Field, &mut Text, Option<&mut Node>), Without<QueueRow>>,
+    mut fields: Query<(&Field, &mut Text, &mut TextColor)>,
     mut queue_row: Query<&mut Node, With<QueueRow>>,
 ) {
     let aim = aim.and_then(|a| a.0);
@@ -620,7 +1139,7 @@ fn update_fields(
         row.display = if training { Display::Flex } else { Display::None };
     }
     let menu = build_menu(&sim, &sel);
-    for (field, mut t, node) in &mut fields {
+    for (field, mut t, mut color) in &mut fields {
         match field {
             Field::Clock => t.0 = clock(world.tick()),
             Field::Tag(_) => {}
@@ -629,7 +1148,8 @@ fn update_fields(
                     format!("PWR {}/{}", me.power_drain, me.power_supply)
                 } else {
                     "PWR -".into()
-                }
+                };
+                color.set_if_neq(TextColor(if me.power_drain > me.power_supply { SHORT } else { XP }));
             }
             Field::PowerFigures => {
                 t.0 =
@@ -638,13 +1158,12 @@ fn update_fields(
             Field::Money => t.0 = format!("${}", me.credits),
             Field::GeneralPower => {
                 // One line per power, its key first: ready, recharging, or being aimed.
-                let keys = ["G", "F1", "F2", "F3"];
                 let lines: Vec<String> = sim
                     .powers()
                     .iter()
                     .enumerate()
                     .filter_map(|(slot, p)| {
-                        let (p, key) = (p.as_ref()?, keys.get(slot)?);
+                        let (p, key) = (p.as_ref()?, POWER_LABELS.get(slot)?);
                         let name = p.name.to_uppercase();
                         Some(match sim.power_wait(slot as u8) {
                             _ if aim == Some(slot as u8) => format!("{name}: click to aim"),
@@ -658,6 +1177,16 @@ fn update_fields(
                     )
                     .collect();
                 t.0 = lines.join("\n");
+            }
+            Field::Aim => {
+                let power = |slot: u8| sim.powers().get(slot as usize).copied().flatten();
+                t.0 = match aim {
+                    Some(crate::input::SPECIAL) => "PARTICLE ACCELERATOR: click an enemy".into(),
+                    Some(slot) => {
+                        power(slot).map_or(String::new(), |p| format!("{}: click to aim", p.name.to_uppercase()))
+                    }
+                    None => String::new(),
+                }
             }
             Field::Waves => t.0 = onslaught_status(world).unwrap_or_default(),
             Field::Status => {
@@ -742,31 +1271,25 @@ fn update_fields(
                 t.0 = focus.and_then(|e| e.queue.first()).map_or(String::new(), |p| {
                     let n = focus.unwrap().queue.len();
                     match p.item {
-                        g2_sim::entity::Product::Unit(d) => format!("Training {} ({n})", rules.def(d).name),
-                        g2_sim::entity::Product::Upgrade(u) => format!("Researching {} ({n})", rules.upgrade(u).name),
+                        Product::Unit(d) => format!("Training {} ({n})", rules.def(d).name),
+                        Product::Upgrade(u) => format!("Researching {} ({n})", rules.upgrade(u).name),
                     }
                 })
             }
-            Field::QueueBar => {
-                if let Some(mut n) = node {
-                    let pct = focus.and_then(|e| e.queue.first().zip(e.owner)).map_or(0.0, |(p, owner)| {
-                        p.progress_halves as f32 / (world.item_ticks(owner, p.item) * 2) as f32 * 100.0
-                    });
-                    n.width = percent(pct);
-                }
-            }
             Field::GridCell(i) => {
-                t.0 = match menu.get(*i) {
-                    Some(&slot) => {
-                        let name = slot.name(rules);
-                        let short = match slot {
-                            Slot::Def(_) => name.split_once(' ').map_or(name, |(_, rest)| rest),
-                            Slot::Upgrade(_) => name,
-                        };
-                        format!("{} {}  ${}", i + 1, short, slot_cost(&sim, slot))
+                t.0 = menu.get(*i).map_or(String::new(), |&slot| {
+                    let name = slot.name(rules);
+                    match slot {
+                        Slot::Def(_) => name.split_once(' ').map_or(name, |(_, rest)| rest),
+                        Slot::Upgrade(_) => name,
                     }
-                    None => format!("{}", i + 1),
-                }
+                    .to_owned()
+                })
+            }
+            Field::GridCost(i) => {
+                let cost = menu.get(*i).map(|&slot| slot_cost(&sim, slot));
+                t.0 = cost.map_or(String::new(), |c| format!("${c}"));
+                color.set_if_neq(TextColor(if cost.is_some_and(|c| c > me.credits) { SHORT } else { MONEY }));
             }
             Field::GridTag(i) => {
                 t.0 = menu.get(*i).map_or(String::new(), |&slot| format!("${}", slot_cost(&sim, slot)))
@@ -911,15 +1434,17 @@ fn overlays(
         if over_hud(&panels, raw) {
             continue;
         }
-        let Some(screen) = place(raw, 52.0) else { continue };
+        // The label grows with the window as the HUD does, so it stays legible at 1080p.
+        let k = (view.y / 720.0).clamp(1.0, 3.0);
+        let Some(screen) = place(raw, 52.0 * k) else { continue };
         // The label sits 44 px above its anchor: it needs that much clear sky, or it goes
         // below the anchor instead of into the HUD strip along the top.
-        let label_y = if screen.y >= 88.0 { screen.y - 44.0 } else { screen.y + 10.0 };
+        let label_y = if screen.y >= 88.0 * k { screen.y - 44.0 * k } else { screen.y + 10.0 * k };
         if let Some((n, cap)) = crate::view::depot_label(&sim, e) {
             let color = if n >= cap { Color::srgb(0.95, 0.25, 0.2) } else { Color::srgb(0.3, 0.95, 0.3) };
             commands.spawn((
-                abs(px(screen.x - 50.0), auto(), px(label_y), auto()),
-                text(&format!("COLLECTORS {n}/{cap}"), 12.0, color),
+                abs(px(screen.x - 50.0 * k), auto(), px(label_y), auto()),
+                text(&format!("COLLECTORS {n}/{cap}"), 12.0 * k, color),
                 // A tight shadow for contrast; the 4 px default reads as a doubled label at 12 px.
                 TextShadow { offset: Vec2::splat(1.0), ..default() },
                 WorldLabel,
@@ -987,13 +1512,7 @@ fn overlays(
         if e.owner.is_some() && (selected || damaged || rank > 0) {
             let w = if def.is_building() { 46.0 } else { 22.0 };
             let frac = (e.hp as f32 / max.max(1) as f32).clamp(0.0, 1.0);
-            let color = if frac > 0.5 {
-                Color::srgb(0.3, 0.95, 0.3)
-            } else if frac > 0.25 {
-                Color::srgb(0.95, 0.85, 0.2)
-            } else {
-                Color::srgb(0.95, 0.25, 0.2)
-            };
+            let color = health_color(frac);
             let Some(screen) = place(screen, w / 2.0) else { continue };
             commands
                 .spawn((

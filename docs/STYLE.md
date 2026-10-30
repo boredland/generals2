@@ -50,15 +50,20 @@ Proportions are the alpha's: footprints are its `EntityRadius` and build grids, 
 
 ## HUD (`hud.rs`)
 
-Requirements: every element shows live sim data, nothing is decorative, there are no EA trademarks in the UI, and the panels are our own (gunmetal, teal accents).
+Requirements: every element shows live sim data, the frames are the only decoration, there are no EA trademarks in the UI, and the panels are our own. The 2013 footage's HUD was the mood reference for the structure (a framed bottom bar, a portrait, ability tiles); the shapes, layout and art are designed here and drawn procedurally (`hud/art.rs`), nothing traced. With the player's import of the alpha, the alpha's own bar replaces all of this (`alpha_hud.rs`).
 
-- Conventional RTS zones: minimap bottom-left, selection and production bottom-right, clock top-centre.
-- **Bottom-left panel**: power used/supplied, oil and credits above a minimap with team-coloured units and buildings and neutral resource dots.
-- **Bottom-right panel**: selection name, health and status (construction %, power, cargo), a training row that only appears while something is queued (with a progress bar), and a numbered 3×3 grid showing what the hotkeys 1–9 build or train.
-- **Top centre**: a compact match bar with both factions' tags around the clock. Top left: menu label. Top right: neutral project label.
-- **World overlays**: `COLLECTORS n/cap` over own supply centers (red at the faction cap), and health bars over the selection and damaged entities.
+- **Frames**: bevelled gunmetal plates (brushed grain darkening downward, a black rim, a bevel lit from the upper left like the scene, rivets) with a trim line set into a groove inside the bevel. The trim is the local player's faction colour: EU teal, APA red, GLA sand, as the team palette. Plates stand on the screen's bottom edge with their top corners cut at 45°; the match bar hangs from the top edge with its bottom corners cut. The minimap and the portrait sit in recessed bezels (rim lit from below as a hole is). Every frame is a small image drawn once at startup and nine-sliced, so the bevels keep their pixel size on any panel.
+- **Buttons**: faces with two opposite corners cut and a one-pixel bevel, in four states: idle, hover (lifted, trim-coloured rim), pressed (sunk: bevel and gradient inverted) and off (flat and dim; an empty slot, one the player can't afford, a power not yet available).
+- **Icons**: one white silhouette per class (infantry, vehicle, aircraft, dozer, collector, command center, factory, power plant, supply, derrick, lab, defence, superweapon, civilian building) and per power kind (barrage, repair, airstrike, recon, missiles, cloak; an ambush shows infantry), drawn from signed-distance shapes. They are generic class marks, not unit portraits.
+- **Scale**: laid out for 1280×720 and scaled with the window (its height over 720, or its width over 1280 if narrower), so the HUD keeps its share of the screen; its smallest labels (power keys and names) are 10 px at 720p and 15 px at 1080p. Text is DejaVu Sans Condensed, as the menus; bold for names and figures.
+- Conventional RTS zones: minimap bottom-left, support powers beside it, selection and production bottom-right, clock top-centre.
+- **Bottom-left plate**: a header strip with power used/supplied and a load meter (red over supply; GLA, without power, shows none) and credits, over the minimap in its bezel with team-coloured units and buildings and neutral resource dots.
+- **Power tray**: the general's power and the faction's support powers as tiles with their key, icon, name and time left. A shade sweeps away clockwise as a power charges, with a trim-coloured glow behind the hand; a ready power's tile is lit and says READY, an armed one is pressed and says AIM, and the line above the tray says what the click will do.
+- **Bottom-right plate**: the selection card (the selected def's class silhouette in the portrait bezel, tinted toward the trim; name; a health bar coloured as the world bars; health and status: construction %, power, cargo, deploy, garrison; a training row with a progress bar that only appears while something is queued) beside a 3×3 build tray. Each button shows the slot's class icon, short name and price (red while the player can't pay it), the progress of the item being trained from it along its bottom edge and how many are queued in its corner.
+- **Top centre**: a compact match bar with both factions' tags around the clock; Onslaught's wave countdown and the status line (link, placement, pause, speed) below it. Top left: menu label. Top right: neutral project label.
+- **World overlays**: `COLLECTORS n/cap` over own supply centers (red at the faction cap; scaled with the window as the HUD is), and health bars over the selection and damaged entities.
 - **Feedback** (`tooltip.rs`, `alerts.rs`, `feedback.rs`, the `input.rs` overlays): a grid button's tooltip in the same panel style, above the grid, title in teal and what blocks it in red; an under-attack line in red under the match bar, fading out over its last second, with a red ring closing in on the minimap and pulsing where it happened; order marks as thin gizmo rings on the ground (green move, orange attack-move, teal rally) that shrink and fade in half a second, or the target's ring flashing twice; a selected factory's rally point as a teal line out to a small flag. Thin lines and one accent colour each, so they read over the battle without covering it.
-- Not shown until the systems exist: generals and perks, abilities, experience.
+- Not shown: the general's perks (the Generals screen lists them).
 
 ## Menus (`menu.rs`, `front.rs`)
 
@@ -102,4 +107,4 @@ Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6
 - No animation: rotors, treads, walking infantry, pumpjacks (`view.rs`, `models.rs`).
 - Artillery barrels can't pitch: parts have no pitch rotation (`models.rs` `Part`).
 - Surface wear repeats every 4 m and doesn't follow a building's shape: no rust under ledges or grime gathered in corners, as hand-painted textures have (`surface.rs`).
-- The HUD is our plain panels, not the footage's framed style (`hud.rs`).
+- The HUD's portrait and build buttons show class silhouettes, where the footage's show a picture of each unit; a rendered thumbnail of each model would close that (`hud.rs`).
