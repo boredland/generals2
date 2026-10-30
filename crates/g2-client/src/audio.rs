@@ -64,10 +64,12 @@ pub enum Cue {
     Refused,
     /// One of our units reached a new rank.
     Promoted,
+    /// Something of ours is under attack (`notices`): a warning over the battle.
+    Alert,
 }
 
 impl Cue {
-    pub const ALL: [Cue; 12] = [
+    pub const ALL: [Cue; 13] = [
         Cue::Shot { heavy: false },
         Cue::Shot { heavy: true },
         Cue::Launch,
@@ -80,6 +82,7 @@ impl Cue {
         Cue::Click,
         Cue::Refused,
         Cue::Promoted,
+        Cue::Alert,
     ];
 
     /// Mix level: gunfire under the blasts, notifications above the battle.
@@ -96,6 +99,7 @@ impl Cue {
             Cue::Click => 0.3,
             // A clipped buzz: dense, so it sits lower than the click.
             Cue::Refused => 0.18,
+            Cue::Alert => 0.5,
         }
     }
 }
@@ -544,6 +548,11 @@ fn synth(cue: Cue) -> Vec<f32> {
         }),
         // Four rising tones, a bugle-like arpeggio to the octave.
         Cue::Promoted => chime(&[523.25, 659.25, 783.99, 1_046.5], 0.09),
+        // A two-tone siren, high-low twice: a warning, unlike the rising "done" chimes.
+        Cue::Alert => render(0.6, |t, _| {
+            let f = if ((t / 0.15) as u32).is_multiple_of(2) { 880.0 } else { 660.0 };
+            (sine(f, t) + sine(2.0 * f, t) * 0.3) * env(t % 0.15, 0.005, 0.08)
+        }),
     };
     fade_out(&mut s, 0.01);
     let peak = s.iter().fold(0.0f32, |m, v| m.max(v.abs()));

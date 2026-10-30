@@ -4,9 +4,10 @@
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [match flags as above]      two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera close|medium|far] [--select DEF] [--movie-frame N] [--frames N] [--no-hud] [...]
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera close|medium|far] [--select DEF] [--hover-slot N] [--movie-frame N] [--frames N] [--no-hud] [...]
 //!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
-//!             to a path holding {}, e.g. clip/{}.png)
+//!             to a path holding {}, e.g. clip/{}.png); `--hover-slot N` shows the tooltip of
+//!             build-grid button N (from 0) as if hovered, for the `--select`ed building
 //!
 //! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
 //! mode: no base, waves on a schedule, and you win by outlasting the last one.
@@ -30,10 +31,12 @@
 // opens no console beside the game; its messages (headless runs included) are then not shown.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod alerts;
 mod alpha;
 mod alpha_hud;
 mod audio;
 mod camera;
+mod feedback;
 mod front;
 mod fx;
 mod hud;
@@ -46,9 +49,11 @@ mod movie;
 mod net;
 mod profile;
 mod rig;
+mod select;
 mod settings;
 mod sim;
 mod terrain;
+mod tooltip;
 mod utfwin;
 mod view;
 
@@ -74,6 +79,8 @@ struct Args {
     paused: bool,
     /// Headless only: select the local player's first entity of this def.
     select: Option<String>,
+    /// Headless only: show the tooltip of this build-grid button, as if hovered.
+    hover_slot: Option<usize>,
     /// Headless only: show the imported intro movie, held at this frame.
     movie_frame: Option<usize>,
     /// Headless only: a clip of this many frames, one sim tick each, instead of one shot.
@@ -107,6 +114,7 @@ fn parse_args() -> Result<Args, String> {
         menu: None,
         paused: false,
         select: None,
+        hover_slot: None,
         movie_frame: None,
         frames: None,
         no_hud: false,
@@ -193,6 +201,10 @@ fn parse_args() -> Result<Args, String> {
                 }
             }
             "--select" => a.select = Some(it.next().ok_or("--select needs a def name")?),
+            "--hover-slot" => {
+                a.hover_slot =
+                    Some(it.next().and_then(|v| v.parse().ok()).ok_or("--hover-slot needs a grid button number")?)
+            }
             "--movie-frame" => {
                 a.movie_frame =
                     Some(it.next().and_then(|v| v.parse().ok()).ok_or("--movie-frame needs a frame number")?)
@@ -255,6 +267,7 @@ fn main() -> AppExit {
                 view: args.view,
                 size: args.size,
                 select: args.select,
+                hover_slot: args.hover_slot,
                 movie_frame: args.movie_frame,
                 frames: args.frames,
                 no_hud: args.no_hud,
@@ -373,6 +386,7 @@ fn windowed(mut sim: Sim, record: Option<String>, direct: bool) -> AppExit {
         camera::CameraPlugin,
         input::InputPlugin,
         hud::HudPlugin,
+        (tooltip::TooltipPlugin, alerts::AlertsPlugin),
         audio::SoundPlugin,
         movie::MoviePlugin,
         rig::RigPlugin,
@@ -430,6 +444,7 @@ mod headless {
         pub view: View,
         pub size: (u32, u32),
         pub select: Option<String>,
+        pub hover_slot: Option<usize>,
         pub movie_frame: Option<usize>,
         pub frames: Option<u32>,
         pub no_hud: bool,
@@ -437,7 +452,7 @@ mod headless {
     }
 
     pub fn run(mut sim: Sim, ui: crate::menu::Ui, capture: Capture) -> AppExit {
-        let Capture { ticks, path, view, size, select, movie_frame, frames, no_hud, battlefield } = capture;
+        let Capture { ticks, path, view, size, select, hover_slot, movie_frame, frames, no_hud, battlefield } = capture;
         sim.speed = 0;
         if frames.is_some() && !path.contains("{}") {
             eprintln!("--frames needs a --screenshot path with {{}} for the frame number");
@@ -452,10 +467,13 @@ mod headless {
             return AppExit::error();
         }
         // The last few ticks' tracers and blasts, plus every shell still in the air, drawn
-        // where it is along its flight, so the frame shows the battle as it stands.
+        // where it is along its flight, so the frame shows the battle as it stands. Alerts are
+        // gathered throughout, as in play, so the frame shows the ones still on screen.
         let mut hits = crate::sim::Hits::default();
+        let mut alerts = crate::alerts::Alerts::default();
         for t in 0..ticks {
             sim.world.step();
+            alerts.observe(&sim.world, sim.local);
             if t + 4 >= ticks {
                 crate::sim::collect_shots(&sim.world, &mut hits);
             }
@@ -504,9 +522,12 @@ mod headless {
             crate::terrain::TerrainPlugin,
             crate::view::ViewPlugin,
             crate::hud::HudPlugin,
+            crate::tooltip::TooltipPlugin,
+            crate::alerts::AlertsPlugin,
             crate::rig::RigPlugin,
         ))
         .insert_resource(hits)
+        .insert_resource(alerts)
         // Warm-up frames run on wall time; frozen effects survive until the capture.
         .insert_resource(crate::view::FreezeEffects)
         .insert_resource(crate::hud::HeadlessScreen(Vec2::new(size.0 as f32, size.1 as f32)))
@@ -522,6 +543,9 @@ mod headless {
             return AppExit::error();
         }
         app.insert_resource(crate::input::Selection(selected.into_iter().collect()));
+        if let Some(n) = hover_slot {
+            app.insert_resource(crate::tooltip::HoverSlot(n));
+        }
         if let Some(frame) = movie_frame {
             let Some(cache) = app.world().get_resource::<crate::alpha::Cache>().cloned() else {
                 eprintln!("--movie-frame: no imported alpha");

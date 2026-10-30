@@ -243,6 +243,7 @@ fn effect_for(cue: Cue) -> &'static str {
         Cue::Click => "sound/sfx/neutral/ui/waves/ui_default",
         Cue::Refused => "sound/sfx/neutral/ui/waves/ui_error",
         Cue::Promoted => "sound/sfx/neutral/ui/waves/ui_upgrade_unlocked",
+        Cue::Alert => "sound/sfx/neutral/ui/waves/ui_minimap_ping",
     }
 }
 

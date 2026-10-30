@@ -81,8 +81,9 @@ pub enum Event {
         credits: i64,
     },
     /// `shooter` hit `target` (standing at `at`) for `damage`; `killed` when that destroyed
-    /// it; `splash` when the damage came from a shell's blast rather than direct fire. Output
-    /// only, like `Delivered`.
+    /// it; `splash` when the damage came from a shell's blast rather than direct fire. `by` is
+    /// the shooter's player (a power's too), `victim` the target's owner. Output only, like
+    /// `Delivered`.
     Hit {
         shooter: EntityId,
         target: EntityId,
@@ -92,6 +93,8 @@ pub enum Event {
         splash: bool,
         /// What `target` was, for drawing what it leaves behind once it is swept away.
         target_def: DefId,
+        by: PlayerId,
+        victim: Option<PlayerId>,
     },
     /// An artillery shell left `shooter` at `from`; it lands at `at` on tick `lands`. Output
     /// only, for drawing the flight.
@@ -352,6 +355,7 @@ impl World {
             revealed_until: None,
             cloaked_until: None,
             special_at: 0,
+            rally: None,
             route: Route::default(),
         }
     }
@@ -1112,6 +1116,15 @@ impl World {
                 }
                 Ok(())
             }
+            CommandKind::SetRally { producer, at } => {
+                let p = self.owned(player, *producer)?;
+                if self.rules.def(p.def).produces.is_empty() {
+                    return Err(Reject::CannotProduce);
+                }
+                let at = self.map.clamp(*at);
+                self.entities.get_mut(*producer).unwrap().rally = Some(at);
+                Ok(())
+            }
         }
     }
 
@@ -1274,7 +1287,7 @@ impl World {
                 continue;
             }
             e.queue.remove(0);
-            let (pos, radius, building) = (e.pos, self.rules.def(e.def).radius, e.def);
+            let (pos, radius, building, rally) = (e.pos, self.rules.def(e.def).radius, e.def, e.rally);
             let def = match item {
                 Product::Unit(def) => def,
                 Product::Upgrade(upgrade) => {
@@ -1298,6 +1311,12 @@ impl World {
                 let u = self.entities.get_mut(unit).unwrap();
                 u.home = Some(id);
                 u.order = Order::Gather { pile, phase: GatherPhase::ToPile };
+            } else if let Some(rally) = rally {
+                // OpenRA's `RallyPoint`: a new unit walks to its building's rally point, to
+                // the slot a move order there would give it (off buildings and cliffs).
+                let (_, dest) = self.formation(&[unit], rally)[0];
+                let u = self.entities.get_mut(unit).unwrap();
+                u.order = Order::Move { target: dest, pace: ud.speed() };
             }
         }
     }
@@ -2229,7 +2248,7 @@ impl World {
             {
                 self.players[v.0 as usize].hit_by_stealth = true;
             }
-            self.events.push(Event::Hit { shooter, target, at, damage, killed, splash, target_def: def });
+            self.events.push(Event::Hit { shooter, target, at, damage, killed, splash, target_def: def, by, victim });
             if killed {
                 self.stats[by.0 as usize].kills += 1;
                 if let Some(v) = victim {

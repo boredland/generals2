@@ -51,6 +51,7 @@ Requirements: every element shows live sim data, nothing is decorative, there ar
 - **Bottom-right panel**: selection name, health and status (construction %, power, cargo), a training row that only appears while something is queued (with a progress bar), and a numbered 3×3 grid showing what the hotkeys 1–9 build or train.
 - **Top centre**: a compact match bar with both factions' tags around the clock. Top left: menu label. Top right: neutral project label.
 - **World overlays**: `COLLECTORS n/cap` over own supply centers (red at the faction cap), and health bars over the selection and damaged entities.
+- **Feedback** (`tooltip.rs`, `alerts.rs`, `feedback.rs`, the `input.rs` overlays): a grid button's tooltip in the same panel style, above the grid, title in teal and what blocks it in red; an under-attack line in red under the match bar, fading out over its last second, with a red ring closing in on the minimap and pulsing where it happened; order marks as thin gizmo rings on the ground (green move, orange attack-move, teal rally) that shrink and fade in half a second, or the target's ring flashing twice; a selected factory's rally point as a teal line out to a small flag. Thin lines and one accent colour each, so they read over the battle without covering it.
 - Not shown until the systems exist: generals and perks, abilities, experience.
 
 ## Menus (`menu.rs`, `front.rs`)

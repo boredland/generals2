@@ -132,6 +132,9 @@ pub struct Entity {
     pub cloaked_until: Option<u32>,
     /// Units with a `Def::special`: the tick from which it can fire again (0: ready).
     pub special_at: u32,
+    /// Production buildings: where the units it trains walk once out (`SetRally`). `None`
+    /// until the owner sets one.
+    pub rally: Option<Vec2>,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
 }
@@ -286,6 +289,7 @@ mod tests {
             revealed_until: None,
             cloaked_until: None,
             special_at: 0,
+            rally: None,
             route: Route::default(),
         }
     }

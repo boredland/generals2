@@ -92,6 +92,12 @@ pub enum CommandKind {
         units: Vec<EntityId>,
         target: EntityId,
     },
+    /// From now on, units that `producer` (a building that trains units) finishes walk to
+    /// `at` (OpenRA's `SetRallyPoint`); collectors from a supply center still go gathering.
+    SetRally {
+        producer: EntityId,
+        at: Vec2,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.

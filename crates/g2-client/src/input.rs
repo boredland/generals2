@@ -1,20 +1,25 @@
 //! Mouse and keyboard → sim commands.
 //!
-//! Left click/drag: select own units (click on a building selects it).
+//! Left click/drag: select own units (click on a building selects it); a double click on an
+//! own unit or building adds every one of its kind on screen (OpenRA's `SelectActorsOnScreen`).
 //! Right click: context order (enemy → attack, supply pile → gather, own foundation →
 //! construct, ground → move), on release, so a right-button drag that panned the camera
-//! orders nothing. Ctrl + click on the ground attack-moves. Under the Classic control scheme
-//! (`settings.rs`, as OpenRA's) a left click orders the selected units instead, unless it is on
-//! one of our own units or buildings, which it selects; a right click deselects.
-//! With a constructor selected: B opens build mode, 1-9 pick a building, left click places, Esc cancels.
-//! With a building selected: 1-9 queue production, Backspace cancels the last item.
-//! Clicking a build-grid button is pressing its key; clicking the minimap moves the camera
-//! there. A click on any HUD panel stays with the HUD: it never selects or orders in the world.
+//! orders nothing. Ctrl + click on the ground attack-moves. With only own production buildings
+//! selected, a click on the ground sets their rally point (OpenRA's `RallyPoint`). Under the
+//! Classic control scheme (`settings.rs`, as OpenRA's) a left click orders the selected units
+//! instead, unless it is on one of our own units or buildings, which it selects; a right click
+//! deselects. Each order shows where it went (`feedback.rs`).
+//! Building and training are by clicking the build grid, as in OpenRA: a constructor's cell
+//! starts placing that building (left click places, Esc cancels), a building's cell queues
+//! that unit or research; Backspace cancels the selected building's last item. The number
+//! keys are control groups, and Z / X select many at once (`select.rs`). Clicking the minimap
+//! moves the camera there. A click on any HUD panel stays with the HUD: it never selects or
+//! orders in the world.
 //! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
 //! collector and centres the camera on it. G arms the general's power, F1-F3 the faction's
 //! support powers: the next left click aims it (right click or Esc disarms). Esc is handled by
 //! `menu` alone, so it cancels a placement or an armed power before it opens the pause menu.
-//! M (mute) is handled by `audio`.
+//! M (mute) is handled by `audio`, V (to the last alert) by `alerts`.
 
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
@@ -41,24 +46,18 @@ pub const SPECIAL: u8 = u8::MAX;
 /// The key that arms each power slot.
 pub const POWER_KEYS: [KeyCode; 4] = [KeyCode::KeyG, KeyCode::F1, KeyCode::F2, KeyCode::F3];
 
-/// The left button's drag start, and whether the right button went down over the world.
+/// The left button's drag start, whether the right button went down over the world, and the
+/// last left click (where and when), for telling a double click.
 #[derive(Resource, Default)]
 struct Drag {
     left: Option<Vec2>,
     right: bool,
+    last_click: Option<(Vec2, f64)>,
 }
 
-const DIGITS: [KeyCode; 9] = [
-    KeyCode::Digit1,
-    KeyCode::Digit2,
-    KeyCode::Digit3,
-    KeyCode::Digit4,
-    KeyCode::Digit5,
-    KeyCode::Digit6,
-    KeyCode::Digit7,
-    KeyCode::Digit8,
-    KeyCode::Digit9,
-];
+/// OpenRA's `MultiTapDetection` for the mouse: a second click within 250 ms and 4 pixels of
+/// the first is a double click.
+const DOUBLE_CLICK: (f64, f32) = (0.25, 4.0);
 
 pub struct InputPlugin;
 
@@ -72,6 +71,7 @@ impl Plugin for InputPlugin {
             .init_resource::<Placement>()
             .init_resource::<PowerAim>()
             .init_resource::<Drag>()
+            .add_plugins((crate::select::SelectPlugin, crate::feedback::FeedbackPlugin))
             .add_systems(
                 Update,
                 (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays)
@@ -234,11 +234,6 @@ pub(crate) fn keyboard(
             }
         }
     }
-    for (i, key) in DIGITS.iter().enumerate() {
-        if keys.just_pressed(*key) {
-            press_slot(&mut sim, &sel, &mut placing, i);
-        }
-    }
     if selected_constructor(&sim, &sel).is_none()
         && let Some(producer) = selected_building(&sim, &sel)
         && keys.just_pressed(KeyCode::Backspace)
@@ -247,7 +242,7 @@ pub(crate) fn keyboard(
     }
 }
 
-/// A left click on the HUD: a build-grid cell presses its hotkey, the minimap moves the
+/// A left click on the HUD: a build-grid cell builds, trains or researches its slot, the minimap moves the
 /// camera there. Returns whether the HUD took the click.
 fn hud_click(
     point: Vec2,
@@ -283,8 +278,8 @@ fn hud_click(
 }
 
 /// What a build-grid slot does for the selection: a constructor's slot starts placing that
-/// building, a building's trains that unit or researches that upgrade. Shared by the 1-9 keys
-/// and the grid buttons, and read from the same menu the grid shows.
+/// building, a building's trains that unit or researches that upgrade. Read from the same
+/// menu the grid shows.
 fn press_slot(sim: &mut Sim, sel: &Selection, placing: &mut Placement, i: usize) {
     use crate::hud::Slot;
     let Some(&slot) = crate::hud::build_menu(sim, sel).get(i) else { return };
@@ -331,6 +326,8 @@ fn mouse(
     hud: HudQueries,
     settings: Res<crate::settings::Settings>,
     pan: Res<crate::camera::PanDrag>,
+    time: Res<Time>,
+    mut marks: ResMut<crate::feedback::Marks>,
 ) {
     let (Ok(window), Ok((camera, cam_tf, mut rts))) = (window.single(), cam.single_mut()) else { return };
     let Some(cursor) = window.cursor_position() else { return };
@@ -395,18 +392,34 @@ fn mouse(
     if buttons.just_released(MouseButton::Left)
         && let (Some(start), Some(end)) = (drag.left.take(), window.cursor_position())
     {
-        // Classic: a click that would order the selection orders it instead of selecting.
-        if classic && start.distance(end) < 6.0 && overrides_selection(&sim, &sel, here) {
-            give_orders(&mut sim, &sel, here, attack_move);
+        let click = start.distance(end) < 6.0;
+        let now = time.elapsed_secs_f64();
+        let double = click
+            && drag.last_click.is_some_and(|(at, t)| now - t < DOUBLE_CLICK.0 && at.distance(end) < DOUBLE_CLICK.1);
+        drag.last_click = click.then_some((end, now));
+        // Classic: a click that would order the selection orders it instead of selecting,
+        // unless it is the second of a double click (OpenRA's `!multiClick`).
+        if classic && click && !double && overrides_selection(&sim, &sel, here) {
+            give_orders(&mut sim, &sel, here, attack_move, &mut marks);
+            return;
+        }
+        // Support jets fly their pass on their own: they can't be selected.
+        let selectable = |e: &g2_sim::Entity| e.owner == Some(me) && !sim.world.rules.def(e.def).is_support_jet();
+        // A double click on one of ours adds every one of its kind on screen (OpenRA's
+        // `SelectActorsOnScreen` with its selection class).
+        if double && let Some(def) = pick(&sim, here, selectable).and_then(|id| sim.world.entity(id)).map(|e| e.def) {
+            for id in crate::select::on_screen(&sim, cam, |e| e.def == def) {
+                if !sel.0.contains(&id) {
+                    sel.0.push(id);
+                }
+            }
             return;
         }
         let additive = keys.pressed(KeyCode::ShiftLeft);
         if !additive {
             sel.0.clear();
         }
-        // Support jets fly their pass on their own: they can't be selected.
-        let selectable = |e: &g2_sim::Entity| e.owner == Some(me) && !sim.world.rules.def(e.def).is_support_jet();
-        if start.distance(end) < 6.0 {
+        if click {
             if let Some(id) = pick(&sim, here, selectable) {
                 sel.0.push(id);
             }
@@ -436,14 +449,36 @@ fn mouse(
         if classic {
             sel.0.clear();
         } else {
-            give_orders(&mut sim, &sel, here, attack_move);
+            give_orders(&mut sim, &sel, here, attack_move, &mut marks);
         }
     }
 }
 
+/// The selection's own finished buildings that train units: the ones a rally point applies to.
+fn selected_producers(sim: &Sim, sel: &Selection) -> Vec<EntityId> {
+    let rules = sim.world.rules;
+    sel.0
+        .iter()
+        .copied()
+        .filter(|&id| {
+            sim.world
+                .entity(id)
+                .is_some_and(|e| e.owner == Some(sim.local) && e.is_complete() && !rules.def(e.def).produces.is_empty())
+        })
+        .collect()
+}
+
 /// The selected units' context order at `here`: attack an enemy, gather from a pile, help
 /// build our foundation, get into a building with room, else move (attack-move with Ctrl).
-fn give_orders(sim: &mut Sim, sel: &Selection, here: g2_sim::Vec2, attack_move: bool) {
+/// Selected production buildings set their rally point at a click on open ground, as OpenRA's
+/// rally targets terrain only. Each order leaves its mark (`feedback`).
+fn give_orders(
+    sim: &mut Sim,
+    sel: &Selection,
+    here: g2_sim::Vec2,
+    attack_move: bool,
+    marks: &mut crate::feedback::Marks,
+) {
     let me = sim.local;
     let units: Vec<EntityId> = sel
         .0
@@ -451,13 +486,20 @@ fn give_orders(sim: &mut Sim, sel: &Selection, here: g2_sim::Vec2, attack_move: 
         .copied()
         .filter(|&id| sim.world.entity(id).is_some_and(|e| sim.world.rules.def(e.def).is_unit()))
         .collect();
-    if units.is_empty() {
-        return;
-    }
     let rules = sim.world.rules;
     // An enemy under the cursor wins over our own entities or a pile it stands next to.
     let enemy = pick(sim, here, |e| e.owner.is_some_and(|o| o != me));
     let target = enemy.or_else(|| pick(sim, here, |e| e.owner.is_none() || e.owner == Some(me)));
+    if target.is_none() {
+        for producer in selected_producers(sim, sel) {
+            let kind = CommandKind::SetRally { producer, at: here };
+            marks.order(&kind, here);
+            sim.order(kind);
+        }
+    }
+    if units.is_empty() {
+        return;
+    }
     let armed = |id: &EntityId| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).weapon().is_some());
     let kinds = match target.and_then(|t| sim.world.entity(t)) {
         // Armed units attack; the rest of a mixed selection walks to the spot instead of
@@ -495,19 +537,21 @@ fn give_orders(sim: &mut Sim, sel: &Selection, here: g2_sim::Vec2, attack_move: 
         _ => [Some(CommandKind::Move { units, target: here }), None],
     };
     for kind in kinds.into_iter().flatten() {
+        marks.order(&kind, here);
         sim.order(kind);
     }
 }
 
 /// Classic's left click orders rather than selects (OpenRA's `InputOverridesSelection`): with
 /// units selected, anywhere but on one of our own entities, or on our own foundation or a
-/// building with room for the selection's infantry, which the order uses.
+/// building with room for the selection's infantry, which the order uses; with production
+/// buildings selected, on open ground, where it sets their rally point.
 fn overrides_selection(sim: &Sim, sel: &Selection, here: g2_sim::Vec2) -> bool {
     let me = sim.local;
     let rules = sim.world.rules;
     let has_units = sel.0.iter().any(|&id| sim.world.entity(id).is_some_and(|e| rules.def(e.def).is_unit()));
     if !has_units {
-        return false;
+        return !selected_producers(sim, sel).is_empty() && pick(sim, here, |_| true).is_none();
     }
     let Some(own) = pick(sim, here, |e| e.owner == Some(me)).and_then(|id| sim.world.entity(id)) else {
         return true;
@@ -545,6 +589,17 @@ fn draw_overlays(
             && power > 0
         {
             gizmos.circle(flat(sim.to_world(e.pos)), power_radius.to_f32(), Color::srgba(1.0, 0.9, 0.2, 0.5));
+        }
+        // A selected building's rally point: a line out to a flag on a pole, as OpenRA's
+        // `RallyPointIndicator` draws its path and flag, in the rally mark's colour.
+        if let Some(rally) = e.rally.filter(|_| e.owner == Some(sim.local)) {
+            let c = crate::feedback::color(crate::feedback::Kind::Rally);
+            let (from, to) = (sim.to_world(e.pos) + Vec3::Y * 0.5, sim.to_world(rally) + Vec3::Y * 0.5);
+            gizmos.line(from, to, c.with_alpha(0.6));
+            let top = to + Vec3::Y * 6.0;
+            gizmos.line(to, top, c);
+            gizmos.linestrip([top, top + Vec3::new(2.5, -1.0, 0.0), top + Vec3::new(0.0, -2.0, 0.0)], c);
+            gizmos.circle(flat(sim.to_world(rally)), 1.5, c);
         }
     }
     if let (Some(def), Ok(window), Ok(cam)) = (placing.0, window.single(), cam.single())
@@ -631,11 +686,11 @@ mod tests {
         assert_eq!(armed(None, KeyCode::F1, raid), Some(1), "support ready without a general");
     }
 
-    /// A click on the HUD is the HUD's: on a build-grid button it trains that slot's unit as
-    /// the hotkey would, on bare panel art it issues nothing, on the minimap it moves the
-    /// camera there, and the same click off the HUD reaches the world (a click on open
-    /// ground drops the selection). The nodes are laid out at scale 2 (sizes and centres in
-    /// physical pixels), the cursor in logical pixels, as on a HiDPI window.
+    /// A click on the HUD is the HUD's: on a build-grid button it trains that slot's unit, on
+    /// bare panel art it issues nothing, on the minimap it moves the camera there, and the
+    /// same click off the HUD reaches the world (a click on open ground drops the selection).
+    /// The nodes are laid out at scale 2 (sizes and centres in physical pixels), the cursor in
+    /// logical pixels, as on a HiDPI window.
     #[test]
     fn hud_clicks_never_reach_the_world() {
         use bevy::ecs::system::RunSystemOnce;
@@ -701,6 +756,8 @@ mod tests {
             world.init_resource::<Drag>();
             world.init_resource::<crate::settings::Settings>();
             world.init_resource::<crate::camera::PanDrag>();
+            world.init_resource::<Time>();
+            world.init_resource::<crate::feedback::Marks>();
             world.run_system_once(mouse).unwrap();
             // A world click completes on release: release on the same spot.
             world.resource_mut::<ButtonInput<MouseButton>>().clear();
@@ -724,5 +781,109 @@ mod tests {
             "minimap centre moves the camera to {centre}, got {pivot}"
         );
         assert_eq!(click(Vec2::new(640.0, 200.0)).1, 0, "open ground: the world takes the click");
+    }
+
+    /// `mouse` through a real camera and window over the local base, in an app so time runs.
+    struct Clicks {
+        app: App,
+    }
+
+    impl Clicks {
+        fn new(sim: Sim, sel: Vec<EntityId>, at: Vec3) -> Clicks {
+            use bevy::time::TimeUpdateStrategy;
+            let mut app = App::new();
+            app.add_plugins(MinimalPlugins)
+                .insert_resource(TimeUpdateStrategy::ManualDuration(std::time::Duration::from_millis(16)))
+                .init_resource::<ButtonInput<MouseButton>>()
+                .init_resource::<ButtonInput<KeyCode>>()
+                .insert_resource(sim)
+                .insert_resource(Selection(sel))
+                .init_resource::<Placement>()
+                .init_resource::<PowerAim>()
+                .init_resource::<Drag>()
+                .init_resource::<crate::settings::Settings>()
+                .init_resource::<crate::camera::PanDrag>()
+                .init_resource::<crate::feedback::Marks>()
+                .add_systems(Update, mouse);
+            let mut window = Window::default();
+            window.resolution.set(1280.0, 720.0);
+            app.world_mut().spawn((window, PrimaryWindow));
+            crate::select::tests::spawn_camera(app.world_mut(), at);
+            app.update();
+            Clicks { app }
+        }
+
+        /// The screen point of world `p`.
+        fn screen(&mut self, p: Vec3) -> Vec2 {
+            let w = self.app.world_mut();
+            let (c, tf) = w.query::<(&Camera, &GlobalTransform)>().single(w).unwrap();
+            c.world_to_viewport(tf, p).unwrap()
+        }
+
+        /// A press and a release of `button` at `at`, a frame each.
+        fn click(&mut self, button: MouseButton, at: Vec2) {
+            let w = self.app.world_mut();
+            w.query::<&mut Window>().single_mut(w).unwrap().set_cursor_position(Some(at));
+            for press in [true, false] {
+                let mut b = self.app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+                b.clear();
+                if press {
+                    b.press(button)
+                } else {
+                    b.release(button)
+                }
+                self.app.update();
+            }
+        }
+    }
+
+    /// A right click on open ground with only a factory selected sets its rally point there,
+    /// with a teal mark; a right click on a unit of ours does not.
+    #[test]
+    fn right_click_on_the_ground_sets_the_rally_point() {
+        let (mut sim, squads) = crate::select::tests::sim_with_units();
+        let barracks = sim.world.entities().find(|e| e.def == g2_rules::ids::GLA_BARRACKS).unwrap().id;
+        // Out of the way, so open ground in front of the barracks is clear.
+        let away = sim.world.entity(barracks).unwrap().pos + g2_sim::Vec2::from_int(0, 60);
+        sim.world.submit(sim.local, CommandKind::Move { units: squads.clone(), target: away });
+        for _ in 0..30 * 15 {
+            sim.world.step();
+        }
+        let b = sim.to_world(sim.world.entity(barracks).unwrap().pos);
+        let unit_at = sim.to_world(sim.world.entity(squads[0]).unwrap().pos);
+        let mut c = Clicks::new(sim, vec![barracks], b);
+        let on_unit = c.screen(unit_at);
+        c.click(MouseButton::Right, on_unit);
+        assert_eq!(c.app.world().resource::<Sim>().unheard_orders, 0, "a click on a unit sets no rally");
+        let ground = c.screen(b + Vec3::new(-25.0, 0.0, 0.0));
+        c.click(MouseButton::Right, ground);
+        let sim = &mut c.app.world_mut().resource_mut::<Sim>();
+        assert_eq!(sim.unheard_orders, 1);
+        for _ in 0..=g2_sim::world::INPUT_DELAY {
+            sim.world.step();
+        }
+        let rally = sim.world.entity(barracks).unwrap().rally.expect("rally set");
+        assert!((rally.x.to_f32() - (b.x - 25.0)).abs() < 1.5 && (rally.y.to_f32() - b.z).abs() < 1.5, "{rally:?}");
+        let marks = &c.app.world().resource::<crate::feedback::Marks>().0;
+        assert!(marks.iter().any(|m| m.kind == crate::feedback::Kind::Rally), "{marks:?}");
+    }
+
+    /// A double click on one squad selects every squad of ours on screen, not the worker; two
+    /// clicks slower than OpenRA's 250 ms select just the one.
+    #[test]
+    fn a_double_click_selects_the_kind_on_screen() {
+        let (sim, squads) = crate::select::tests::sim_with_units();
+        let first = sim.to_world(sim.world.entity(squads[0]).unwrap().pos);
+        let mut c = Clicks::new(sim, Vec::new(), first);
+        let at = c.screen(first);
+        c.click(MouseButton::Left, at);
+        assert_eq!(c.app.world().resource::<Selection>().0, vec![squads[0]], "one click: one squad");
+        c.click(MouseButton::Left, at);
+        assert_eq!(c.app.world().resource::<Selection>().0, squads, "double click: every squad on screen");
+        for _ in 0..20 {
+            c.app.update();
+        }
+        c.click(MouseButton::Left, at);
+        assert_eq!(c.app.world().resource::<Selection>().0, vec![squads[0]], "a later click selects one again");
     }
 }

@@ -319,6 +319,11 @@ impl Writer {
                 self.ids(units);
                 self.id(*target);
             }
+            CommandKind::SetRally { producer, at } => {
+                self.u8(18);
+                self.id(*producer);
+                self.pos(*at);
+            }
         }
     }
 }
@@ -388,6 +393,7 @@ impl Reader<'_> {
             15 => CommandKind::Power { slot: self.u8()?, at: self.pos()? },
             16 => CommandKind::Transform { units: self.ids()? },
             17 => CommandKind::Special { units: self.ids()?, target: self.id()? },
+            18 => CommandKind::SetRally { producer: self.id()?, at: self.pos()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

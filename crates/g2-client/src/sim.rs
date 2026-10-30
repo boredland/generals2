@@ -273,6 +273,7 @@ impl Plugin for SimPlugin {
             .init_resource::<Deliveries>()
             .init_resource::<Hits>()
             .init_resource::<Heard>()
+            .init_resource::<crate::alerts::Alerts>()
             .add_systems(FixedUpdate, step_sim);
     }
 }
@@ -283,6 +284,7 @@ fn step_sim(
     mut deliveries: ResMut<Deliveries>,
     mut hits: ResMut<Hits>,
     mut heard: ResMut<Heard>,
+    mut alerts: ResMut<crate::alerts::Alerts>,
 ) {
     if sim.speed == 0 {
         return;
@@ -313,6 +315,7 @@ fn step_sim(
             sim.rolled_out = rolled_out;
         }
         collect_shots(&sim.world, &mut hits);
+        alerts.observe(&sim.world, me);
         heard.0.extend(crate::audio::sim_cues(&sim));
         if heard.0.len() > HEARD_MAX {
             let over = heard.0.len() - HEARD_MAX;

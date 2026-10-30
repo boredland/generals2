@@ -45,9 +45,12 @@ What works:
 - **Pathfinding** (`crates/g2-sim/src/nav.rs`): units route around buildings, foundations, resources and, on imported maps, cliffs and water. A 2-unit grid; a cell is blocked when it lies within a static's radius plus a unit's radius, or overlaps terrain the original engine marks impassable (the map's own cliff bits, or for pre-v7 maps the engine's 9.8-unit height-span rule, and cells under a water area). Integer A* with fixed tie-breaking and line-of-sight smoothing; an unreachable goal routes to the closest reachable cell. A unit walks straight while the line is clear and plans only when it isn't. Routes are entity state and part of the hash. Buildings can't be placed on cliffs or water. Collectors don't push each other (two meeting head-on in a gap between buildings blocked each other for good), and a test checks, on the tightly packed base layout that exposed both bugs, that no EU or APA collector stands still for 20 s on a gather run; it fails if routing or the collector exemption is switched off.
 - **Replays**: setup + human commands + a state hash every second, plus a fingerprint of the map, so a replay whose map file has since changed is reported as such instead of as a divergence. `g2-tools verify` re-simulates a replay and names the first tick that diverges. A committed golden replay fails the test suite on any unintended behaviour change.
 - **Bevy 0.20 client** (`crates/g2-client`):
-  - RTS camera, selection, and context orders (attack, move, gather, help build; Ctrl + right click attack-moves).
+  - RTS camera, selection, and context orders (attack, move, gather, help build; Ctrl + right click attack-moves), with OpenRA's selection tools (`crates/g2-client/src/select.rs`): control groups on the number keys with its default keys (Ctrl to make, Shift to add a group to the selection, Ctrl + Shift to add the selection to it, Alt or a double tap within its 250 ms to go there; a unit is in one group at most, the dead drop out), a double click on a unit selecting every one of its kind on screen, Z for every unit on screen (then the map) and X for more of the selected kinds. OpenRA puts those two on Q and W, which rotate and pan here.
+  - **Rally points** (`SetRally`, replay tag 18; OpenRA's `RallyPoint`): with your production buildings selected, a right click on open ground sets where their new units walk (collectors from a supply center still go gathering); the selected building shows a line out to a flag. Part of the state hash only once set, so matches without one hash as before; the AI sets none.
+  - **Order feedback** (`feedback.rs`, OpenRA's `OrderEffects`): each order shows where it went for half a second, a ring closing in on the ground (green move, orange attack-move, teal rally point), or the target's ring flashing twice (red attack, white gather, garrison, help build).
+  - **Under-attack alerts** (`alerts.rs`, OpenRA's `DamageNotifier` and `HarvesterAttackNotifier` with their intervals): "Our base is under attack" when an enemy hits a building of yours, at most every 30 s, "Our collector is under attack" every 30 s, "Our unit is under attack" every 10 s; a red ping closes in on the minimap where it happened and pulses for 10 s, a two-tone warning plays (the alpha's minimap ping with an import), and V takes the camera there (OpenRA's `ToLastEvent`, Space there; Space pauses here).
   - Build placement with validity preview (derricks snap to wells).
-  - Production hotkeys, a HUD, pause and ×1–×8 speed. The build grid shows prices after your general's modifiers, and the match bar names both generals.
+  - A HUD, pause and ×1–×8 speed. The build grid shows prices after your general's modifiers, and the match bar names both generals. Building and training is by clicking the grid, as in OpenRA; hovering a button shows a **tooltip** (`tooltip.rs`): price and build time after your modifiers, armour and hit points, the weapon (damage, range, rate, ground or air) and what it is strong or weak against from its armour bonuses, power, and why it would do nothing now (money short, queue full, collector cap, unpowered). With an imported alpha it is our panel too: the alpha's tooltip layouts draw abilities this game doesn't have. `--hover-slot N` shows one in a headless shot.
   - Collectors: cargo pips over your own collectors, a "+credits" pop-up over the supply center on every delivery (none are lost at ×8; a test compares them with the sim), and Tab cycles through your collectors.
   - Interpolated movement between sim ticks.
   - `--record FILE` saves the match as a replay on exit, for `g2-tools verify`.
@@ -198,18 +201,25 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 
 | Input | Action |
 |---|---|
-| Left click / drag | Select own units (click selects buildings too); Shift adds |
-| Right click | Enemy → attack (unarmed units in the selection walk there); supply pile → gather; own foundation → help build; ground → move. Given on release: a right-button drag that panned the camera orders nothing |
+| Left click / drag | Select own units (click selects buildings too); Shift adds. Double click: add every own unit or building of that kind on screen |
+| Right click | Enemy → attack (unarmed units in the selection walk there); supply pile → gather; own foundation → help build; ground → move, and with your production buildings selected, sets their rally point. Given on release: a right-button drag that panned the camera orders nothing |
 | Ctrl + right click | Attack-move: armed units fight anything they meet on the way |
-| Constructor selected: `1`–`9` | Choose a building; left click places (Shift repeats); Esc / right click cancels |
-| Building selected: `1`–`9` | Queue production; Backspace cancels the last item |
+| Click the build grid | Constructor selected: choose a building, left click places (Shift repeats), Esc / right click cancels. Building selected: queue production; Backspace cancels the last item. Hover for the tooltip |
+| `1`–`0` | Select control group (OpenRA's defaults throughout); twice within 250 ms also centres the camera on it |
+| Ctrl + `1`–`0` | Make the selection that control group (Meta on macOS) |
+| Shift + `1`–`0` / Ctrl + Shift + `1`–`0` | Add the group to the selection / add the selection to the group |
+| Alt + `1`–`0` | Centre the camera on the group |
+| Z / X | Select every own unit on screen (again: on the map) / add every unit of the selected kinds on screen (again: on the map). OpenRA's Q and W, which rotate and pan here |
+| V | Centre the camera on the latest under-attack alert (OpenRA's Space, which pauses here) |
 | WASD / arrows / screen edge | Pan (the edge only with Screen Edge Panning on); Q/E rotate |
 | Middle drag (Classic scheme: right drag) | Pan, by the chosen Pan Behaviour (Alternate Mouse Panning swaps the button) |
 | Mouse wheel | Zoom toward the cursor (with the Zoom Modifier held, if one is set) |
 | `]` / `[` / `.` | Zoom in / zoom out / toggle between the default and the closest view |
 | Space | Pause; `+`/`-` change speed (×1–×8). Not in a network match: the clock is shared |
 | Tab | Select the next own collector and centre the camera on it |
-| T | Deploy the selected Thunderfists (howitzer), or pack them up if all are deployed |
+| T | Deploy the selected Thunderfists (howitzer), or pack them up if all are deployed; turn a Battle Bus into its bunker |
+| R | Arm the selected Shadow Tanks' Particle Accelerator; left click an enemy fires it |
+| E | Everyone out of the selected buildings and vehicles |
 | G | Arm your general's power when it is ready; left click aims it, right click / Esc disarms. The HUD shows the countdown |
 | F1-F3 | Arm your faction's support powers the same way (EU: Air Raid, Fuel Air Bomb; APA: Carpet Bombing, Spy Sorties; GLA: Scud Storm once built, GPS Scrambler) |
 | F10 | Surrender |

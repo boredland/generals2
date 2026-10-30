@@ -663,8 +663,11 @@ pub(crate) fn swap_world(world: &mut World, sim: Sim) {
     world.insert_resource(crate::sim::Hits::default());
     world.insert_resource(crate::sim::Deliveries::default());
     world.insert_resource(crate::sim::Heard::default());
+    world.insert_resource(crate::alerts::Alerts::default());
     world.insert_resource(crate::input::Selection::default());
     world.insert_resource(crate::input::Placement::default());
+    world.insert_resource(crate::select::Groups::default());
+    world.insert_resource(crate::feedback::Marks::default());
     world.insert_resource(crate::input::PowerAim::default());
     world.resource_mut::<MatchEpoch>().0 += 1;
 }
@@ -1117,19 +1120,19 @@ fn alpha(c: &mut ChildSpawnerCommands, kit: &Kit, status: &crate::importer::Stat
 fn controls(c: &mut ChildSpawnerCommands, kit: &Kit) {
     page(c, kit, "CONTROLS");
     for (k, (keys, what)) in [
-        ("Left click, drag", "Select units and buildings"),
-        ("Right click", "Context order: attack, gather, build, move (Options: control scheme)"),
+        ("Left click, drag; double click", "Select; a double click adds every one of its kind on screen"),
+        ("Right click", "Context order: attack, gather, build, move; on the ground with a factory: rally point"),
         ("Ctrl + right click", "Attack-move"),
+        ("Click the build grid", "Build, train, research (hover: what it is); Backspace cancels"),
+        ("Ctrl + 0-9, 0-9", "Make a control group, select it (twice: go there)"),
+        ("Shift / Alt + 0-9", "Add the group to the selection / go to it; Ctrl + Shift adds to it"),
+        ("Z, X", "Select all units on screen, select more of the selected kinds"),
         ("Wheel, ] / [, .", "Zoom toward the cursor, zoom in / out, toggle closest view"),
         ("WASD, edge, middle drag", "Pan the battlefield; Q / E rotate"),
-        ("B, then 1-9", "Build; 1-9 on a factory queues units"),
-        ("Backspace", "Cancel the queued item"),
-        ("T", "Deploy or pack up artillery; turn a Battle Bus into its bunker"),
-        ("R, then click an enemy", "Particle Accelerator (Shadow Tank)"),
+        ("T, R, E", "Deploy or transform; Particle Accelerator; evacuate"),
         ("G, F1-F3", "General's power, faction support powers"),
-        ("Tab", "Select the next collector"),
-        ("Space, + / -, Esc", "Pause, game speed, menu"),
-        ("M", "Mute or unmute sound"),
+        ("Tab, V", "Next collector; go to the last attack"),
+        ("Space, + / -, Esc, M", "Pause, game speed, menu, mute"),
     ]
     .into_iter()
     .enumerate()

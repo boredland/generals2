@@ -48,7 +48,7 @@ pub(crate) enum Field {
     Queue,
     QueueBar,
     GridCell(usize),
-    /// An alpha build button's corner text: hotkey and price (the icon names the def).
+    /// An alpha build button's corner text: its price (the icon names the def).
     GridTag(usize),
 }
 
@@ -455,7 +455,7 @@ fn spawn_alpha_extras(commands: &mut Commands) {
 
 /// The alpha's 6×3 ability grid, filled with this game's first nine build slots: the top
 /// row and the first three of the second, as the alpha's own buttons were numbered. Each
-/// button is the alpha's build icon for that def, with the hotkey and price in its corner.
+/// button is the alpha's build icon for that def, with the price in its corner.
 pub(crate) fn alpha_grid(g: &mut ChildSpawnerCommands, w: f32, h: f32) {
     let (cw, ch) = (w / 6.0, h / 3.0);
     for i in 0..9 {
@@ -769,7 +769,7 @@ fn update_fields(
                 }
             }
             Field::GridTag(i) => {
-                t.0 = menu.get(*i).map_or(String::new(), |&slot| format!("{} ${}", i + 1, slot_cost(&sim, slot)))
+                t.0 = menu.get(*i).map_or(String::new(), |&slot| format!("${}", slot_cost(&sim, slot)))
             }
         }
     }

@@ -139,6 +139,12 @@ impl World {
                 h.u64(0x6761_7272);
                 id(&mut h, c);
             }
+            // Only once a rally point is set, so matches without one hash as before.
+            if let Some(r) = e.rally {
+                h.u64(0x7261_6c6c);
+                h.i64(r.x.0);
+                h.i64(r.y.0);
+            }
             // Only repair upgrades read it, so only owners with upgrades hash it; matches
             // without upgrades hash as before.
             if e.owner.is_some_and(|o| !self.players[o.0 as usize].upgrades.is_empty()) {
