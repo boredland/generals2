@@ -34,9 +34,11 @@ Requirements: you can tell a faction from its silhouette and colour, models stay
 
 Proportions are the alpha's: footprints are its `EntityRadius` and build grids, imported models are drawn at its own scale (one alpha unit, one world unit), and procedural vehicles are 1.5 times longer than their footprint is wide, the alpha's median for its vehicles. A procedural building is 1.75 × its radius wide, inside its build grid as the alpha's are: the EU war factory 21 wide (the alpha's mesh 21.6), the Aegis 10.5 long (9.7).
 
-- **EU**: warm mid-grey industrial panels (near-white blows out in the sun), orange hazard trims, teal team accents.
-- **APA**: dark steel, red team accents, tiered rooftops.
-- **GLA**: improvised, rust-brown. Sandbag rings, scrap sheets, crate and barrel yards, tent camps, and a lookout post on the supply stash; sand team colour.
+- **EU**: warm mid-grey painted panels in tall sheets (near-white blows out in the sun), kept clean but for faint rain streaks under each joint. Every roof and roof tier is a darker deck of plates and grilles inside a solid orange frame, as the footage's EU base has (its roof grating measures about 96-103 sRGB luminance against 124 on the lit wall tops at 270 s of `[dtl2Q_tUDDQ]`); teal team accents.
+- **APA**: dark steel in staggered plates with deep joints and rivet rows, some plates shinier than others; tread-plate roofs bolted along their joints; red team accents, tiered rooftops.
+- **GLA**: improvised, rust-brown. Mismatched scrap sheets with rust blotches and heavy grime, corrugated tin roofs. Sandbag rings, scrap sheets, crate and barrel yards, tent camps, and a lookout post on the supply stash; sand team colour.
+- **Surfaces** (`surface.rs`): every material slot has a procedural albedo, normal and roughness/metallic map, 256² over 4 m, built at startup and mipmapped. Each part's mesh carries UVs in metres for its size (parts share a mesh per size, rounded to 0.25 m), so a joint is as wide on a railing as on a war factory, and wall faces run their maps downward from the roof line, so streaks hang the right way. The albedo's mean is divided back out of the material colour, so the palette keeps the brightness it was calibrated to. A vertex-colour dirt line darkens the lowest metre of every wall and hull. Vehicles use a finer armour finish (thin panel lines, wear mottle, dust; rust on GLA), team colour stays nearly flat, and concrete, wood, crates and hazard paint have stains, grain, wear and chips. Only the procedural look: with an imported alpha, the parts still drawn (scaffolds) keep plain colours, and that look renders bit-identical to before.
+- **Masts and dishes** read at the Close zoom: masts 4.8 m with a 0.45 m pole and a 0.75 m team light, dishes 3.6 m wide with a dark face inside the rim.
 - **Construction**: a coloured scaffold frame with crane arms surrounds the foundation, and the building grows upward inside it as the sim's construction progresses.
 - **Resources**: supply piles are stacks of mixed crates on a pallet that shrink as they deplete. Oil wells are black pools with a wellhead.
 - **Collectors**: the EU collector flies (sourced), as an original ducted-fan lifter with a cargo cradle. The APA collector is a supply truck. GLA workers are on foot and also build.
@@ -84,13 +86,11 @@ The headless screenshot mode prints the mesh count and the average time of 30 re
 
 ## Gaps vs the alpha (October 2013 pass)
 
-Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6XKby6Qz5oI]`. Matched now: ground colour (within about 10%), centre brightness (117-125 against 125-142 sRGB luminance), contact shadows, tree silhouettes. Still open, largest first:
+Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6XKby6Qz5oI]`. Matched now: ground colour (within about 10%), centre brightness (117-125 against 125-142 sRGB luminance; the surface maps moved a base frame's centre crop by 1-3 levels), contact shadows, tree silhouettes, painted panel and plate texture on building walls, dark EU roof decks in orange trim, masts and dishes that read at the default zoom. Still open, largest first:
 
 - Few ambient effects: no smoke from stacks or dust under vehicles (`view.rs`).
 - No animation: rotors, treads, walking infantry, pumpjacks (`view.rs`, `models.rs`).
-- Building walls read flat: the footage's painted panel texture and wear can't come from primitives alone; a procedural panel/grime texture per slot would (`view.rs` materials).
-- EU roofs are nearly one tone; the footage has more orange trim and darker roof plates (`models.rs`).
 - Artillery barrels can't pitch: parts have no pitch rotation (`models.rs` `Part`).
-- Masts and dishes are too small to read at the default zoom (`models.rs`).
+- Surface wear repeats every 4 m and doesn't follow a building's shape: no rust under ledges or grime gathered in corners, as hand-painted textures have (`surface.rs`).
 - The HUD is our plain panels, not the footage's framed style (`hud.rs`).
 - Each acacia is 16 meshes; merging a crown's lumps into one prebuilt mesh would cut that to 4 if tree-dense maps prove slow (`terrain.rs`).

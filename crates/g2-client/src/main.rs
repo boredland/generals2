@@ -48,6 +48,7 @@ mod profile;
 mod rig;
 mod settings;
 mod sim;
+mod surface;
 mod terrain;
 mod utfwin;
 mod view;
