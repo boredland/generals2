@@ -9,6 +9,7 @@
 //! frankelstner's BF3 dumper notes and mitsuhiko/frostbite2-stuff consulted for the
 //! container layout; constants below were checked against the alpha's files.
 
+pub mod ant;
 pub mod audio;
 pub mod dbo;
 pub mod ebx;

@@ -116,7 +116,7 @@ The headless screenshot mode prints the mesh count and the average time of 30 re
 Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6XKby6Qz5oI]`. Matched now: ground colour (within about 10%), centre brightness (117-125 against 125-142 sRGB luminance; the surface maps moved a base frame's centre crop by 1-3 levels), contact shadows, tree silhouettes, painted panel and plate texture on building walls, dark EU roof decks in orange trim, masts and dishes that read at the default zoom. Still open, largest first:
 
 - Few ambient effects beyond smoke, dust and steam: no birds, blowing sand or flags (`fx.rs`).
-- No animation: rotors, treads, walking infantry, pumpjacks (`view.rs`, `models.rs`).
+- Procedural models barely animate: rotors spin, but treads, infantry and pumpjacks stand still (`view.rs`, `models.rs`). An imported alpha plays its own clips instead (`rig.rs`, `docs/alpha-animation.md`).
 - Artillery barrels can't pitch: parts have no pitch rotation (`models.rs` `Part`).
 - Surface wear repeats every 4 m and doesn't follow a building's shape: no rust under ledges or grime gathered in corners, as hand-painted textures have (`surface.rs`).
 - The HUD's portrait and build buttons show class silhouettes, where the footage's show a picture of each unit; a rendered thumbnail of each model would close that (`hud.rs`).

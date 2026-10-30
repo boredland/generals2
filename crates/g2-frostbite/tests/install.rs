@@ -194,3 +194,58 @@ fn a_missing_texture_is_reported_for_each_model_that_uses_it() {
     assert_eq!(report.written.get("models"), Some(&2_154), "every model is still written");
     let _ = std::fs::remove_dir_all(&out);
 }
+
+/// The animation package: every one of the 1,700 clips (1,683 VBR, 17 raw) decodes onto
+/// its controller's DOFs, every channel on a DOF of its own kind (`Package::clip` refuses a
+/// mismatch), and every key time lies inside the clip. Animated quaternions decode to unit
+/// length before normalising: 99% within 0.5% over every key of every clip (a wrong bit
+/// order, dequantisation or block layout gives lengths all over the place), and every block
+/// decodes inside its bytes. The run cycle of the infantry rig moves its feet: the left
+/// ankle's rotation sweeps more than 30 degrees over the cycle and returns near its start.
+#[test]
+fn every_animation_clip_decodes_onto_its_joints() {
+    use g2_frostbite::ant::{Package, Path};
+    let Some(a) = install() else { return };
+    let p = Package::read(&a).unwrap();
+    let count = |ty: &str| p.objects.values().filter(|o| o.ty == ty).count();
+    assert_eq!(
+        (count("VbrAnimationAsset"), count("RawAnimationAsset"), count("ClipControllerAsset")),
+        (1_683, 17, 1_700)
+    );
+    let mut errors = Vec::new();
+    for (g, o) in p.objects.iter().filter(|(_, o)| o.ty == "ClipControllerAsset") {
+        let c = p.clip(*g).unwrap_or_else(|e| panic!("{}: {e}", o.name));
+        assert!(
+            c.times.windows(2).all(|w| w[0] < w[1]) && c.times.last().is_some_and(|&t| t <= c.frames),
+            "{}",
+            c.name
+        );
+        for t in &c.tracks {
+            assert!(t.keys.len() == 1 || t.keys.len() == c.times.len(), "{} {}: key count", c.name, t.joint);
+        }
+        errors.extend(c.unit_error);
+    }
+    errors.sort_by(f32::total_cmp);
+    let at = |f: f64| errors[(errors.len() as f64 * f) as usize];
+    assert!(errors.len() > 3_000_000, "{} animated quaternion keys", errors.len());
+    assert!(
+        at(0.5) < 0.001 && at(0.99) < 0.005 && at(1.0 - 1e-9) < 0.02,
+        "|q| - 1: median {} p99 {}",
+        at(0.5),
+        at(0.99)
+    );
+    let rigs = p.rigs();
+    let infantry = rigs.iter().find(|r| r.name == "MASTER_Infantry_SKL").unwrap();
+    assert_eq!((infantry.joints.len(), infantry.clips.len()), (50, 240));
+    let run = p.objects.iter().find(|(_, o)| o.name == "RifleShared_RunFwd").unwrap().0;
+    let c = p.clip(*run).unwrap();
+    assert_eq!((c.fps, c.frames, c.times.len()), (30.0, 17, 9));
+    assert!((c.travel - 4.15).abs() < 0.05, "a stride of 4.15 units: {}", c.travel);
+    let foot = c.tracks.iter().find(|t| t.joint == "LeftFoot" && t.path == Path::Rotation).unwrap();
+    let angle = |a: [f32; 4], b: [f32; 4]| {
+        2.0 * (a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>().abs().min(1.0)).acos().to_degrees()
+    };
+    let sweep = foot.keys.iter().map(|&k| angle(foot.keys[0], k)).fold(0.0, f32::max);
+    assert!(sweep > 30.0, "the foot swings {sweep} degrees");
+    assert!(angle(foot.keys[0], *foot.keys.last().unwrap()) < 10.0, "and the cycle closes");
+}

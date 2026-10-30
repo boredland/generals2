@@ -6,6 +6,8 @@
 //! <out>/movies/<asset path>.frames/NNNN.png, fps.txt  the video as frames (needs ffmpeg)
 //! <out>/models/<asset path>.glb                 every mesh, pointing at its textures below
 //! <out>/models/bounds.txt                       each model's bounding box (name, min xyz, max xyz)
+//! <out>/animations/<skeleton>.glb, .txt          every clip of each animated skeleton (see `animations`)
+//! <out>/animations/index.txt                     which skeleton each animated model uses
 //! <out>/textures/<asset path>.png               every flat texture
 //! <out>/ui/                                     the HUD's images, layouts, fonts, as installed
 //! <out>/manifest.txt                            counts and every failure, one per line
@@ -250,6 +252,9 @@ fn movie_frames(vp6: &Path, dir: &Path) -> Result<(), Error> {
 
 fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
     let maps = material::diffuse_maps(alpha, &mut |name, e| report.fail(name, e));
+    let links = Skeleton::links(alpha);
+    // Skinned model -> its skeleton, for the animations written after the models.
+    let mut skinned = BTreeMap::new();
     // Mesh assets name their MeshSet res `<asset path>`. A texture is written once, to
     // `textures/<name>.png` (the flat texture export writes the same file), and every model
     // that uses it points there. One that can't be written leaves its materials untextured
@@ -287,10 +292,12 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
             // In the glTF's space: X negated, as `to_glb` writes it.
             let (lo, hi) = m.bounds;
             let _ = writeln!(bounds, "{name} {} {} {} {} {} {}", -hi[0], lo[1], lo[2], -lo[0], hi[1], hi[2]);
-            let skeleton = m.subsets.iter().any(|s| s.skin.is_some()).then(|| skeleton_for(alpha, name, &m)).flatten();
+            let skeleton =
+                m.subsets.iter().any(|s| s.skin.is_some()).then(|| skeleton_for(alpha, &links, name, &m)).flatten();
             match skeleton {
-                Some(Ok(sk)) => {
+                Some(Ok((skl, sk))) => {
                     report.ok("skinned models");
+                    skinned.insert(name.clone(), skl);
                     mesh::to_glb(&m, &textures, Some(&sk))
                 }
                 Some(Err(why)) => {
@@ -305,23 +312,111 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
             Err(err) => report.fail(name, err),
         }
     }
-    write(&out.join("models/bounds.txt"), bounds.as_bytes())
+    write(&out.join("models/bounds.txt"), bounds.as_bytes())?;
+    animations(alpha, out, &skinned, report)
 }
 
-/// The skeleton a skinned mesh's bone palettes index: the one beside it in its folder, and
-/// only if every bone the mesh weights exists in it. `None` when the folder has none (a
-/// static model is written then, as before skinning).
-fn skeleton_for(alpha: &Alpha, mesh_name: &str, m: &mesh::MeshSet) -> Option<Result<Skeleton, String>> {
-    let name = Skeleton::for_mesh(alpha, mesh_name)?;
+/// The skeleton a skinned mesh's bone palettes index (see [`Skeleton::for_mesh`]), and only
+/// if every bone the mesh weights exists in it. `None` when there is none (a static model
+/// is written then, as before skinning).
+fn skeleton_for(
+    alpha: &Alpha,
+    links: &BTreeMap<String, String>,
+    mesh_name: &str,
+    m: &mesh::MeshSet,
+) -> Option<Result<(String, Skeleton), String>> {
+    let name = Skeleton::for_mesh(alpha, links, mesh_name)?;
     Some(Skeleton::read(alpha, name).map_err(|e| e.to_string()).and_then(|sk| {
         let used = m.subsets.iter().filter_map(|s| s.skin.as_ref()).flatten();
         match used.flat_map(|(b, w)| (0..4).filter(|&j| w[j] > 0.0).map(move |j| b[j])).max() {
             Some(b) if usize::from(b) >= sk.names.len() => {
                 Err(format!("bone {b} past the {} bones of {name}", sk.names.len()))
             }
-            _ => Ok(sk),
+            _ => Ok((name.clone(), sk)),
         }
     }))
+}
+
+/// The clips of every skeleton a skinned model uses, from the ANT package:
+///
+/// ```text
+/// <out>/animations/<skeleton>.glb   the skeleton's joints and every clip of its rig
+/// <out>/animations/<skeleton>.txt   per clip: index, seconds, root-motion travel, name
+/// <out>/animations/index.txt        per animated model: model, skeleton
+/// ```
+///
+/// A skeleton's rig is the ANT rig whose joints match it best by name (most shared over
+/// all), if they share at least 60% and every shared joint has the same parent.
+fn animations(alpha: &Alpha, out: &Path, skinned: &BTreeMap<String, String>, report: &mut Report) -> Result<(), Error> {
+    let package = match crate::ant::Package::read(alpha) {
+        Ok(p) => p,
+        Err(e) => {
+            report.fail(crate::ant::PACKAGE, e);
+            return Ok(());
+        }
+    };
+    let rigs = package.rigs();
+    let mut animated = BTreeMap::new();
+    for skl in skinned.values().collect::<std::collections::BTreeSet<_>>() {
+        let Ok(sk) = Skeleton::read(alpha, skl) else { continue };
+        let Some(rig) = best_rig(&sk, &rigs) else { continue };
+        let mut clips = Vec::new();
+        for &c in &rig.clips {
+            match package.clip(c) {
+                Ok(clip) => clips.push(clip),
+                Err(e) => report.fail(&format!("{skl} clip {}", package.objects[&c].name), e),
+            }
+        }
+        if clips.is_empty() {
+            continue;
+        }
+        *report.written.entry("clips").or_default() += clips.len();
+        // Last, a clip of no tracks: every joint at its bind pose, for actions the alpha has
+        // no clip for.
+        clips.push(crate::ant::Clip {
+            name: "BindPose".into(),
+            fps: 30.0,
+            frames: 0,
+            times: vec![0],
+            tracks: Vec::new(),
+            travel: 0.0,
+            unit_error: Vec::new(),
+        });
+        let mut list = String::new();
+        for (i, c) in clips.iter().enumerate() {
+            let _ = writeln!(list, "{i} {} {} {}", f32::from(c.frames) / c.fps, c.travel, c.name);
+        }
+        write(&out.join("animations").join(format!("{skl}.glb")), &mesh::clips_to_glb(&sk, &clips))?;
+        write(&out.join("animations").join(format!("{skl}.txt")), list.as_bytes())?;
+        report.ok("animated skeletons");
+        animated.insert(skl, ());
+    }
+    let mut index = String::new();
+    for (model, skl) in skinned.iter().filter(|(_, s)| animated.contains_key(s)) {
+        let _ = writeln!(index, "{model} {skl}");
+    }
+    write(&out.join("animations/index.txt"), index.as_bytes())
+}
+
+fn best_rig<'a>(sk: &Skeleton, rigs: &'a [crate::ant::Rig]) -> Option<&'a crate::ant::Rig> {
+    let parent = |i: usize| sk.parents[i].map(|p| sk.names[p].as_str());
+    rigs.iter()
+        .filter(|r| !r.clips.is_empty())
+        .filter_map(|r| {
+            let mut shared = 0;
+            for (j, p) in &r.joints {
+                if let Some(i) = sk.names.iter().position(|n| n == j) {
+                    if parent(i) != p.as_deref() {
+                        return None;
+                    }
+                    shared += 1;
+                }
+            }
+            let score = shared as f32 / (r.joints.len() + sk.names.len() - shared) as f32;
+            (score >= 0.6).then_some((score, r))
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .map(|(_, r)| r)
 }
 
 /// The URI from `models/<model>.glb` to `textures/<texture>.png`: up out of the model's

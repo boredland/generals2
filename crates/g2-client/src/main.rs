@@ -4,7 +4,7 @@
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [--coop] [match flags as above]   two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera close|medium|far] [--select DEF] [--hover-slot N] [--movie-frame N] [--frames N] [--no-hud] [...]
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera closest|close|medium|far] [--select DEF] [--hover-slot N] [--movie-frame N] [--frames N] [--no-hud] [...]
 //!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
 //!             to a path holding {}, e.g. clip/{}.png); `--hover-slot N` shows the tooltip of
 //!             build-grid button N (from 0) as if hovered, for the `--select`ed building
@@ -97,8 +97,10 @@ struct Args {
     /// Headless only: leave the HUD out of the frame.
     no_hud: bool,
     /// Headless only: the battlefield camera the views use (else Close, whatever the player
-    /// saved, so shots are the same on every machine).
+    /// saved, so shots are the same on every machine), and whether to zoom in as far as the
+    /// wheel goes (`--camera closest`: half of Close, where infantry poses can be read).
     battlefield: settings::Battlefield,
+    closest: bool,
     screenshot: Option<String>,
     record: Option<String>,
     ticks: u32,
@@ -132,6 +134,7 @@ fn parse_args() -> Result<Args, String> {
         frames: None,
         no_hud: false,
         battlefield: settings::Battlefield::Close,
+        closest: false,
         screenshot: None,
         record: None,
         ticks: 900,
@@ -233,9 +236,13 @@ fn parse_args() -> Result<Args, String> {
             "--camera" => {
                 a.battlefield = match it.next().as_deref() {
                     Some("close") => settings::Battlefield::Close,
+                    Some("closest") => {
+                        a.closest = true;
+                        settings::Battlefield::Close
+                    }
                     Some("medium") => settings::Battlefield::Medium,
                     Some("far") => settings::Battlefield::Far,
-                    other => return Err(format!("--camera expects close|medium|far, got {other:?}")),
+                    other => return Err(format!("--camera expects closest|close|medium|far, got {other:?}")),
                 }
             }
             "--frames" => a.frames = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--frames needs a count")?),
@@ -339,6 +346,7 @@ fn main() -> AppExit {
                 frames: args.frames,
                 no_hud: args.no_hud,
                 battlefield: args.battlefield,
+                closest: args.closest,
             };
             headless::run(sim, ui, net, capture)
         }
@@ -508,10 +516,14 @@ mod headless {
         pub frames: Option<u32>,
         pub no_hud: bool,
         pub battlefield: crate::settings::Battlefield,
+        pub closest: bool,
     }
 
     pub fn run(mut sim: Sim, ui: crate::menu::Ui, net: crate::lobby::Net, capture: Capture) -> AppExit {
-        let Capture { ticks, path, view, size, select, hover_slot, movie_frame, frames, no_hud, battlefield } = capture;
+        let Capture { ticks, path, view, size, select, hover_slot, movie_frame, frames, no_hud, battlefield, closest } =
+            capture;
+        // The wheel zooms in to half the default view (`camera.rs`).
+        let distance = battlefield.distance() * if closest { 0.5 } else { 1.0 };
         sim.speed = 0;
         if frames.is_some() && !path.contains("{}") {
             eprintln!("--frames needs a --screenshot path with {{}} for the frame number");
@@ -643,13 +655,13 @@ mod headless {
             match view {
                 View::Battle if let Some(f) = fight => RtsCamera {
                     pivot: Vec3::new(f.x, sim.ground_y(f.x, f.y), f.y),
-                    distance: battlefield.distance(),
+                    distance,
                     yaw: crate::look::YAW,
                     pitch: crate::look::PITCH,
                 },
                 View::At(x, z) => RtsCamera {
                     pivot: Vec3::new(x, sim.ground_y(x, z), z),
-                    distance: battlefield.distance(),
+                    distance,
                     yaw: crate::look::YAW,
                     pitch: crate::look::PITCH,
                 },
@@ -664,7 +676,7 @@ mod headless {
                         .map_or(Vec3::ZERO, |e| sim.to_world(e.pos));
                     RtsCamera {
                         pivot: home + Vec3::new(12.0, 0.0, 4.0),
-                        distance: battlefield.distance(),
+                        distance,
                         yaw: crate::look::YAW,
                         pitch: crate::look::PITCH,
                     }
@@ -701,20 +713,23 @@ mod headless {
                 .expect("GPU poll failed");
         };
         // Spawn mirrors and compile pipelines before capturing; with an imported alpha, also
-        // wait (up to ~10 s of frames) until every model's scene has loaded, or the frame
-        // would show bare team rings.
+        // wait (up to ~10 s of frames) until every model's scene and clip has loaded, or the
+        // frame would show bare team rings or soldiers in their bind pose.
         for _ in 0..3 {
             wait(&mut apps);
         }
+        let loaded = |apps: &SubApps| {
+            let w = apps.main.world();
+            crate::view::alpha_models_loaded(w) && crate::rig::clips_loaded(w)
+        };
         for _ in 0..600 {
-            if crate::view::alpha_models_loaded(apps.main.world()) && crate::movie::held_frame_loaded(apps.main.world())
-            {
+            if loaded(&apps) && crate::movie::held_frame_loaded(apps.main.world()) {
                 break;
             }
             wait(&mut apps);
         }
-        if !crate::view::alpha_models_loaded(apps.main.world()) {
-            eprintln!("imported alpha models did not finish loading");
+        if !loaded(&apps) {
+            eprintln!("imported alpha models or clips did not finish loading");
             return AppExit::error();
         }
         if !crate::movie::held_frame_loaded(apps.main.world()) {
