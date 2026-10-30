@@ -240,7 +240,9 @@ impl Ai {
                     });
                 target
                     .or_else(|| {
-                        let toward = world.map.spawns.iter().copied().max_by_key(|&s| (s.distance(home), s.x, s.y))?;
+                        let toward = other_starts(world, self.player, home)
+                            .into_iter()
+                            .max_by_key(|&s| (s.distance(home), s.x, s.y))?;
                         let delta = toward - home;
                         Some(home + delta.scale(Fx::from_int(25) / delta.length().max(Fx::from_int(1))))
                     })
@@ -353,12 +355,18 @@ impl Ai {
                 .collect();
             let supply = find(|d| matches!(d.role(), Some(BuildingRole::SupplyCenter { .. })));
             let smart = self.level != AiLevel::Easy;
-            // Normal: expand to the nearest pile with no supply center of ours close by,
-            // once the base's own pile (within 88 of the command center's edge) is nearly spent,
-            // or by `EXPAND_BY`; add a factory when credits pile up.
+            // Normal: expand to the nearest pile with no supply center of our side close by (an
+            // ally's pile is theirs), once the base's own pile (within 88 of the command
+            // center's edge) is nearly spent, or by `EXPAND_BY`; add a factory when credits pile up.
             let home_reach = Fx::from_int(88) + cc.map_or(Fx::ZERO, |c| rules.def(c.def).radius);
             let expansion = || {
-                let near_ours = |p: Vec2| depots.iter().any(|d| d.pos.distance(p) <= Fx::from_int(60));
+                let near_ours = |p: Vec2| {
+                    world.entities().any(|d| {
+                        d.owner.is_some_and(|o| world.allied(me, o))
+                            && matches!(rules.def(d.def).role(), Some(BuildingRole::SupplyCenter { .. }))
+                            && d.pos.distance(p) <= Fx::from_int(60)
+                    })
+                };
                 let spent = world.tick() >= EXPAND_BY
                     || world
                         .nearest_pile(base)
@@ -840,18 +848,7 @@ impl Ai {
                 .map(|e| e.pos);
             let nearest = |points: &mut dyn Iterator<Item = Vec2>| points.min_by_key(|&p| (p.distance(home), p.x, p.y));
             let likely: Vec<Vec2> = world.map.spawns.iter().copied().chain(resources).collect();
-            // Every start but our own (the one nearest home; none for a startless onslaught,
-            // whose home is where its waves appear) and our allies'.
-            let me = self.player;
-            let own = world
-                .start(me)
-                .and_then(|_| world.map.spawns.iter().copied().min_by_key(|&s| (s.distance(home), s.x, s.y)));
-            let ally =
-                |i: usize| i < world.players().len() && i != me.0 as usize && world.allied(me, PlayerId(i as u8));
-            let theirs: Vec<Vec2> = (world.map.spawns.iter().copied().enumerate())
-                .filter(|&(i, s)| Some(s) != own && !ally(i))
-                .map(|(_, s)| s)
-                .collect();
+            let theirs = other_starts(world, self.player, home);
             let near_theirs = |p: Vec2| theirs.iter().map(|&s| s.distance(p)).min().unwrap_or(Fx::ZERO);
             nearest(&mut likely.iter().copied().filter(|&p| !vision.is_explored(p)))
                 .or_else(|| {
@@ -901,6 +898,18 @@ fn near_base(world: &World, mine: &[&Entity], p: Vec2) -> bool {
         let d = world.rules.def(b.def);
         d.is_base() && b.pos.distance(p) <= DEFEND_RADIUS + d.radius
     })
+}
+
+/// Every start but `me`'s own (the one nearest `home`; none for a startless onslaught, whose
+/// home is where its waves appear) and its allies'.
+fn other_starts(world: &World, me: PlayerId, home: Vec2) -> Vec<Vec2> {
+    let own =
+        world.start(me).and_then(|_| world.map.spawns.iter().copied().min_by_key(|&s| (s.distance(home), s.x, s.y)));
+    let ally = |i: usize| i < world.players().len() && i != me.0 as usize && world.allied(me, PlayerId(i as u8));
+    (world.map.spawns.iter().copied().enumerate())
+        .filter(|&(i, s)| Some(s) != own && !ally(i))
+        .map(|(_, s)| s)
+        .collect()
 }
 
 /// Room a new unit needs where it leaves its building: a tank's footprint (3.5) and a margin.
