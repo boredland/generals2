@@ -2,7 +2,7 @@
 //!
 //!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--general NAME]
 //!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
-//!   g2-client --host PORT [match flags as above]      two players over the network: you host
+//!   g2-client --host PORT [--coop] [match flags as above]   two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
 //!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera close|medium|far] [--select DEF] [--hover-slot N] [--movie-frame N] [--frames N] [--no-hud] [...]
 //!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
@@ -23,8 +23,11 @@
 //! window or display server.
 //!
 //! A network match is two humans, the host as player 0 with `--faction`/`--general`, the
-//! joiner as player 1 with `--enemy`/`--enemy-general`, on the host's map and seed. Both run
-//! the same build. The game runs at one shared speed: no pause and no fast-forward.
+//! joiner as player 1 with `--enemy`/`--enemy-general`, on the host's map and seed: against
+//! each other, or with `--coop` side by side against the Onslaught's waves (a third player of
+//! the first faction neither of them plays, in the order EU, APA, GLA).
+//! Both run the same build. The game runs at one shared speed: no pause and no fast-forward.
+//! The main menu's NETWORK page (`--menu lobby`) sets the same matches up without flags.
 //!
 //! With an imported 2013 alpha (the main menu's 2013 Alpha page or `g2-tools alpha DIR import`, found in `$G2_ALPHA_CACHE` or the
 //! game's data folder: `~/.local/share/generals2/alpha` on Linux), the client draws its models
@@ -45,6 +48,7 @@ mod fx;
 mod hud;
 mod importer;
 mod input;
+mod lobby;
 mod look;
 mod menu;
 mod mission_hud;
@@ -100,8 +104,10 @@ struct Args {
     ticks: u32,
     view: headless::View,
     size: (u32, u32),
-    /// Host a two-player network match on this port: the local player against whoever joins.
+    /// Host a two-player network match on this port: the local player with whoever joins.
     host: Option<u16>,
+    /// The hosted match is co-op Onslaught: host and joiner on one team against the waves.
+    coop: bool,
     /// Join the network match hosted at this `host:port`.
     join: Option<String>,
     /// Play this mission of the campaign instead of a skirmish.
@@ -132,6 +138,7 @@ fn parse_args() -> Result<Args, String> {
         view: headless::View::Base,
         size: (1280, 720),
         host: None,
+        coop: false,
         join: None,
         mission: None,
     };
@@ -155,6 +162,7 @@ fn parse_args() -> Result<Args, String> {
                 | "--host"
                 | "--join"
                 | "--mission"
+                | "--coop"
         );
         match flag.as_str() {
             "--map" => a.map = it.next().ok_or("--map needs a name")?,
@@ -187,9 +195,11 @@ fn parse_args() -> Result<Args, String> {
                     Some("alpha") => menu::Screen::Alpha,
                     Some("options") => menu::Screen::Options,
                     Some("missions") => menu::Screen::Missions,
+                    Some("lobby") => menu::Screen::Lobby,
+                    Some("netgame") => menu::Screen::NetGame,
                     other => {
                         return Err(format!(
-                            "--menu expects main|controls|setup|pause|end|generals|alpha|options|missions, got {other:?}"
+                            "--menu expects main|controls|setup|pause|end|generals|alpha|options|missions|lobby|netgame, got {other:?}"
                         ));
                     }
                 })
@@ -248,6 +258,7 @@ fn parse_args() -> Result<Args, String> {
                 };
                 a.mission = Some(id);
             }
+            "--coop" => a.coop = true,
             other => return Err(format!("unknown argument {other:?}")),
         }
     }
@@ -259,6 +270,10 @@ fn parse_args() -> Result<Args, String> {
     }
     if a.mission.is_some() && (a.host.is_some() || a.join.is_some()) {
         return Err("--mission is played alone: no --host or --join".into());
+    }
+    // Headless, `--coop` sets the hosted game the `--menu netgame` page shows.
+    if a.coop && a.host.is_none() && a.screenshot.is_none() {
+        return Err("--coop plays a hosted match: give --host PORT too".into());
     }
     Ok(a)
 }
@@ -292,6 +307,27 @@ fn main() -> AppExit {
                 in_mission: args.mission.is_some(),
                 ..default()
             };
+            // The lobby pages show a live session: the lobby looking on this network, the game
+            // options a game hosted here (on any free port, unlisted) with its seat open.
+            let net = match ui.screen {
+                menu::Screen::Lobby => lobby::Net::Browsing(lobby::Discovery::lan()),
+                menu::Screen::NetGame => {
+                    let offer = lobby::Offer {
+                        map: args.map.clone(),
+                        coop: args.coop,
+                        seed: args.seed,
+                        own: lobby::Pick::plain(args.factions[0]),
+                    };
+                    match lobby::Host::open(0, None, ui.lobby.name.clone(), offer) {
+                        Ok(h) => lobby::Net::Hosting(Box::new(h)),
+                        Err(e) => {
+                            eprintln!("{e}");
+                            return AppExit::error();
+                        }
+                    }
+                }
+                _ => lobby::Net::Idle,
+            };
             let capture = headless::Capture {
                 ticks: args.ticks,
                 path,
@@ -304,7 +340,7 @@ fn main() -> AppExit {
                 no_hud: args.no_hud,
                 battlefield: args.battlefield,
             };
-            headless::run(sim, ui, capture)
+            headless::run(sim, ui, net, capture)
         }
         None => windowed(sim, args.record, args.direct, args.mission),
     }
@@ -317,15 +353,7 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
         sim.fog = !args.reveal;
         return Ok(sim);
     }
-    let source = if args.map.contains(':') {
-        Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &args.map)?)
-    } else {
-        None
-    };
-    let map = match &source {
-        Some(file) => file.to_map_def(&args.map),
-        None => g2_maps::resolve(&args.map)?,
-    };
+    let (map, source) = net::resolve_map(&args.map)?;
     if map.spawns.len() < 2 {
         return Err(format!(
             "{} has {} player starts; pick a skirmish map (g2-tools maps)",
@@ -352,6 +380,7 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
             general,
             perks: ai.map_or_else(Vec::new, |level| g2_sim::ai::ai_perks(g2_rules::rules(), general, level)),
             rank: ai.map_or(1, g2_sim::ai::ai_rank),
+            team: 0,
         })
     };
     // `--ai onslaught` makes the enemy the waves; a spectated player 0 is then `Normal`.
@@ -359,14 +388,21 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
         g2_sim::AiLevel::Onslaught => g2_sim::AiLevel::Normal,
         level => level,
     };
-    // A hosted match is two humans: the joiner plays the enemy slot.
+    // A hosted match is two humans: the joiner plays the enemy slot, or in co-op the second
+    // defender beside the host, the waves a third player.
     let enemy = args.host.is_none().then_some(args.ai);
-    let mut sim = Sim::new(map, source, args.seed, [player(0, spectate.then_some(own))?, player(1, enemy)?]);
+    let mut players = vec![player(0, spectate.then_some(own))?, player(1, enemy)?];
+    if args.coop {
+        players[0].team = net::COOP_TEAM;
+        players[1].team = net::COOP_TEAM;
+        players.push(net::waves(net::wave_faction(args.factions)));
+    }
+    let mut sim = Sim::new(map, source, args.seed, players);
     sim.fog = !args.reveal;
     Ok(sim)
 }
 
-/// Waits for a player to join, then plays the loaded match as player 0 against them.
+/// Waits for a player to join, then plays the loaded match as player 0 with them.
 fn host_sim(mut sim: Sim, port: u16) -> Result<Sim, String> {
     let link = net::host(port, sim.world.replay(&sim.setup))?;
     sim.online = Some(net::Online::new(link, PlayerId(0), PlayerId(1)));
@@ -374,25 +410,11 @@ fn host_sim(mut sim: Sim, port: u16) -> Result<Sim, String> {
 }
 
 /// Joins the match hosted at `addr` as player 1. The match comes from the host; it must be on
-/// a map this build has, unchanged, with generals this build knows.
+/// a map this build has, unchanged, with generals this build knows (`net::match_sim`).
 fn join_sim(addr: &str, reveal: bool) -> Result<Sim, String> {
     let (link, setup) = net::join(addr)?;
-    let source = if setup.map.contains(':') {
-        Some(g2_maps::load_file_named(&g2_maps::vendored_root(), &setup.map)?)
-    } else {
-        None
-    };
-    let map = match &source {
-        Some(file) => file.to_map_def(&setup.map),
-        None => g2_maps::resolve(&setup.map)?,
-    };
-    setup.check(&map, g2_rules::rules())?;
-    if setup.players.len() != 2 || setup.players.iter().any(|p| p.ai.is_some()) || setup.mission.is_some() {
-        return Err("the host offered a match that isn't two players against each other".into());
-    }
+    let mut sim = net::match_sim(&setup, PlayerId(1))?;
     net::accept(&link);
-    let mut sim = Sim::new(map, source, setup.seed, setup.players);
-    sim.local = PlayerId(1);
     sim.fog = !reveal;
     sim.online = Some(net::Online::new(link, PlayerId(1), PlayerId(0)));
     Ok(sim)
@@ -488,7 +510,7 @@ mod headless {
         pub battlefield: crate::settings::Battlefield,
     }
 
-    pub fn run(mut sim: Sim, ui: crate::menu::Ui, capture: Capture) -> AppExit {
+    pub fn run(mut sim: Sim, ui: crate::menu::Ui, net: crate::lobby::Net, capture: Capture) -> AppExit {
         let Capture { ticks, path, view, size, select, hover_slot, movie_frame, frames, no_hud, battlefield } = capture;
         sim.speed = 0;
         if frames.is_some() && !path.contains("{}") {
@@ -551,6 +573,7 @@ mod headless {
         )
         .insert_resource(sim)
         .insert_resource(ui)
+        .insert_resource(net)
         // Shots look the same on every machine: the player's saved settings stay out of them.
         .insert_resource(crate::settings::Settings::default())
         .add_plugins((

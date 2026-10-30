@@ -26,6 +26,7 @@ fn stats_agree_with_the_match() {
                     general: None,
                     perks: Vec::new(),
                     rank: 1,
+                    team: 0,
                 })
                 .collect(),
         };

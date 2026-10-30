@@ -27,6 +27,7 @@ fn normal_ai_beats_easy_and_replays_exactly() {
                             general: None,
                             perks: Vec::new(),
                             rank: 1,
+                            team: 0,
                         })
                         .collect();
                     let s = MatchSetup { map: map.clone(), seed: 1, players };

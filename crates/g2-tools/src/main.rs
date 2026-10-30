@@ -97,6 +97,7 @@ fn ai_setup(args: &[String]) -> Result<MatchSetup, String> {
                 general,
                 perks: g2_sim::ai::ai_perks(rules(), general, ai),
                 rank: g2_sim::ai::ai_rank(ai),
+                team: 0,
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -142,6 +143,7 @@ fn survey(args: &[String]) -> Result<(), String> {
                             general: None,
                             perks: Vec::new(),
                             rank: 1,
+                            team: 0,
                         })
                         .to_vec();
                     let setup = MatchSetup { map: map.clone(), seed, players };
@@ -208,6 +210,7 @@ fn generals(args: &[String]) -> Result<(), String> {
                         general,
                         perks: g2_sim::ai::ai_perks(rules(), general, AiLevel::Normal),
                         rank: if general.is_some() { rank } else { 1 },
+                        team: 0,
                     };
                     let mut players =
                         vec![player(g.faction, Some(g2_sim::defs::GeneralId(i as u16))), player(enemy, None)];
@@ -394,6 +397,7 @@ fn artillery(args: &[String]) -> Result<(), String> {
                         general: None,
                         perks: Vec::new(),
                         rank: 1,
+                        team: 0,
                     },
                     PlayerSetup {
                         faction: fb,
@@ -402,6 +406,7 @@ fn artillery(args: &[String]) -> Result<(), String> {
                         general: None,
                         perks: Vec::new(),
                         rank: 1,
+                        team: 0,
                     },
                 ];
                 if seat == 1 {
@@ -490,7 +495,7 @@ fn summary(args: &[String]) -> Result<(), String> {
     let map = resolve(&replay.map)?;
     replay.check(&map, rules())?;
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
-    let mut world = World::start(&setup, rules(), replay.mission);
+    let mut world = World::begin(&setup, rules(), replay.mission);
     for c in &replay.commands {
         world.schedule(c.clone());
     }

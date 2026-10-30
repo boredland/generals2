@@ -24,6 +24,7 @@ fn setup(f: Faction, general: GeneralId, perks: &[PerkId]) -> MatchSetup {
         general: Some(general),
         perks: perks.to_vec(),
         rank: 1,
+        team: 0,
     };
     MatchSetup { map: crater_ridge(), seed: 1, players: vec![player(perks), player(&[])] }
 }

@@ -23,6 +23,7 @@ fn setup(f0: Faction, general: GeneralId) -> MatchSetup {
                 general: Some(general),
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Eu,
@@ -31,6 +32,7 @@ fn setup(f0: Faction, general: GeneralId) -> MatchSetup {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     }
@@ -141,6 +143,7 @@ fn field_repair_restores_nearby_units() {
                 general: Some(TASKMASTER),
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Eu,
@@ -149,6 +152,7 @@ fn field_repair_restores_nearby_units() {
                 general: Some(BULLDOG),
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };

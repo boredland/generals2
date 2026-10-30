@@ -209,6 +209,7 @@ impl Mission {
                     general: s.general,
                     perks: ai.map_or_else(Vec::new, |level| crate::ai::ai_perks(rules, s.general, level)),
                     rank: ai.map_or(1, crate::ai::ai_rank),
+                    team: 0,
                 }
             })
             .collect();

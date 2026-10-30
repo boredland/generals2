@@ -1,5 +1,6 @@
-//! Menus: main menu, controls, skirmish page, missions and their briefings, in-match pause and
-//! the score screen, laid out as Command & Conquer: Generals' own shell (docs/STYLE.md, "Menus").
+//! Menus: main menu, controls, skirmish page, missions and their briefings, the network lobby's
+//! pages (their sessions are in `lobby.rs`), in-match pause and the score screen, laid out as
+//! Command & Conquer: Generals' own shell (docs/STYLE.md, "Menus").
 //!
 //! The menu is UI drawn over the battlefield: the `Sim` resource always exists and is frozen
 //! (`speed = 0`) while a menu covers it, so opening or closing a menu needs no scene teardown.
@@ -106,6 +107,32 @@ pub enum Act {
     PickMission(u16),
     /// START MISSION: plays the picked mission.
     StartMission,
+    /// The main menu's NETWORK: the LAN lobby, listing games on the local network.
+    OpenLobby,
+    /// The lobby's BACK: stop looking for games, back to the main menu.
+    LeaveLobby,
+    /// Starts typing into a lobby text field, or stops (`None`).
+    Type(Option<crate::lobby::Entry>),
+    /// Selects a game of the lobby's list; its info shows beside it.
+    PickGame(usize),
+    /// HOST GAME: opens a game on the port field's port, for one player to join.
+    HostGame,
+    /// JOIN GAME: joins the game picked in the list.
+    JoinGame,
+    /// DIRECT CONNECT: joins the game at the address field's `host:port`.
+    DirectConnect,
+    /// The game options' BACK: leave the game (closing it, for the host), back to the lobby.
+    LeaveGame,
+    /// Host: versus or co-op Onslaught.
+    NetMode,
+    /// Host: the next (or previous) map with two starts or more.
+    NetMap(i32),
+    /// The local player's side: the next faction, or general of it, as Zero Hour's list.
+    NetSide,
+    /// Joiner: accept the game as it stands, or take the accept back.
+    NetAccept,
+    /// Host: start the accepted game.
+    NetStart,
 }
 
 /// One setting on the options page.
@@ -135,6 +162,10 @@ pub enum Screen {
     Options,
     /// The campaign: missions down the left, the picked one's briefing and objectives.
     Missions,
+    /// Generals' LAN lobby: the games on the local network, hosting and joining.
+    Lobby,
+    /// Generals' LAN game options: the hosted or joined game's seats, map and mode.
+    NetGame,
 }
 
 /// One skirmish player: slot 0 is the human at the keyboard, the rest are AI.
@@ -206,6 +237,7 @@ impl SkirmishConfig {
                     None if i == 0 && s.general.is_some() => rank,
                     None => 1,
                 },
+                team: 0,
             })
             .collect();
         let mut sim = Sim::new(map, source, self.seed, players);
@@ -250,6 +282,8 @@ pub struct Ui {
     /// The match running is that mission (else a skirmish): the end screen offers the
     /// campaign, and a win is saved to the profile.
     pub in_mission: bool,
+    /// What the lobby pages edit.
+    pub lobby: crate::lobby::Form,
 }
 
 impl Default for Ui {
@@ -266,6 +300,7 @@ impl Default for Ui {
             options_before: None,
             mission: g2_sim::MissionId(0),
             in_mission: false,
+            lobby: crate::lobby::Form::default(),
         }
     }
 }
@@ -327,11 +362,25 @@ impl Plugin for MenuPlugin {
             .init_resource::<Pending>()
             .init_resource::<MatchEpoch>()
             .init_resource::<crate::importer::Import>()
+            .init_resource::<crate::lobby::Net>()
+            .add_message::<bevy::input::keyboard::KeyboardInput>()
             .insert_resource(MapListChannel(std::sync::Mutex::new(rx)))
             .add_systems(Startup, load_fonts)
             .add_systems(
                 Update,
-                (poll_maps, interact, apply, watch_winner, award_experience, poll_import, rebuild, hover, hide_hud)
+                (
+                    poll_maps,
+                    crate::lobby::type_text,
+                    interact,
+                    apply,
+                    crate::lobby::poll,
+                    watch_winner,
+                    award_experience,
+                    poll_import,
+                    rebuild,
+                    hover,
+                    hide_hud,
+                )
                     .chain()
                     .in_set(MenuSet)
                     .run_if(resource_exists::<Sim>),
@@ -378,7 +427,8 @@ fn interact(
             }
         }
     }
-    if keys.just_pressed(KeyCode::Escape) {
+    // Esc while typing only ends the typing (`lobby::type_text`).
+    if keys.just_pressed(KeyCode::Escape) && ui.lobby.typing.is_none() {
         // Esc closes whatever is open: a placement or an armed power first, then a menu.
         let placed = placing.as_mut().is_some_and(|p| p.0.take().is_some());
         let aimed = aim.as_mut().is_some_and(|a| a.0.take().is_some());
@@ -389,6 +439,8 @@ fn interact(
                 (Screen::Setup | Screen::Controls | Screen::Generals | Screen::Alpha | Screen::Missions, _) => {
                     Act::BackToMain
                 }
+                (Screen::Lobby, _) => Act::LeaveLobby,
+                (Screen::NetGame, _) => Act::LeaveGame,
                 (Screen::Match, false) => Act::Pause,
                 (Screen::Match, true) => Act::Resume,
                 (Screen::End, _) => Act::QuitToMenu,
@@ -437,7 +489,9 @@ fn hide_hud(ui: Res<Ui>, mut roots: Query<&mut Visibility, HudRoots>) {
         | Screen::Generals
         | Screen::Alpha
         | Screen::End
-        | Screen::Missions => true,
+        | Screen::Missions
+        | Screen::Lobby
+        | Screen::NetGame => true,
     };
     for mut v in &mut roots {
         v.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
@@ -707,6 +761,24 @@ fn apply_one(world: &mut World, act: Act) {
                 let mut ui = world.resource_mut::<Ui>();
                 ui.screen = if ui.paused { Screen::Match } else { Screen::Main };
             }
+            Act::OpenLobby
+            | Act::LeaveLobby
+            | Act::Type(_)
+            | Act::PickGame(_)
+            | Act::HostGame
+            | Act::JoinGame
+            | Act::DirectConnect
+            | Act::LeaveGame
+            | Act::NetMode
+            | Act::NetMap(_)
+            | Act::NetSide
+            | Act::NetAccept
+            | Act::NetStart => {
+                // Every map a game may be hosted on; before the list lands, the built-in one.
+                let maps: Vec<String> = map_list(world)
+                    .map_or_else(|| vec!["Crater Ridge".to_owned()], |m| m.iter().map(|m| m.name.clone()).collect());
+                crate::lobby::apply(world, act, &maps);
+            }
             Act::Start | Act::StartMission | Act::QuitGame => unreachable!("handled above"),
         },
     }
@@ -753,7 +825,7 @@ fn award_experience(sim: Res<Sim>, mut ui: ResMut<Ui>, mut profile: ResMut<Profi
         profile.save(g2_rules::rules());
     }
     let Some(g) = sim.world.player(sim.local).general else { return };
-    let xp = match_experience(sim.world.winner() == Some(sim.local), sim.world.stats(sim.local).kills);
+    let xp = match_experience(sim.world.won(sim.local), sim.world.stats(sim.local).kills);
     profile.earn(g, xp);
     profile.save(g2_rules::rules());
     ui.earned = Some((g, xp));
@@ -772,7 +844,7 @@ fn map_starts(world: &World, map: &str) -> Option<usize> {
     map_list(world).and_then(|maps| maps.iter().find(|m| m.name == map).map(|m| m.starts))
 }
 
-fn next_general(faction: Faction, current: Option<GeneralId>) -> Option<GeneralId> {
+pub(crate) fn next_general(faction: Faction, current: Option<GeneralId>) -> Option<GeneralId> {
     let rules = g2_rules::rules();
     let options: Vec<GeneralId> = rules
         .generals
@@ -910,6 +982,7 @@ fn rebuild(
     mut images: Option<ResMut<Assets<Image>>>,
     mut preview: Local<Option<(String, Option<Handle<Image>>)>>,
     import: Res<crate::importer::Import>,
+    net: Res<crate::lobby::Net>,
     old: Query<Entity, With<MenuUi>>,
 ) {
     if !ui.is_changed()
@@ -927,17 +1000,18 @@ fn rebuild(
         return;
     }
     // The map preview is decoded once per map, not on every rebuild: the skirmish page's map,
-    // or the campaign page's picked mission's.
-    let shown_map = match ui.screen {
-        Screen::Setup => Some(ui.config.map.as_str()),
-        Screen::Missions => Some(g2_rules::rules().mission(ui.mission).map),
+    // the campaign page's picked mission's, or the network game's as offered.
+    let shown = match ui.screen {
+        Screen::Setup => Some(ui.config.map.clone()),
+        Screen::Missions => Some(g2_rules::rules().mission(ui.mission).map.to_owned()),
+        Screen::NetGame => net.offered_map(),
         _ => None,
     };
-    if let Some(map) = shown_map
-        && preview.as_ref().is_none_or(|(m, _)| m != map)
+    if let Some(map) = shown
+        && preview.as_ref().is_none_or(|(m, _)| *m != map)
     {
-        let handle = crate::front::map_preview(map).and_then(|img| images.as_mut().map(|i| i.add(img)));
-        *preview = Some((map.to_owned(), handle));
+        let handle = crate::front::map_preview(&map).and_then(|img| images.as_mut().map(|i| i.add(img)));
+        *preview = Some((map, handle));
     }
     let map_image = preview.as_ref().and_then(|(_, h)| h.clone());
     let maps = maps.as_ref().map(|m| m.0.as_slice());
@@ -983,6 +1057,8 @@ fn rebuild(
                         Screen::Alpha => alpha(c, &kit, &import.status()),
                         Screen::Options => options(c, &kit, &settings, ui.paused),
                         Screen::Missions => missions(c, &kit, &ui, &profile, map_image),
+                        Screen::Lobby => lobby(c, &kit, &ui, &net),
+                        Screen::NetGame => net_game(c, &kit, &ui, &net, &profile, map_image),
                     }
                 });
             side(root);
@@ -1138,6 +1214,7 @@ fn main_menu(c: &mut ChildSpawnerCommands, kit: &Kit) {
         ("MISSIONS", Act::OpenMissions),
         ("SKIRMISH", Act::OpenSetup),
         ("ONSLAUGHT", Act::OpenOnslaught),
+        ("NETWORK", Act::OpenLobby),
         ("GENERALS", Act::OpenGenerals),
         ("2013 ALPHA", Act::OpenAlpha),
         ("OPTIONS", Act::OpenOptions),
@@ -1526,6 +1603,247 @@ fn map_select(
     button(c, kit, "BACK", Act::CancelMapList, Look::Button, rect(590.0, 272.0, 718.0, 298.0), 14.0);
 }
 
+/// A text field, as the layouts' entry fields: its text, a caret while typing, and a click
+/// starts typing into it.
+fn entry(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, e: crate::lobby::Entry, r: Node) {
+    let typing = ui.lobby.typing == Some(e);
+    let text = format!("{}{}", ui.lobby.text(e), if typing { "_" } else { "" });
+    c.spawn((
+        Btn(Act::Type(Some(e))),
+        Look::Cell,
+        RelativeCursorPosition::default(),
+        Node { border: UiRect::all(px(1)), padding: UiRect::horizontal(px(4)), align_items: AlignItems::Center, ..r },
+        BackgroundColor(Look::Cell.fill(false)),
+        BorderColor::all(if typing { GOLD } else { Look::Cell.edge(false) }),
+    ))
+    .with_child(kit.text(&text, 12.0, WHITE, false));
+}
+
+/// A side as the lobby lists it: the faction, or the general with its faction's tag. `short`
+/// for the game options' narrow column (Generals' 108 wide), which takes the tag alone.
+fn side_name(faction: Faction, general: Option<GeneralId>, short: bool) -> String {
+    match general {
+        Some(g) => format!("{} {}", faction_tag(faction), g2_rules::rules().general(g).name),
+        None if short => faction_tag(faction).to_owned(),
+        None => faction_name(faction).to_owned(),
+    }
+}
+
+/// The LAN lobby, as Generals' `LanLobbyMenu.wnd`: the player name entry top left, the
+/// players and games lists side by side with the picked game's info beside them, the chat
+/// window (here what happened, and the direct-connect address and the port a hosted game
+/// listens on, which Generals asks in its own dialog) and HOST, JOIN, DIRECT CONNECT and BACK
+/// along the bottom.
+fn lobby(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, net: &crate::lobby::Net) {
+    use crate::lobby::Entry;
+    frame(c, rect(41.0, 41.0, 759.0, 558.0), PANEL, GOLD);
+    c.spawn(Node { align_items: AlignItems::Center, ..rect(47.0, 43.0, 655.0, 76.0) }).with_child(kit.text(
+        "LAN LOBBY",
+        26.0,
+        GOLD,
+        true,
+    ));
+    c.spawn((rect(41.0, 75.0, 759.0, 76.0), BackgroundColor(GOLD)));
+    label(c, kit, "Player Name:", rect(52.0, 80.0, 213.0, 104.0), 13.0, GOLD, false);
+    entry(c, kit, ui, Entry::Name, rect(217.0, 81.0, 417.0, 106.0));
+    // The players in the lobby: this one, and the hosts heard (each sits in their own game).
+    let games = match net {
+        crate::lobby::Net::Browsing(d) => d.games.as_slice(),
+        _ => &[],
+    };
+    heading(c, kit, "Players", rect(53.0, 103.0, 309.0, 131.0));
+    frame(c, rect(53.0, 131.0, 274.0, 311.0), BOX, RUST);
+    let players = std::iter::once(ui.lobby.name.clone()).chain(games.iter().map(|g| g.name.clone()));
+    for (k, name) in players.take(14).enumerate() {
+        let y = 134.0 + 12.4 * k as f32;
+        label(c, kit, &name, rect(58.0, y, 270.0, y + 12.4), 11.0, if k == 0 { GOLD } else { WHITE }, false);
+    }
+    heading(c, kit, "Games", rect(275.0, 103.0, 515.0, 131.0));
+    frame(c, rect(277.0, 131.0, 517.0, 311.0), BOX, RUST);
+    for (i, g) in games.iter().take(14).enumerate() {
+        let y = 133.0 + 12.4 * i as f32;
+        let row = format!("{}{}", g.name, if g.compatible { "" } else { " (other version)" });
+        button(
+            c,
+            kit,
+            &row,
+            Act::PickGame(i),
+            Look::Row { on: ui.lobby.picked == Some(i) },
+            rect(279.0, y, 515.0, y + 12.4),
+            11.0,
+        );
+    }
+    if games.is_empty() {
+        label(c, kit, "No games found on this network yet.", rect(280.0, 135.0, 515.0, 160.0), 11.0, INK_OFF, true);
+    }
+    heading(c, kit, "Game Info", rect(521.0, 103.0, 709.0, 127.0));
+    let info: Vec<(&str, String)> = match ui.lobby.picked.and_then(|i| games.get(i)) {
+        Some(g) => vec![
+            ("Host", g.name.clone()),
+            ("Map", map_title(&g.map)),
+            ("Mode", (if g.coop { "Co-op Onslaught" } else { "Versus" }).to_owned()),
+            ("Players", (if g.open { "1 of 2" } else { "2 of 2" }).to_owned()),
+            ("Address", g.addr.to_string()),
+        ],
+        None => vec![("", "Click a game to see it here.".to_owned())],
+    };
+    stats(c, kit, (525.0, 590.0, 753.0), 132.0, &info);
+    // The chat window's place: what happened, the address to connect to and the port to host on.
+    frame(c, rect(52.0, 315.0, 751.0, 462.0), BOX, RUST);
+    let mut lines = vec![
+        "Games on this local network appear in the list. HOST opens one for a second player; JOIN takes the \
+         picked game; DIRECT CONNECT reaches a host by its address (and port, 8088 if left out)."
+            .to_owned(),
+    ];
+    lines.extend(ui.lobby.note.as_ref().map(|n| format!("Can't do that: {n}")));
+    c.spawn(Node {
+        flex_direction: FlexDirection::Column,
+        row_gap: px(4),
+        padding: UiRect::all(px(6)),
+        ..rect(54.0, 317.0, 749.0, 400.0)
+    })
+    .with_children(|t| {
+        for (k, l) in lines.iter().enumerate() {
+            t.spawn(kit.text(l, 12.0, if k == 0 { WHITE } else { INK_HOT }, false));
+        }
+    });
+    label(c, kit, "Host port:", rect(62.0, 404.0, 162.0, 428.0), 13.0, GOLD, false);
+    entry(c, kit, ui, Entry::Port, rect(166.0, 405.0, 246.0, 428.0));
+    label(c, kit, "Side:", rect(262.0, 404.0, 312.0, 428.0), 13.0, GOLD, false);
+    cell(c, kit, &side_name(ui.lobby.faction, ui.lobby.general, false), Act::NetSide, rect(316.0, 405.0, 516.0, 428.0));
+    label(c, kit, "Direct connect to:", rect(62.0, 432.0, 212.0, 456.0), 13.0, GOLD, false);
+    entry(c, kit, ui, Entry::Address, rect(216.0, 433.0, 516.0, 456.0));
+    button(c, kit, "HOST", Act::HostGame, Look::Button, rect(54.0, 507.0, 225.0, 543.0), 16.0);
+    button(c, kit, "JOIN", Act::JoinGame, Look::Button, rect(228.0, 507.0, 399.0, 543.0), 16.0);
+    button(c, kit, "DIRECT CONNECT", Act::DirectConnect, Look::Button, rect(402.0, 507.0, 574.0, 543.0), 16.0);
+    button(c, kit, "BACK", Act::LeaveLobby, Look::Button, rect(576.0, 507.0, 747.0, 543.0), 16.0);
+}
+
+/// The LAN game options, as Generals' `LanGameOptionsMenu.wnd`: the accept marks and the
+/// player, colour, faction and team columns, the map preview with its name and the host's
+/// map buttons, the chat window (here the mode and what happened) and START GAME (the host;
+/// the joiner's is ACCEPT) and BACK.
+fn net_game(
+    c: &mut ChildSpawnerCommands,
+    kit: &Kit,
+    ui: &Ui,
+    net: &crate::lobby::Net,
+    profile: &Profile,
+    preview: Option<Handle<Image>>,
+) {
+    frame(c, rect(42.0, 41.0, 758.0, 558.0), PANEL, GOLD);
+    c.spawn(Node { align_items: AlignItems::Center, ..rect(48.0, 46.0, 384.0, 86.0) }).with_child(kit.text(
+        "GAME OPTIONS",
+        26.0,
+        GOLD,
+        true,
+    ));
+    c.spawn((rect(42.0, 85.0, 758.0, 86.0), BackgroundColor(GOLD)));
+    for (s, x0, x1) in
+        [("Players", 79.0, 199.0), ("Color", 231.0, 311.0), ("Faction", 323.0, 431.0), ("Team", 439.0, 551.0)]
+    {
+        heading(c, kit, s, rect(x0, 94.0, x1, 118.0));
+    }
+    let Some((setup, rows, host)) = net.game() else {
+        label(c, kit, "Connecting...", rect(79.0, 119.0, 515.0, 143.0), 13.0, WHITE, false);
+        for (k, l) in net.log().iter().chain(&ui.lobby.note).enumerate() {
+            let y = 330.0 + 18.0 * k as f32;
+            label(c, kit, l, rect(84.0, y, 708.0, y + 18.0), 12.0, WHITE, false);
+        }
+        button(c, kit, "BACK", Act::LeaveGame, Look::Button, rect(530.0, 509.0, 701.0, 545.0), 16.0);
+        return;
+    };
+    let coop = setup.players.len() == 3;
+    let colours = crate::models::team_slots(&setup.players.iter().map(|p| p.faction).collect::<Vec<_>>());
+    for (i, row) in rows.iter().enumerate() {
+        let y = 119.0 + 24.0 * i as f32;
+        let at = |x0: f32, x1: f32| rect(x0, y, x1, y + 24.0);
+        // The accept mark: green once accepted, as Generals' ButtonAccept.
+        let mark = if row.ready { Color::srgb_u8(1, 255, 1) } else { BOX };
+        frame(c, rect(58.0, y + 3.0, 74.0, y + 19.0), if row.waves { Color::NONE } else { mark }, RUST);
+        fixed(c, kit, &row.name, at(79.0, 223.0), if row.own { GOLD } else { WHITE });
+        frame(c, at(231.0, 315.0), Look::Cell.fill(false), RUST.with_alpha(0.6));
+        c.spawn((rect(236.0, y + 6.0, 310.0, y + 18.0), BackgroundColor(crate::models::TEAM_PALETTE[colours[i]])));
+        let side = side_name(row.faction, row.general, true);
+        if row.own {
+            cell(c, kit, &side, Act::NetSide, at(323.0, 431.0));
+        } else {
+            fixed(c, kit, &side, at(323.0, 431.0), WHITE);
+        }
+        let team = setup.players[i].team;
+        fixed(c, kit, &(if team == 0 { "-".to_owned() } else { format!("Team {team}") }), at(439.0, 515.0), WHITE);
+    }
+    // The map: preview, name, the host's buttons.
+    heading(c, kit, "Map Preview", rect(547.0, 94.0, 711.0, 118.0));
+    frame(c, rect(549.0, 121.0, 711.0, 257.0), Color::BLACK, RUST);
+    if let Some(img) = preview {
+        c.spawn((ImageNode::new(img), rect(562.0, 122.0, 698.0, 256.0)));
+    }
+    label(c, kit, &map_title(&setup.map), rect(539.0, 259.0, 723.0, 287.0), 12.0, WHITE, true);
+    if host {
+        button(c, kit, "\u{25c0}", Act::NetMap(-1), Look::Button, rect(546.0, 285.0, 576.0, 311.0), 12.0);
+        button(c, kit, "SELECT MAP", Act::NetMap(1), Look::Button, rect(580.0, 285.0, 714.0, 311.0), 13.0);
+    }
+    // The mode where the skirmish page has its match options: the host changes it.
+    heading(c, kit, "Mode", rect(79.0, 200.0, 223.0, 224.0));
+    let mode = if coop { "Co-op Onslaught" } else { "Versus" };
+    if host {
+        cell(c, kit, mode, Act::NetMode, rect(79.0, 225.0, 315.0, 247.0));
+    } else {
+        fixed(c, kit, mode, rect(79.0, 225.0, 315.0, 247.0), WHITE);
+    }
+    let about = if coop {
+        "Co-op Onslaught: both players on one team against ten waves from the far side of the map, split \
+         between your bases; the first at 2:30, then one every 75 seconds. Outlast the last one together."
+    } else {
+        "Versus: destroy every building and unit of the other player."
+    };
+    label(c, kit, about, rect(323.0, 200.0, 535.0, 300.0), 11.0, WHITE, false);
+    // The chat window's place: who came and went, and the rank the local general plays at.
+    frame(c, rect(78.0, 324.0, 714.0, 469.0), BOX, RUST);
+    let own = rows.iter().find(|r| r.own);
+    let mut lines = net.log();
+    if let Some(g) = own.and_then(|r| r.general) {
+        let p = profile.progress(g);
+        lines.push(format!(
+            "You play {} at rank {} with {} perks slotted.",
+            g2_rules::rules().general(g).name,
+            p.rank,
+            p.slotted.len()
+        ));
+    }
+    lines.push(
+        (if host {
+            "START GAME begins once the other player has accepted; any change here clears their accept."
+        } else {
+            "ACCEPT when you are ready; the host starts the game. A change of the host's clears your accept."
+        })
+        .to_owned(),
+    );
+    lines.extend(ui.lobby.note.as_ref().map(|n| format!("Can't do that: {n}")));
+    let shown = lines.len().saturating_sub(7);
+    for (k, l) in lines[shown..].iter().enumerate() {
+        let y = 328.0 + 19.0 * k as f32;
+        let ink = if l.starts_with("Can't") { INK_HOT } else { WHITE };
+        label(c, kit, l, rect(84.0, y, 708.0, y + 19.0), 12.0, ink, false);
+    }
+    if host {
+        button(c, kit, "START GAME", Act::NetStart, Look::Button, rect(94.0, 509.0, 268.0, 545.0), 16.0);
+    } else {
+        let accepted = rows.get(1).is_some_and(|r| r.ready);
+        button(
+            c,
+            kit,
+            if accepted { "NOT READY" } else { "ACCEPT" },
+            Act::NetAccept,
+            Look::Button,
+            rect(94.0, 509.0, 268.0, 545.0),
+            16.0,
+        );
+    }
+    button(c, kit, "BACK", Act::LeaveGame, Look::Button, rect(530.0, 509.0, 701.0, 545.0), 16.0);
+}
+
 /// The score screen, as Generals' `ScoreScreen.wnd`: the outcome across the top band, a row
 /// of totals per player under gold column heads (a green mark for the winner), the match's
 /// details in the box below, and the buttons along the bottom.
@@ -1534,6 +1852,7 @@ fn end_screen(c: &mut ChildSpawnerCommands, kit: &Kit, sim: &Sim, ui: &Ui) {
     let winner = world.winner();
     // Watching two AIs play (the local player is one of them) has no victory to claim.
     let watched = world.is_ai(sim.local);
+    // A side wins together: an ally who fell before the end won too, as in Generals.
     let headline = match winner {
         // A mission's result is the mission's, whoever played the seat.
         _ if let Some(won) = world.mission().and_then(|r| r.result) => {
@@ -1544,7 +1863,7 @@ fn end_screen(c: &mut ChildSpawnerCommands, kit: &Kit, sim: &Sim, ui: &Ui) {
             }
         }
         _ if watched => "MATCH OVER",
-        Some(w) if w == sim.local => "VICTORY",
+        Some(_) if world.won(sim.local) => "VICTORY",
         Some(_) => "DEFEAT",
         None => "MATCH OVER",
     };
@@ -1573,7 +1892,7 @@ fn end_screen(c: &mut ChildSpawnerCommands, kit: &Kit, sim: &Sim, ui: &Ui) {
         let id = PlayerId(i as u8);
         let s = world.stats(id);
         let y = 129.0 + 32.0 * i as f32;
-        let won = winner == Some(id);
+        let won = world.won(id);
         frame(c, rect(43.0, y, 68.0, y + 22.0), if won { Color::srgb_u8(1, 255, 1) } else { BOX }, RUST);
         let name = match world.player(id).general {
             Some(g) => format!("{} {}", faction_tag(world.player(id).faction), world.rules.general(g).name),
@@ -2164,6 +2483,99 @@ mod tests {
         let earned = match_experience(false, 0);
         assert_eq!(app.world().resource::<Ui>().earned, Some((BULLDOG, earned)));
         assert_eq!(app.world().resource::<Profile>().progress(BULLDOG).xp, xp + earned, "earned once");
+    }
+
+    /// Updates both apps, with a pause for the socket threads, until `done` holds.
+    fn both_until(apps: &mut [App; 2], what: &str, done: impl Fn(&[App; 2]) -> bool) {
+        let started = std::time::Instant::now();
+        while !done(apps) {
+            assert!(started.elapsed() < std::time::Duration::from_secs(20), "never {what}");
+            for a in apps.iter_mut() {
+                a.update();
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+
+    /// The NETWORK pages through their acts, two apps on this machine: one types its name and
+    /// hosts co-op Onslaught, the other types the address and connects, picks its side and
+    /// accepts; the host's START GAME then starts the same three-player match on both, the
+    /// host as player 0 and the joiner as player 1 on one team.
+    #[test]
+    fn hosting_and_joining_a_coop_game_through_the_lobby() {
+        use bevy::input::keyboard::{Key, KeyboardInput};
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let mut apps = [app().0, app().0];
+        let type_in = |app: &mut App, s: &str| {
+            for c in s.chars() {
+                app.world_mut().write_message(KeyboardInput {
+                    key_code: KeyCode::KeyA,
+                    logical_key: Key::Character(c.to_string().into()),
+                    state: bevy::input::ButtonState::Pressed,
+                    text: None,
+                    repeat: false,
+                    window: Entity::PLACEHOLDER,
+                });
+            }
+            app.update();
+        };
+        let lobby = |app: &App| app.world().resource::<Ui>().lobby.clone();
+        for a in apps.iter_mut() {
+            act(a, Act::OpenLobby);
+            assert_eq!(screen(a), Screen::Lobby);
+        }
+        // The host: a name typed (Backspace takes the last letter back), the port, co-op.
+        act(&mut apps[0], Act::Type(Some(crate::lobby::Entry::Name)));
+        apps[0].world_mut().resource_mut::<Ui>().lobby.name.clear();
+        type_in(&mut apps[0], "Hostx");
+        apps[0].world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Backspace,
+            logical_key: Key::Backspace,
+            state: bevy::input::ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+        apps[0].update();
+        act(&mut apps[0], Act::Type(Some(crate::lobby::Entry::Port)));
+        apps[0].world_mut().resource_mut::<Ui>().lobby.port.clear();
+        type_in(&mut apps[0], &format!("{port}x"));
+        assert_eq!((lobby(&apps[0]).name.as_str(), lobby(&apps[0]).port), ("Host", port.to_string()), "digits only");
+        act(&mut apps[0], Act::HostGame);
+        assert_eq!(screen(&apps[0]), Screen::NetGame, "{:?}", lobby(&apps[0]).note);
+        act(&mut apps[0], Act::NetMode);
+        assert!(lobby(&apps[0]).coop);
+        // The joiner: no address yet is refused; then typed in, connect.
+        act(&mut apps[1], Act::DirectConnect);
+        assert_eq!((screen(&apps[1]), lobby(&apps[1]).note.is_some()), (Screen::Lobby, true));
+        act(&mut apps[1], Act::Type(Some(crate::lobby::Entry::Address)));
+        type_in(&mut apps[1], &format!("127.0.0.1:{port}"));
+        act(&mut apps[1], Act::DirectConnect);
+        assert_eq!(screen(&apps[1]), Screen::NetGame);
+        let joined = |apps: &[App; 2]| match apps[0].world().resource::<crate::lobby::Net>() {
+            crate::lobby::Net::Hosting(h) => h.guest().is_some(),
+            _ => false,
+        };
+        both_until(&mut apps, "seated", |a| {
+            joined(a) && a[1].world().resource::<crate::lobby::Net>().game().is_some_and(|g| g.0.players.len() == 3)
+        });
+        act(&mut apps[1], Act::NetSide);
+        act(&mut apps[1], Act::NetAccept);
+        both_until(&mut apps, "accepted", |a| match a[0].world().resource::<crate::lobby::Net>() {
+            crate::lobby::Net::Hosting(h) => h.guest_ready(),
+            _ => false,
+        });
+        act(&mut apps[0], Act::NetStart);
+        both_until(&mut apps, "started", |a| a.iter().all(|a| screen(a) == Screen::Match));
+        let [h, j] = &apps;
+        let (h, j) = (h.world().resource::<Sim>(), j.world().resource::<Sim>());
+        assert_eq!(h.setup.players, j.setup.players);
+        assert_eq!(h.setup.players.len(), 3, "co-op: the waves are the third player");
+        assert_eq!(j.setup.players[1].faction, lobby(&apps[1]).faction, "the joiner's pick");
+        assert_eq!((h.local, j.local), (PlayerId(0), PlayerId(1)));
+        assert!(h.world.allied(PlayerId(0), PlayerId(1)));
+        assert!(h.online.is_some() && j.online.is_some());
+        assert_eq!(h.world.state_hash(), j.world.state_hash());
     }
 
     /// The options page edits the live settings: BACK puts back what was there when it opened,

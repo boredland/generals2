@@ -35,6 +35,7 @@ fn normal_artillery_stands_behind_its_line() {
                         general: None,
                         perks: Vec::new(),
                         rank: 1,
+                        team: 0,
                     },
                     PlayerSetup {
                         faction: fb,
@@ -43,6 +44,7 @@ fn normal_artillery_stands_behind_its_line() {
                         general: None,
                         perks: Vec::new(),
                         rank: 1,
+                        team: 0,
                     },
                 ];
                 if seat == 1 {

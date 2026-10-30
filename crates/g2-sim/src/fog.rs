@@ -1,9 +1,10 @@
 //! Fog of war: what each player can see and has seen.
 //!
 //! The map is divided into square cells of `CELL` world units. Every tick a player's *visible*
-//! cells are recomputed from the sight radius of each of their units and finished buildings;
-//! *explored* cells are the union of everything ever visible. Enemy units count only where
-//! visible; enemy buildings are remembered as last seen on explored cells (`Memory`).
+//! cells are recomputed from the sight radius of each of their units and finished buildings,
+//! and their allies' (allies share vision, as in Generals and OpenRA); *explored* cells are the
+//! union of everything ever visible. Enemy units count only where visible; enemy buildings are
+//! remembered as last seen on explored cells (`Memory`).
 //!
 //! Sight ranges are not in any archived Generals 2 source. They follow Zero Hour's data (EA's
 //! GPL release, `vendor/superhackers/GeneralsGamePatch2`): armed units see as far as their
@@ -151,9 +152,11 @@ pub fn hidden(rules: &Rules, e: &Entity, tick: u32) -> bool {
     quiet && (rules.def(e.def).stealth || e.cloaked_until.is_some_and(|t| tick < t))
 }
 
-/// Recomputes every player's visible cells, the enemy stealth units their detectors reveal,
-/// and updates explored cells and building memory.
-pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquire: Fx, tick: u32) {
+/// Recomputes every player's visible cells, the enemy stealth units their side's detectors
+/// reveal, and updates explored cells and building memory. `teams[p]` is player `p`'s team: 0
+/// alone, else allied with every player of the same team, whose sight and detectors they share.
+pub fn update(visions: &mut [Vision], teams: &[u8], entities: &Entities, rules: &Rules, acquire: Fx, tick: u32) {
+    let allied = |a: usize, b: usize| a == b || (teams[a] != 0 && teams[a] == teams[b]);
     for v in visions.iter_mut() {
         v.visible.fill(false);
         v.detected.clear();
@@ -164,8 +167,10 @@ pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquir
             continue;
         }
         let r = sight(rules, e.def, e.is_complete(), acquire);
-        if let Some(v) = visions.get_mut(owner.0 as usize) {
-            v.reveal(e.pos, r);
+        for (p, v) in visions.iter_mut().enumerate() {
+            if allied(p, owner.0 as usize) {
+                v.reveal(e.pos, r);
+            }
         }
     }
     let detectors: Vec<(PlayerId, Vec2, Fx)> = entities
@@ -178,12 +183,13 @@ pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquir
         entities.iter().filter(|e| e.hp > 0 && (rules.def(e.def).stealth || e.cloaked_until.is_some_and(|t| tick < t)))
     {
         let Some(owner) = e.owner else { continue };
-        for &(p, at, r) in &detectors {
-            if p != owner
-                && at.distance(e.pos) <= r + rules.def(e.def).radius
-                && let Some(v) = visions.get_mut(p.0 as usize)
-            {
-                v.detected.insert(e.id);
+        for &(d, at, r) in &detectors {
+            if !allied(d.0 as usize, owner.0 as usize) && at.distance(e.pos) <= r + rules.def(e.def).radius {
+                for (p, v) in visions.iter_mut().enumerate() {
+                    if allied(p, d.0 as usize) {
+                        v.detected.insert(e.id);
+                    }
+                }
             }
         }
     }
@@ -196,7 +202,8 @@ pub fn update(visions: &mut [Vision], entities: &Entities, rules: &Rules, acquir
             let Some(owner) = e.owner else { continue };
             // Bases only: a civilian building changes hands, so its holder isn't remembered.
             let d = rules.def(e.def);
-            if owner.0 as usize == p || e.hp <= 0 || !d.is_building() || d.role() == Some(BuildingRole::Civilian) {
+            if allied(owner.0 as usize, p) || e.hp <= 0 || !d.is_building() || d.role() == Some(BuildingRole::Civilian)
+            {
                 continue;
             }
             if v.is_visible(e.pos) {

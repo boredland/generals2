@@ -57,7 +57,7 @@ impl Sim {
     fn start(setup: MatchSetup, source: Option<MapFile>, mission: Option<g2_sim::MissionId>) -> Sim {
         let teams = crate::models::team_slots(&setup.players.iter().map(|p| p.faction).collect::<Vec<_>>());
         Sim {
-            world: World::start(&setup, rules(), mission),
+            world: World::begin(&setup, rules(), mission),
             setup,
             speed: 1,
             source,
@@ -147,6 +147,7 @@ impl Sim {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: factions[1],
@@ -155,6 +156,7 @@ impl Sim {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ]
     }

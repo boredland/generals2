@@ -22,6 +22,7 @@ fn setup(f: Faction, general: Option<GeneralId>, rank: u8) -> MatchSetup {
         general,
         perks: Vec::new(),
         rank,
+        team: 0,
     };
     MatchSetup { map: crater_ridge(), seed: 1, players: vec![player(general, rank), player(None, 1)] }
 }
@@ -157,6 +158,7 @@ fn every_general_plays() {
             general,
             perks: Vec::new(),
             rank: 3,
+            team: 0,
         };
         let s = MatchSetup {
             map: crater_ridge(),

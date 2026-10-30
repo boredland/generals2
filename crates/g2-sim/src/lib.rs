@@ -36,7 +36,7 @@ pub use world::{Event, Player, Stats, TICKS_PER_SECOND, World};
 /// Runs a replay from its setup and reports the first checkpoint whose hash differs.
 pub fn verify_replay(replay: &Replay, map: MapDef, rules: &'static Rules) -> Result<u64, Divergence> {
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
-    let mut world = World::start(&setup, rules, replay.mission);
+    let mut world = World::begin(&setup, rules, replay.mission);
     for c in &replay.commands {
         world.schedule(c.clone());
     }
