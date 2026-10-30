@@ -75,9 +75,10 @@ fn an_idle_player_is_overrun() {
 }
 
 /// A `Normal` AI in the player's seat, every faction pairing on Crater Ridge (the hardest of
-/// the three measured maps: 4 of 9 held, 21 of 27 across all three): every match ends, with
-/// the onslaught beaten only once its last wave is out and gone, and replays exactly. The
-/// waves are a real threat but can be held, so neither side wins them all.
+/// the three measured maps: 7 of 9 held, 25 of 27 across all three; 4 and 21 before the AI
+/// stopped walling its war factory in): every match ends, with the onslaught beaten only once
+/// its last wave is out and gone, and replays exactly. The waves are a real threat but can be
+/// held, so neither side wins them all.
 #[test]
 fn the_waves_can_be_held_or_overrun_and_replay_exactly() {
     let (mut held, mut overrun) = (0, 0);

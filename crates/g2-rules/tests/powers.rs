@@ -168,21 +168,21 @@ fn field_repair_restores_nearby_units() {
     let full = rules().def(APA_CC).hp;
     let damaged = w.entity(cc).unwrap().hp;
     assert!(damaged < full, "the barrage hit the command center");
-    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: cc_pos }), vec![]);
-    let repair = 400;
-    assert_eq!(w.entity(cc).unwrap().hp, (damaged + repair).min(full));
-    // Out of range: the crane scouts 50 east, and a repair there leaves the command center be.
+    // Out of range first, while the command center is still damaged (one repair can heal the
+    // whole barrage): the crane scouts 50 east, and a repair there leaves the command center be.
     let crane = w.entities().find(|e| e.owner == Some(P0) && e.def == APA_CRANE).unwrap().id;
     let far = cc_pos + Vec2::from_int(50, 0);
     assert_eq!(order(&mut w, CommandKind::Move { units: vec![crane], target: far }), vec![]);
-    run_for(&mut w, rules().general(TASKMASTER).power.unwrap().cooldown_ticks);
-    let now = w.entity(cc).unwrap().hp;
-    assert!(now < full, "still damaged, so a repair in range would show");
+    run_for(&mut w, 30 * 8);
     assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: far }), vec![]);
-    assert_eq!(w.entity(cc).unwrap().hp, now);
+    assert_eq!(w.entity(cc).unwrap().hp, damaged);
+    run_for(&mut w, rules().general(TASKMASTER).power.unwrap().cooldown_ticks);
+    assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: cc_pos }), vec![]);
+    let repair = 400;
+    assert_eq!(w.entity(cc).unwrap().hp, (damaged + repair).min(full));
 }
 
-/// The ambush puts four RPG squads on open ground at and around the point. A point in
+/// The ambush puts three RPG squads on open ground at and around the point. A point in
 /// impassable ground (here a patch of it marked beside the start, which the start can see) is
 /// refused, and so is dry land at its edge where a squad of the ring would stand in it; the
 /// power stays ready.
@@ -210,7 +210,7 @@ fn an_ambush_brings_squads_onto_open_ground() {
     let before = w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count();
     assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: spot }), vec![], "still ready after the refusal");
     let squads: Vec<_> = w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).collect();
-    assert_eq!(squads.len(), before + 4);
+    assert_eq!(squads.len(), before + 3);
     assert!(squads.iter().all(|e| e.pos.distance(spot) < g2_sim::Fx::from_int(10) && w.map.walkable(e.pos)));
 }
 

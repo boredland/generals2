@@ -444,8 +444,13 @@ impl Ai {
             }
         }
 
-        // 3. Fill every supply center up to its collector cap.
-        for depot in mine.iter().filter(|e| e.is_complete()) {
+        // 3. Fill every supply center up to its collector cap, while any pile has supplies left:
+        //    once the last is spent, collectors go idle and leave their center, which then looks
+        //    short of collectors, and every credit from oil went into new ones (Easy APA against
+        //    EU on Crater Ridge had 18 and no army at 15:00, and neither side ever won).
+        let piles_left =
+            world.entities().any(|e| matches!(rules.def(e.def).class, Class::SupplyPile) && e.resource > 0);
+        for depot in mine.iter().filter(|e| piles_left && e.is_complete()) {
             let d = rules.def(depot.def);
             let Some(BuildingRole::SupplyCenter { collector_cap }) = d.role() else { continue };
             let Some(&collector) = d.produces.iter().find(|&&u| rules.def(u).collector().is_some()) else { continue };
@@ -570,7 +575,13 @@ impl Ai {
             }
         }
         let idle: Vec<EntityId> = army.iter().filter(|e| e.order == Order::Idle).map(|e| e.id).collect();
-        if idle.len() >= WAVE
+        // With every pile spent and no derrick of ours, the army can't grow to a wave any more:
+        // it goes as it is, or a match between two spent bases never ends (Easy APA against EU on
+        // Crater Ridge, once the EU harvester carried the alpha's 190 a trip: three EU units
+        // waited at home from 7:00 on).
+        let income = mine.iter().any(|e| matches!(rules.def(e.def).role(), Some(BuildingRole::OilDerrick { .. })))
+            || world.entities().any(|e| matches!(rules.def(e.def).class, Class::SupplyPile) && e.resource > 0);
+        if (idle.len() >= WAVE || (!income && !idle.is_empty()))
             && let Some(home) = home
             && let Some(target) = self.enemy_base(world, home)
         {
@@ -779,7 +790,7 @@ impl Ai {
         for ring in 1..12i64 {
             for k in 0..8 * ring {
                 let pos = spiral_cell(world, around, step, ring, k);
-                if world.check_placement(def, pos).is_ok() {
+                if world.check_placement(def, pos).is_ok() && !blocks_exit(world, def, pos) {
                     return Some(pos);
                 }
             }
@@ -795,7 +806,10 @@ impl Ai {
         for ring in 1..4i64 {
             for k in 0..8 * ring {
                 let pos = spiral_cell(world, around, step, ring, k);
-                if world.check_placement(def, pos).is_ok() && best.is_none_or(|(d, _)| pos.distance(toward) < d) {
+                if world.check_placement(def, pos).is_ok()
+                    && !blocks_exit(world, def, pos)
+                    && best.is_none_or(|(d, _)| pos.distance(toward) < d)
+                {
                     best = Some((pos.distance(toward), pos));
                 }
             }
@@ -887,6 +901,34 @@ fn near_base(world: &World, mine: &[&Entity], p: Vec2) -> bool {
         let d = world.rules.def(b.def);
         d.is_base() && b.pos.distance(p) <= DEFEND_RADIUS + d.radius
     })
+}
+
+/// Room a new unit needs where it leaves its building: a tank's footprint (3.5) and a margin.
+const EXIT_ROOM: Fx = Fx::from_int(6);
+
+/// Where units trained at a building of `radius` at `pos` appear: on the side facing the map
+/// centre, as `World` places them.
+fn exit_of(world: &World, pos: Vec2, radius: Fx) -> Vec2 {
+    let side = if pos.y * Fx::from_int(2) > world.map.height { -Fx::ONE } else { Fx::ONE };
+    pos + Vec2::new(Fx::ZERO, (radius + EXIT_ROOM) * side)
+}
+
+/// A building of `def` at `pos` would wall in a unit's way out: its own exit lies against
+/// another building, or it stands on the exit of any building that trains units. Without
+/// this, a war factory placed just behind the command center put every tank it trained into
+/// the gap between them, where no route leads out (Easy EU against EU on Crater Ridge: the
+/// whole vehicle army stood at home from the first wave on, and neither side ever won).
+fn blocks_exit(world: &World, def: crate::defs::DefId, pos: Vec2) -> bool {
+    let rules = world.rules;
+    let d = rules.def(def);
+    let trains = |d: &crate::defs::Def| d.produces.iter().any(|&u| rules.def(u).is_unit());
+    let statics = || world.entities().filter(|e| !rules.def(e.def).is_unit());
+    let exit = exit_of(world, pos, d.radius);
+    (trains(d) && statics().any(|e| e.pos.distance(exit) < rules.def(e.def).radius + EXIT_ROOM))
+        || statics().any(|e| {
+            let od = rules.def(e.def);
+            od.is_building() && trains(od) && exit_of(world, e.pos, od.radius).distance(pos) < d.radius + EXIT_ROOM
+        })
 }
 
 /// The `k`-th spiral cell around `around`, `step` apart, with both axes flipped to point at the

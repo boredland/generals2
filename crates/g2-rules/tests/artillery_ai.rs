@@ -10,11 +10,11 @@ use g2_sim::{AiLevel, DefId, Faction, MatchSetup, PlayerId, PlayerSetup, TICKS_P
 /// the base stands farther from the nearest visible enemy than the line's closest unit, by a
 /// good margin, nearly always; most guns leave the base, and most survive. Nothing positions
 /// them on purpose: range alone does it (a gun stops at its reach, 55-65, while the line closes
-/// to 25-35), and `Easy` stands as far back (median 35-38). Where the levels differ is losses.
-/// Measured on Crater Ridge, every pairing, both starts, against Easy: median 38 units behind,
-/// 91% of samples more than 5 behind, 11 of 19 guns out of the base, 10 lost. The guns that
-/// never leave are EU howitzers: one arrives after the first wave has gone and dies defending
-/// the base when it falls.
+/// to 25-35), and `Easy` stands as far back (median 38). Where the levels differ is losses.
+/// Measured on Crater Ridge, every pairing, both starts, against Easy: median 36 units behind,
+/// 96% of samples more than 5 behind, 21 of 24 guns out of the base, 10 lost (11 of 19 out
+/// and 10 lost before the AI stopped walling its war factory in, when the guns that never
+/// left were EU howitzers trapped at home).
 #[test]
 fn normal_artillery_stands_behind_its_line() {
     let r = rules();

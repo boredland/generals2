@@ -555,14 +555,23 @@ const HOWITZER: Weapon = garrison_buster(shelling(weapon(100, [0, 30, 0, 0], 65,
 // its toxin damage over time is not modelled. A lighter, faster-firing shell than the howitzer.
 const TOXIN_SHELL: Weapon = shelling(weapon(45, [15, 0, 0, 0], 55, 25), 8, 40, 15);
 // Placeholder: the EU has no artillery card in the archive (only the general Salvo's artillery
-// strike). A mid-weight shell between the other two.
-const EU_SHELL: Weapon = shelling(weapon(70, [0, 20, 0, 40], 60, 30), 6, 45, 18);
+// strike). A mid-weight shell between the other two. Its damage, 40 (70 before), is tuned by
+// measurement: Easy against Easy and Normal against Normal, every pairing from both starts on
+// Crater Ridge and the 32 imported 2-player maps (the "33 maps" below), with every other
+// change of the balance pass in, the EU won 91 of 132 and 94 of 128 at 70, 63 and 74 at 40.
+const EU_SHELL: Weapon = shelling(weapon(40, [0, 20, 0, 40], 60, 30), 6, 45, 18);
 // Placeholder: the rocket squads' cards say "anti-armor" but give no weapon numbers. A heavy
 // rocket every 2 s with a little more than a rifle's reach: per credit it does about twice a
 // rifle squad's damage to tanks and two thirds of it to infantry.
 const ROCKETS: Weapon = weapon(45, [0, 10, 75, 10], 30, 20);
 
 const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3), unload_ticks: secs(1) };
+// src: the alpha's eu_harvester `RtsResourceHarvesterComponentData`: MaxResources 190 a trip
+// (the APA harvester's is 120, the GLA worker's 110). Load and unload times are still
+// `HARVEST`'s placeholders. On the 33 maps, at `HARVEST`'s 100 the EU won 55 of 132 at Easy
+// and 13 of 131 at Normal, at 190 63 and 74. The APA's 120 was measured too: Normal APA then
+// won 91 of 130 (64 at 100) and the GLA 40, so it keeps `HARVEST`'s 100 for now.
+const HARVEST_AIR: CollectorSpec = CollectorSpec { capacity: 190, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
 static DEFS: [Def; 80] = [
@@ -661,7 +670,7 @@ static DEFS: [Def; 80] = [
     // src: EU harvester $450, 0:20, airborne collector (flying is not modelled yet); the
     // alpha's `EntityRadius` 4, the aircraft's.
     with_radius(
-        unit("EU Harvester", Faction::Eu, 300, credits(450), 20, 24, false, Some(HARVEST), NONE),
+        unit("EU Harvester", Faction::Eu, 300, credits(450), 20, 24, false, Some(HARVEST_AIR), NONE),
         Fx::from_int(4),
     ),
     building("EU Power Plant", Faction::Eu, BuildingRole::PowerPlant, 100, 800, credits(600), 15, 6, NONE),
@@ -970,18 +979,22 @@ static DEFS: [Def; 80] = [
         93,
     ),
     // src: Tank Hunter, APA barracks, anti-armour rocket infantry; the card has no numbers.
-    // Placeholder: the EU Rocket Squad's.
+    // src: hp 200 and build time 12 s from the alpha's au_rocketsoldiersquad (`MaxHealth`,
+    // `BuildTime`); its rocket launcher (`RocketLauncher`): 45 (+90 vs. heavy), range 30, every
+    // 2.5 s, ground only. Cost and speed: placeholders, the EU Rocket Squad's. On the 33 maps,
+    // with the EU Rocket Squad's 180 hp and 16.29 s, the APA won 43 of 131 at Easy (63 with
+    // these); with the old `ROCKETS`, 78 at Easy and 71 of 132 at Normal (63 and 64).
     ranked(
         soldier(
             "APA Tank Hunter",
             Faction::Apa,
-            180,
+            200,
             Armour::Infantry,
             credits(300),
-            centis(1629),
+            secs(12),
             8,
             Fx::from_int(2),
-            ROCKETS,
+            weapon(45, [0, 0, 90, 0], 30, 25),
         ),
         18,
         91,
@@ -1028,8 +1041,13 @@ static DEFS: [Def; 80] = [
         2,
     ),
     // src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
-    // (anti-air too; there is no air). Gun and speed are placeholders: rapid, strong against
-    // infantry.
+    // (anti-air too). src: speed and guns from the alpha's au_mediumguntank: `MovementRate` 11;
+    // GatlingGun_Ground 14 (+8 vs. infantry) every 0.5 s, and GatlingGun_Air 14 (+8 vs. light),
+    // reaching 50. A unit has one weapon here, so it is one gun with both bonuses. Placeholder:
+    // the ground range 32 (the alpha's 35 measured worse, before the rest of the balance pass:
+    // Normal APA 74 of 126 wins against 66 of 120). On the 33 maps, with the placeholder before
+    // it (10, +12 vs. infantry, every 0.4 s, speed 12), Normal APA won 52 of 131 (64 with these)
+    // and the EU 81 (74).
     ranked(
         soldier(
             "APA Gatling Tank",
@@ -1038,10 +1056,9 @@ static DEFS: [Def; 80] = [
             Armour::Light,
             credits(660),
             centis(2330),
-            12,
+            11,
             Fx::from_ratio(7, 2),
-            // The alpha's Gatling tank turns a second gun skywards, reaching 50 there.
-            anti_air(weapon(10, [12, 0, 0, 0], 32, 4), 50),
+            anti_air(weapon(14, [8, 8, 0, 0], 32, 5), 50),
         ),
         60,
         90,
@@ -1314,7 +1331,8 @@ static DEFS: [Def; 80] = [
         80,
     ),
     // Railgun Tank (eu_heavyrailguntank_exp): hp 900, $1250, 22 s; railgun 280 (+80 heavy,
-    // +120 garrisoned), 50, 4 s.
+    // +120 garrisoned), 50, 4 s. Speed 6, a placeholder below the class's 8: with the
+    // Plasma Bomb below, `g2-tools generals` measured Cleaver at 12 of 18 against 18 at 8.
     ranked(
         soldier(
             "EU Railgun Tank",
@@ -1323,7 +1341,7 @@ static DEFS: [Def; 80] = [
             Armour::Heavy,
             credits(1250),
             secs(22),
-            8,
+            6,
             Fx::from_ratio(7, 2),
             garrison_buster(weapon(280, [0, 0, 80, 0], 50, 40), 120),
         ),
@@ -1517,6 +1535,9 @@ static DEFS: [Def; 80] = [
     // Black Market Artillery (gu_heavyrocketartillery): hp 750 (the wiki's 850), $1250, 24 s;
     // rockets 70, 60, 1.75 s, lobbed as shells. The alpha's also fire at aircraft (`TargetType`
     // 0; the wiki: "anti-aircraft"); a unit here has one weapon and shells can't hit the air.
+    // Speed 6, a placeholder below the class's 8 (the Thunderfist's 7 is the slowest sourced
+    // gun): with Junkyard's other changes, `g2-tools generals` measured it at 15 of 18 at 8, 11
+    // at 6.
     ranked(
         soldier(
             "GLA Black Market Artillery",
@@ -1525,7 +1546,7 @@ static DEFS: [Def; 80] = [
             Armour::Light,
             credits(1250),
             secs(24),
-            8,
+            6,
             Fx::from_ratio(7, 2),
             shelling(weapon(70, [0, 0, 0, 0], 60, 18), 6, 50, 15),
         ),
@@ -1533,7 +1554,9 @@ static DEFS: [Def; 80] = [
         89,
     ),
     // Shrapnel Tank (gu_heavyshrapneltank): hp 650, $1000, 16 s; cannon 60 (+35 heavy), 35,
-    // 2.1 s. Replaces the Scorpion for its generals.
+    // 2.1 s. Replaces the Scorpion for its generals. Speed 7, a placeholder below the class's
+    // 10: `g2-tools generals` measured Junkyard at 11 of 18 and Wild Dog at 7, against 16 and
+    // 15 at 10 (8 gave 15 and 9).
     ranked(
         soldier(
             "GLA Shrapnel Tank",
@@ -1542,7 +1565,7 @@ static DEFS: [Def; 80] = [
             Armour::Light,
             credits(1000),
             secs(16),
-            10,
+            7,
             Fx::from_ratio(7, 2),
             weapon(60, [0, 0, 35, 0], 35, 21),
         ),
@@ -2998,14 +3021,15 @@ static GENERALS: [General; 14] = [
         // After the EU general Salvo's "Suppressing fire" (an artillery strike called onto the
         // field): seven shells on and around the point, half a second apart after a 3 s delay.
         // Placeholder numbers. No bonus against buildings: with one it took half a command
-        // center per use, a base-killer rather than a strike on an army.
+        // center per use, a base-killer rather than a strike on an army. Shell damage 54 (90
+        // before), tuned by `g2-tools generals`: Bulldog 13 of 18 at 90, 12 at 54.
         power: Some(Power {
             name: "Artillery barrage",
             kind: PowerKind::Barrage {
                 shells: 7,
                 delay_ticks: secs(3),
                 every_ticks: g2_sim::TICKS_PER_SECOND / 2,
-                damage: 90,
+                damage: 54,
                 bonus: [0, 20, 0, 0],
                 radius: Fx::from_int(7),
             },
@@ -3022,7 +3046,7 @@ static GENERALS: [General; 14] = [
                     shells: 7,
                     delay_ticks: secs(3),
                     every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 90,
+                    damage: 54,
                     bonus: [0, 20, 0, 0],
                     radius: Fx::from_int(7),
                 },
@@ -3037,7 +3061,7 @@ static GENERALS: [General; 14] = [
                     shells: 9,
                     delay_ticks: secs(3),
                     every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 90,
+                    damage: 54,
                     bonus: [0, 20, 0, 0],
                     radius: Fx::from_int(7),
                 },
@@ -3114,15 +3138,18 @@ static GENERALS: [General; 14] = [
     General {
         name: "Junkyard",
         faction: Faction::Gla,
+        // Workers at 90% (a placeholder; 75% before) and the ambush at 3, 4 and 5 squads (4, 5
+        // and 6 before), with the Shrapnel Tank and the Black Market Artillery slowed:
+        // `g2-tools generals` measured Junkyard at 11 of 18, from 15 with the slower units alone.
         modifiers: &[
-            Modifier::Cost { def: GLA_WORKER, percent: 75 },
+            Modifier::Cost { def: GLA_WORKER, percent: 90 },
             Modifier::BuildTime { def: GLA_STASH, percent: 125 },
         ],
-        // After the GLA general Muerta's "Ambush" (rebel soldiers from hidden tunnels): four
+        // After the GLA general Muerta's "Ambush" (rebel soldiers from hidden tunnels): three
         // RPG squads appear at the point.
         power: Some(Power {
             name: "Ambush",
-            kind: PowerKind::Ambush { def: GLA_RPG, count: 4 },
+            kind: PowerKind::Ambush { def: GLA_RPG, count: 3 },
             first_ticks: secs(240),
             cooldown_ticks: secs(240),
             blind: false,
@@ -3132,7 +3159,7 @@ static GENERALS: [General; 14] = [
         power_levels: &[
             Power {
                 name: "Ambush",
-                kind: PowerKind::Ambush { def: GLA_RPG, count: 5 },
+                kind: PowerKind::Ambush { def: GLA_RPG, count: 4 },
                 first_ticks: secs(240),
                 cooldown_ticks: secs(240),
                 blind: false,
@@ -3140,7 +3167,7 @@ static GENERALS: [General; 14] = [
             },
             Power {
                 name: "Ambush",
-                kind: PowerKind::Ambush { def: GLA_RPG, count: 6 },
+                kind: PowerKind::Ambush { def: GLA_RPG, count: 5 },
                 first_ticks: secs(240),
                 cooldown_ticks: secs(240),
                 blind: false,
@@ -3165,7 +3192,9 @@ static GENERALS: [General; 14] = [
     },
     // src: the EU air force general (the wiki's Daedalus, the alpha's EU_AirforceGeneral, icon EG_Airforce_01): Fox LRV in place of the APC, Longbow helicopters, the Sniper Team; power Air Raid (lvl01-03: 3 bombers, recharge 240 s, 1 s before activation).
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
-    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets). Air
+    // Raid's bombs at 84 and 105 (140 and 175 before): `g2-tools generals` measured Daedalus at
+    // 13 of 18 before, 12 after.
     General {
         name: "Daedalus",
         faction: Faction::Eu,
@@ -3178,7 +3207,7 @@ static GENERALS: [General; 14] = [
                 spread: Fx::from_int(10),
                 bombs: 2,
                 spacing: Fx::from_int(12),
-                damage: 140,
+                damage: 84,
                 bonus: [0, 0, 0, 0],
                 radius: Fx::from_int(10),
             },
@@ -3196,7 +3225,7 @@ static GENERALS: [General; 14] = [
                     spread: Fx::from_int(10),
                     bombs: 2,
                     spacing: Fx::from_int(12),
-                    damage: 175,
+                    damage: 105,
                     bonus: [0, 0, 0, 0],
                     radius: Fx::from_int(10),
                 },
@@ -3213,7 +3242,7 @@ static GENERALS: [General; 14] = [
                     spread: Fx::from_int(10),
                     bombs: 2,
                     spacing: Fx::from_int(12),
-                    damage: 175,
+                    damage: 105,
                     bonus: [0, 0, 0, 0],
                     radius: Fx::from_int(10),
                 },
@@ -3362,7 +3391,9 @@ static GENERALS: [General; 14] = [
     },
     // src: the EU railgun general (the wiki's Cleaver: Railgun Squad; the alpha's EU_ScienceGeneral, icon EG_Railgun_01): Fox LRV, the Assault APC in place of the APC, Longbows, the Railgun Turret in place of the Gun Turret, the Railgun Tank; power Plasma Bomb (radius 25/30/35, recharge 240 s, 2.5 s).
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
-    // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets). The
+    // Plasma Bomb at 100 (200 before), with the Railgun Tank slowed: `g2-tools generals`
+    // measured Cleaver at 18 of 18 with neither, 15 with the slower tank alone, 12 with both.
     General {
         name: "Cleaver",
         faction: Faction::Eu,
@@ -3373,7 +3404,7 @@ static GENERALS: [General; 14] = [
                 shells: 1,
                 delay_ticks: secs(3),
                 every_ticks: g2_sim::TICKS_PER_SECOND / 10,
-                damage: 200,
+                damage: 100,
                 bonus: [0, 0, 0, 0],
                 radius: Fx::from_int(25),
             },
@@ -3389,7 +3420,7 @@ static GENERALS: [General; 14] = [
                     shells: 1,
                     delay_ticks: secs(3),
                     every_ticks: g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 200,
+                    damage: 100,
                     bonus: [0, 0, 0, 0],
                     radius: Fx::from_int(30),
                 },
@@ -3404,7 +3435,7 @@ static GENERALS: [General; 14] = [
                     shells: 1,
                     delay_ticks: secs(3),
                     every_ticks: g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 200,
+                    damage: 100,
                     bonus: [0, 0, 0, 0],
                     radius: Fx::from_int(35),
                 },
@@ -3439,13 +3470,15 @@ static GENERALS: [General; 14] = [
         name: "Inferno",
         faction: Faction::Apa,
         modifiers: &[],
+        // Shell damage 140, then 170 (placeholders, twice the first guess of 70 and 85, the
+        // bonus kept): `g2-tools generals` measured Inferno at 7 of 18 against 6.
         power: Some(Power {
             name: "Inferno Artillery",
             kind: PowerKind::Barrage {
                 shells: 6,
                 delay_ticks: secs(3),
                 every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
-                damage: 70,
+                damage: 140,
                 bonus: [30, 0, 0, 0],
                 radius: Fx::from_int(7),
             },
@@ -3461,7 +3494,7 @@ static GENERALS: [General; 14] = [
                     shells: 6,
                     delay_ticks: secs(3),
                     every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 85,
+                    damage: 170,
                     bonus: [30, 0, 0, 0],
                     radius: Fx::from_int(7),
                 },
@@ -3476,7 +3509,7 @@ static GENERALS: [General; 14] = [
                     shells: 8,
                     delay_ticks: secs(3),
                     every_ticks: 5 * g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 85,
+                    damage: 170,
                     bonus: [30, 0, 0, 0],
                     radius: Fx::from_int(9),
                 },
