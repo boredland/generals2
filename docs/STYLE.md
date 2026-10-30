@@ -91,9 +91,21 @@ Requirements: you can tell what fired from what you see, a kill reads bigger tha
 - Soft billboarded puffs on one procedural sprite: additive fire, flame, spark, toxin and plasma tracks that fade by darkening, and blended smoke, dust and toxin-haze tracks in mid tones picked against the graded ground. Every track's materials are made once and shared, so a particle is two handle clones.
 - **Direct fire**: machine guns flash and send a burst of glowing dashes down the line (three for heavy guns, two for light); cannons flash, puff barrel smoke and send a hot slug; a rocket flies with a smoke trail; a flamethrower sends an orange stream widening toward the target; a toxin sprayer a green spray; a laser a beam with a hot core and a faint sheath, the railgun's blue-white with a vapour trail. Each ends in sparks, a puff and dust.
 - **Shells and strikes**: a shell flies its arc with a thin smoke trail; a power's bombs and barrage shells drop steeply from high above each spot; missiles climb high and come down. The landing blast is a white flash, a fireball, a dust ring, smoke that rises and spreads, debris that settles on the ground and a point light. Toxin blasts are green with a haze, a nuke's blue-white, and napalm leaves fire burning on the ground.
-- **Kills**: a fireball sized by what died (a building's also sends up a tall, slow smoke plume), then a soft scorch decal and rubble that sink away.
+- **Kills**: a fireball sized by what died (a building's also sends up a tall, slow smoke plume), then a soft scorch decal and rubble that sink away. The wreck smoulders for as long as it lies there: a column of black smoke that thins as it cools, and for a building, fire for its first fifth.
 - No bloom: the game camera's colour pipeline stays as it is (AgX without HDR), so hot effects glow by additive colour, not post-processing.
 - Cost: a 200-frame clip of an Inferno Artillery strike (up to 228 particles alive at once) renders at a median 19.7 ms a frame at 1280×720 on the build host's integrated GPU, no slower in its busiest tenth than in its quietest frames.
+
+### The living battlefield
+
+Effects from the state of things rather than from shots, matched to `[dtl2Q_tUDDQ]` at 266-325 s (burning buildings, smoking wrecks, dusty tank columns) and `[1-NiSusskDM]`.
+
+- **Damage states**: a building below two-thirds of its hit points smokes from one or two points on its roof, picked by a hash of its id so they stay put; below a third it burns: a thick black column with flames and the odd spark at its foot, sized to the building. A vehicle below a third trails black smoke. Generals/ZH's thresholds are 0.7 and 0.35 (`UnitDamagedThreshold`, `UnitReallyDamagedThreshold`).
+- **Moving vehicles** throw dust behind them, more the faster they go, in the ground's tone: pale dust on the built-in map and on sand, dirt and roads, dark loam on an imported map's grass and rock, powder on snow. Tracked vehicles (tanks, constructors, artillery) lay tread marks every 2.2 units along their path: dark churned bands that hold for ten seconds and fade over the next ten. Squads kick up small puffs; aircraft nothing.
+- **Craters**: every shell and strike leaves a charred decal 1.6 × its blast radius across, holding for 22 s and gone by 45 s.
+- **Stacks steam** while their building runs (finished and powered): the procedural power plant's twin cooling towers and the GLA workshop's chimneys; with the imported alpha, the stacks its own models have (EU and APA power plants, EU and GLA war factories, all three derricks' flare stacks), at points measured from its meshes.
+- **Haze drifts** with one wind across the field, so every plume leans the same way, as in the footage.
+- **Still frames show the battle as it stands**: a screenshot draws each emitter's last seconds at once, every puff as old as it would be by then, and replays the last 45 s of blasts and kills for their craters, wrecks and smoke.
+- **Cost and caps**: ambient puffs are capped at 600 alive (new ones are skipped beyond it; shots and blasts never are), tread marks at 400 and craters at 60, oldest first. Median of three headless runs at 1280×720, before → after: the battle shot (`--ticks 6750 --view battle`) 9.2 → 9.7 ms procedural and 9.6 → 10.1 ms alpha (+5%), the `zh:Red Rock` base view 8.8 → 9.2 ms, a burning base (`--ticks 10200 --view at:76,62`, two burning buildings, wrecks and craters) 8.2 → 9.0 ms. Meshes on the battle shot 6,287 → 6,441.
 
 ## Budget
 
@@ -103,7 +115,7 @@ The headless screenshot mode prints the mesh count and the average time of 30 re
 
 Measured and compared against frames of `[dtl2Q_tUDDQ]`, `[3tlbDYSUboc]` and `[6XKby6Qz5oI]`. Matched now: ground colour (within about 10%), centre brightness (117-125 against 125-142 sRGB luminance; the surface maps moved a base frame's centre crop by 1-3 levels), contact shadows, tree silhouettes, painted panel and plate texture on building walls, dark EU roof decks in orange trim, masts and dishes that read at the default zoom. Still open, largest first:
 
-- Few ambient effects: no smoke from stacks or dust under vehicles (`view.rs`).
+- Few ambient effects beyond smoke, dust and steam: no birds, blowing sand or flags (`fx.rs`).
 - No animation: rotors, treads, walking infantry, pumpjacks (`view.rs`, `models.rs`).
 - Artillery barrels can't pitch: parts have no pitch rotation (`models.rs` `Part`).
 - Surface wear repeats every 4 m and doesn't follow a building's shape: no rust under ledges or grime gathered in corners, as hand-painted textures have (`surface.rs`).

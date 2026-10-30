@@ -48,6 +48,18 @@ struct Wreck {
     ground: f32,
 }
 
+impl Wreck {
+    /// Lowers `tf` as far as the wreck has sunk by its age (not at all before its last
+    /// `SINK_SECS`).
+    fn sink(&self, tf: &mut Transform) {
+        let sunk = ((self.age - (self.life - SINK_SECS)) / SINK_SECS).clamp(0.0, 1.0);
+        if sunk > 0.0 {
+            tf.translation.y =
+                self.ground - self.depth * sunk + (tf.translation.y - self.ground).max(0.0) * (1.0 - sunk);
+        }
+    }
+}
+
 const SINK_SECS: f32 = 6.0;
 /// Unit and building wrecks stay this long.
 const UNIT_WRECK_SECS: f32 = 25.0;
@@ -522,30 +534,64 @@ fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
     }
 }
 
-/// Combat effects (`fx.rs`) for every shot since the last frame, and the wreck of every kill.
+/// Combat effects (`fx.rs`) for every shot since the last frame, and the wreck of every kill;
+/// then the battlefield's own life (`fx::live`): damage smoke, wreck smoke, dust, tread marks
+/// and steaming stacks.
+#[allow(clippy::too_many_arguments)]
 fn spawn_effects(
     mut commands: Commands,
     assets: Res<Assets3d>,
     palette: Option<Res<crate::fx::Palette>>,
+    living: Option<ResMut<crate::fx::Living>>,
+    aftermath: Option<ResMut<crate::fx::Aftermath>>,
     sim: Res<Sim>,
+    time: Res<Time>,
+    frozen: Option<Res<FreezeEffects>>,
+    mirror: Res<Mirror>,
     mut hits: ResMut<crate::sim::Hits>,
+    roots: Query<&Transform, With<SimRef>>,
+    ambient: Query<(), With<crate::fx::Ambient>>,
 ) {
-    let Some(palette) = palette else { return };
-    for (at, def) in crate::fx::spawn_shots(&mut commands, &palette, &sim, hits.0.drain(..)) {
-        spawn_wreck(&mut commands, &assets, &palette, &sim, at, def);
+    let (Some(palette), Some(mut living)) = (palette, living) else { return };
+    if let Some(mut aftermath) = aftermath {
+        let past = std::mem::take(&mut aftermath.0);
+        for (at, def, age) in crate::fx::replay_aftermath(&mut commands, &palette, &sim, &mut living, past) {
+            spawn_wreck(&mut commands, &assets, &palette, &sim, &mut living, at, def, age);
+        }
     }
+    for (at, def) in crate::fx::spawn_shots(&mut commands, &palette, &sim, &mut living, hits.0.drain(..)) {
+        spawn_wreck(&mut commands, &assets, &palette, &sim, &mut living, at, def, 0.0);
+    }
+    let dt = if sim.speed == 0 { 0.0 } else { time.delta_secs() };
+    let root =
+        |id: EntityId| mirror.0.get(&id).and_then(|&e| roots.get(e).ok()).map(|tf| (tf.translation, tf.rotation));
+    crate::fx::live(
+        &mut commands,
+        &palette,
+        &sim,
+        &mut living,
+        dt,
+        frozen.is_some(),
+        &|name| assets.alpha.contains_key(name),
+        &root,
+        ambient.iter().count(),
+    );
 }
 
-/// Leaves a scorch mark and a few tumbled slabs where a unit or building died. Wrecks are
-/// decoration only: they are not sim entities, never block anything and are not hashed. Their
-/// shapes come from the spot, so a replay or a second viewer draws the same ones.
+/// Leaves a scorch mark and a few tumbled slabs where a unit or building died, `age` seconds
+/// ago, and sets it smouldering (`fx::Living::wreck`). Wrecks are decoration only: they are
+/// not sim entities, never block anything and are not hashed. Their shapes come from the spot,
+/// so a replay or a second viewer draws the same ones.
+#[allow(clippy::too_many_arguments)]
 fn spawn_wreck(
     commands: &mut Commands,
     assets: &Assets3d,
     palette: &crate::fx::Palette,
     sim: &Sim,
+    living: &mut crate::fx::Living,
     at: g2_sim::Vec2,
     def: g2_sim::DefId,
+    age: f32,
 ) {
     let d = sim.world.rules.def(def);
     let building = d.is_building();
@@ -553,6 +599,10 @@ fn spawn_wreck(
     let ground = sim.ground_y(at.x.to_f32(), at.y.to_f32());
     let origin = sim.to_world(at).with_y(ground);
     let life = if building { BUILDING_WRECK_SECS } else { UNIT_WRECK_SECS };
+    if age >= life {
+        return;
+    }
+    living.wreck(origin, r, building, age, life);
     let seed = (at.x.0 as u32).wrapping_mul(0x9e37_79b1) ^ (at.y.0 as u32).wrapping_mul(0x85eb_ca6b);
     let rnd = |k: u32| {
         let mut h = seed ^ k.wrapping_mul(0xc2b2_ae35);
@@ -561,36 +611,40 @@ fn spawn_wreck(
         h ^= h >> 12;
         (h & 0xffff) as f32 / 65_535.0
     };
-    let wreck = |age_life: f32, depth: f32| Wreck { age: 0.0, life: age_life, depth, ground };
+    let wreck = |depth: f32| Wreck { age, life, depth, ground };
     // The scorch: a soft charred patch on the ground, wider than what died, at its own angle.
+    let mut tf = Transform::from_translation(origin + Vec3::Y * 0.08)
+        .with_rotation(Quat::from_rotation_y(rnd(97) * std::f32::consts::TAU))
+        .with_scale(Vec3::new(r * 3.4, 1.0, r * 3.4));
+    wreck(0.3).sink(&mut tf);
     commands.spawn((
         crate::menu::MatchEntity,
         Mesh3d(palette.decal.clone()),
         MeshMaterial3d(palette.scorch.clone()),
-        Transform::from_translation(origin + Vec3::Y * 0.08)
-            .with_rotation(Quat::from_rotation_y(rnd(97) * std::f32::consts::TAU))
-            .with_scale(Vec3::new(r * 3.4, 1.0, r * 3.4)),
+        tf,
         bevy::light::NotShadowCaster,
-        wreck(life, 0.3),
+        wreck(0.3),
     ));
     let slabs = if building { 5 } else { 2 };
     for k in 0..slabs {
         let (a, dist) = (rnd(k * 3) * std::f32::consts::TAU, rnd(k * 3 + 1) * r * 0.8);
         let size =
             Vec3::new(0.5 + rnd(k * 3 + 2) * r * 0.5, 0.25 + rnd(k * 5 + 7) * 0.5, 0.5 + rnd(k * 7 + 3) * r * 0.4);
+        let mut tf = Transform::from_translation(origin + Vec3::new(a.cos() * dist, size.y * 0.35, a.sin() * dist))
+            .with_rotation(Quat::from_euler(
+                EulerRot::YXZ,
+                rnd(k * 11) * std::f32::consts::TAU,
+                (rnd(k * 13) - 0.5) * 0.4,
+                (rnd(k * 17) - 0.5) * 0.4,
+            ))
+            .with_scale(size);
+        wreck(size.y + 0.4).sink(&mut tf);
         commands.spawn((
             crate::menu::MatchEntity,
             Mesh3d(assets.cube.clone()),
             MeshMaterial3d(assets.rubble.clone()),
-            Transform::from_translation(origin + Vec3::new(a.cos() * dist, size.y * 0.35, a.sin() * dist))
-                .with_rotation(Quat::from_euler(
-                    EulerRot::YXZ,
-                    rnd(k * 11) * std::f32::consts::TAU,
-                    (rnd(k * 13) - 0.5) * 0.4,
-                    (rnd(k * 17) - 0.5) * 0.4,
-                ))
-                .with_scale(size),
-            wreck(life, size.y + 0.4),
+            tf,
+            wreck(size.y + 0.4),
         ));
     }
 }
@@ -652,10 +706,7 @@ fn age_wrecks(
             commands.entity(id).despawn();
             continue;
         }
-        let sunk = ((w.age - (w.life - SINK_SECS)) / SINK_SECS).clamp(0.0, 1.0);
-        if sunk > 0.0 {
-            tf.translation.y = w.ground - w.depth * sunk + (tf.translation.y - w.ground).max(0.0) * (1.0 - sunk);
-        }
+        w.sink(&mut tf);
     }
 }
 
