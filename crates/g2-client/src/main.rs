@@ -52,6 +52,7 @@ mod rig;
 mod select;
 mod settings;
 mod sim;
+mod surface;
 mod terrain;
 mod tooltip;
 mod utfwin;

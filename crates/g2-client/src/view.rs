@@ -60,12 +60,35 @@ pub struct FreezeEffects;
 #[derive(Resource, Default)]
 pub struct Mirror(pub BTreeMap<EntityId, Entity>);
 
+/// The procedural look's part meshes by `surface::key`, one for every part size a model can
+/// have: UVs in metres for that size, so the surface maps keep their scale. Every def's model,
+/// scaffold and outriggers in every faction.
+fn part_meshes(meshes: &mut Assets<Mesh>) -> BTreeMap<(u8, [i32; 3]), Handle<Mesh>> {
+    let mut out = BTreeMap::new();
+    for def in g2_rules::rules().defs.iter() {
+        let r = def.radius.to_f32();
+        let mut parts = models::scaffold(r * 1.75, 7.0);
+        parts.extend(models::outriggers(r));
+        for f in [None, Some(Faction::Eu), Some(Faction::Apa), Some(Faction::Gla)] {
+            parts.extend(models::parts_for(def, f));
+        }
+        for p in &parts {
+            out.entry(crate::surface::key(p)).or_insert_with_key(|&k| meshes.add(crate::surface::part_mesh(k)));
+        }
+    }
+    out
+}
+
 #[derive(Resource)]
 struct Assets3d {
     cube: Handle<Mesh>,
     cylinder: Handle<Mesh>,
     sphere: Handle<Mesh>,
-    /// Every slot but `Team` per faction (`None` for neutral resources).
+    /// `part_meshes`; empty with an imported alpha, which draws any part it has no model for
+    /// (scaffolds, mostly) on the plain primitives above, as before.
+    parts: BTreeMap<(u8, [i32; 3]), Handle<Mesh>>,
+    /// Every slot but `Team` per faction (`None` for neutral resources); `SlotKey::vehicle`
+    /// keys hold the vehicles' variants of the metal slots.
     materials: BTreeMap<(Option<Faction>, SlotKey), Handle<StandardMaterial>>,
     /// `Slot::Team` per `models::TEAM_PALETTE` entry.
     team: Vec<Handle<StandardMaterial>>,
@@ -78,6 +101,19 @@ struct Assets3d {
     alpha: BTreeMap<&'static str, (Handle<WorldAsset>, Vec3)>,
     /// A flat unit-radius ring, the team marker under alpha models.
     ring: Handle<Mesh>,
+}
+
+impl Assets3d {
+    fn mesh(&self, p: &Part) -> Handle<Mesh> {
+        match self.parts.get(&crate::surface::key(p)) {
+            Some(mesh) => mesh.clone(),
+            None => match p.prim {
+                Prim::Box => self.cube.clone(),
+                Prim::Cylinder => self.cylinder.clone(),
+                Prim::Sphere => self.sphere.clone(),
+            },
+        }
+    }
 }
 
 /// `Slot` with crate colours folded to an index, so it can key a map.
@@ -96,8 +132,20 @@ impl From<Slot> for SlotKey {
             Slot::Glow => 6,
             Slot::Oil => 7,
             Slot::Wood => 8,
+            Slot::Deck => 9,
             Slot::Crate(i) => 16 + i % 5,
         })
+    }
+}
+
+impl SlotKey {
+    /// The key of `s` on a vehicle: hull, panel and dark metal have their own materials there
+    /// (`surface::Style::Armour`), the rest are shared with buildings.
+    fn vehicle(s: Slot) -> SlotKey {
+        match s {
+            Slot::Hull | Slot::Panel | Slot::Dark => SlotKey(32 + SlotKey::from(s).0),
+            _ => SlotKey::from(s),
+        }
     }
 }
 
@@ -125,10 +173,13 @@ impl Plugin for ViewPlugin {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn setup_scene(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut surfaces: Local<BTreeMap<crate::surface::Style, SurfaceMaps>>,
     cache: Option<Res<crate::alpha::Cache>>,
     server: Res<AssetServer>,
 ) {
@@ -143,29 +194,54 @@ fn setup_scene(
         Slot::Glow,
         Slot::Oil,
         Slot::Wood,
+        Slot::Deck,
     ]
     .into_iter()
     .chain((0..5).map(Slot::Crate));
     let factions = [None, Some(Faction::Eu), Some(Faction::Apa), Some(Faction::Gla)];
-    let material = |base_color: Color, slot: Slot| {
+    // The procedural look's parts get the surface maps of `surface.rs`; with an imported alpha
+    // the few parts still drawn (scaffolds, defs it has no model for) keep plain colours, so
+    // that look is exactly what it was.
+    let textured = cache.is_none();
+    let mut material = |base_color: Color, faction: Option<Faction>, slot: Slot, vehicle: bool| {
         let (roughness, metallic, emissive) = match slot {
             Slot::Glow => (0.3, 0.0, base_color.to_linear() * 1.5),
             Slot::Oil => (0.08, 0.0, LinearRgba::BLACK),
-            Slot::Hull | Slot::Panel | Slot::Dark => (0.55, 0.35, LinearRgba::BLACK),
+            Slot::Hull | Slot::Panel | Slot::Deck | Slot::Dark => (0.55, 0.35, LinearRgba::BLACK),
             _ => (0.8, 0.0, LinearRgba::BLACK),
         };
-        StandardMaterial { base_color, perceptual_roughness: roughness, metallic, emissive, ..default() }
+        let plain = StandardMaterial { base_color, perceptual_roughness: roughness, metallic, emissive, ..default() };
+        match crate::surface::style(faction, slot, vehicle).filter(|_| textured) {
+            Some(style) => {
+                let maps = surfaces.entry(style).or_insert_with(|| {
+                    let m = crate::surface::maps(style, roughness, metallic);
+                    SurfaceMaps {
+                        albedo: images.add(m.albedo),
+                        normal: images.add(m.normal),
+                        surface: images.add(m.surface),
+                        mean: m.mean,
+                    }
+                });
+                with_maps(plain, maps)
+            }
+            None => plain,
+        }
     };
     for slot in all_slots.filter(|&s| s != Slot::Team) {
         for f in factions {
-            table.insert((f, SlotKey::from(slot)), materials.add(material(models::color(f, slot), slot)));
+            let color = models::color(f, slot);
+            table.insert((f, SlotKey::from(slot)), materials.add(material(color, f, slot, false)));
+            if SlotKey::vehicle(slot) != SlotKey::from(slot) {
+                table.insert((f, SlotKey::vehicle(slot)), materials.add(material(color, f, slot, true)));
+            }
         }
     }
-    let team = models::TEAM_PALETTE.iter().map(|&c| materials.add(material(c, Slot::Team))).collect();
+    let team = models::TEAM_PALETTE.iter().map(|&c| materials.add(material(c, None, Slot::Team, false))).collect();
     commands.insert_resource(Assets3d {
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0)),
         sphere: meshes.add(Sphere::new(0.5).mesh().ico(2).unwrap()),
+        parts: if textured { part_meshes(&mut meshes) } else { BTreeMap::new() },
         materials: table,
         team,
         rubble: materials.add(StandardMaterial {
@@ -185,23 +261,46 @@ fn setup_scene(
     crate::look::spawn_lights(&mut commands);
 }
 
-/// Spawns `parts` in `faction`'s materials, with team-coloured parts in palette entry `team`.
+/// One surface style's maps (`surface::Maps`) once they are assets.
+struct SurfaceMaps {
+    albedo: Handle<Image>,
+    normal: Handle<Image>,
+    surface: Handle<Image>,
+    mean: Vec3,
+}
+
+/// `m` drawn with `maps`: its colour divided by the albedo map's mean, so the palette in
+/// `models::color` (calibrated against the footage) keeps its average, and its roughness and
+/// metallic moved into the surface map, which holds them per texel.
+fn with_maps(m: StandardMaterial, maps: &SurfaceMaps) -> StandardMaterial {
+    let c = m.base_color.to_linear();
+    StandardMaterial {
+        base_color: LinearRgba::rgb(c.red / maps.mean.x, c.green / maps.mean.y, c.blue / maps.mean.z).into(),
+        base_color_texture: Some(maps.albedo.clone()),
+        normal_map_texture: Some(maps.normal.clone()),
+        metallic_roughness_texture: Some(maps.surface.clone()),
+        perceptual_roughness: 1.0,
+        metallic: 1.0,
+        ..m
+    }
+}
+
+/// Spawns `parts` in `faction`'s materials, with team-coloured parts in palette entry `team`;
+/// a `vehicle`'s metal in its own finer finish.
 fn spawn_parts(
     parent: &mut ChildSpawnerCommands,
     assets: &Assets3d,
     faction: Option<Faction>,
     team: usize,
+    vehicle: bool,
     parts: &[Part],
 ) {
     for p in parts {
-        let mesh = match p.prim {
-            Prim::Box => assets.cube.clone(),
-            Prim::Cylinder => assets.cylinder.clone(),
-            Prim::Sphere => assets.sphere.clone(),
-        };
+        let mesh = assets.mesh(p);
+        let key = if vehicle { SlotKey::vehicle(p.slot) } else { SlotKey::from(p.slot) };
         let material = match p.slot {
             Slot::Team => assets.team[team].clone(),
-            slot => assets.materials[&(faction, SlotKey::from(slot))].clone(),
+            _ => assets.materials[&(faction, key)].clone(),
         };
         let mut e = parent.spawn((
             Mesh3d(mesh),
@@ -218,6 +317,7 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     let def = sim.world.rules.def(e.def);
     let faction = e.owner.map(|o| sim.world.player(o).faction);
     let team = e.owner.map_or(0, |o| sim.teams[o.0 as usize]);
+    let vehicle = def.is_unit() && def.armour != g2_sim::Armour::Infantry;
     let alpha = assets.alpha.get(def.name);
     let parts = if alpha.is_some() { Vec::new() } else { models::parts_for(def, faction) };
     let mut root = commands.spawn((
@@ -251,18 +351,18 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
                     b.spawn((WorldAssetRoot(scene.clone()), Transform::from_translation(at + *offset)));
                 }
             }
-            None => spawn_parts(b, assets, faction, team, &parts),
+            None => spawn_parts(b, assets, faction, team, vehicle, &parts),
         });
         if def.is_building() {
             let w = def.radius.to_f32() * 1.75;
             let scaffold: Vec<Part> = models::scaffold(w, 7.0);
             c.spawn((Scaffold, Transform::default(), Visibility::Hidden))
-                .with_children(|s| spawn_parts(s, assets, faction, team, &scaffold));
+                .with_children(|s| spawn_parts(s, assets, faction, team, false, &scaffold));
         }
         if def.deploy.is_some() && alpha.is_none() {
             let legs = models::outriggers(def.radius.to_f32());
             c.spawn((Outriggers, Transform::default(), Visibility::Hidden))
-                .with_children(|s| spawn_parts(s, assets, faction, team, &legs));
+                .with_children(|s| spawn_parts(s, assets, faction, team, vehicle, &legs));
         }
         // Stealth units, and any unit a cloaking power may cover: a dark ring on the ground
         // while hidden, so their owner sees which ones the enemy can't.

@@ -22,6 +22,8 @@ pub enum Slot {
     Hull,
     /// Secondary panel colour (roofs, inner walls).
     Panel,
+    /// Roof decking: plates and grilles laid on a flat roof, darker than the walls.
+    Deck,
     /// Dark metal: vents, frames, tracks, rotor hubs.
     Dark,
     /// Saturated team colour (stripes, lights, flags).
@@ -221,20 +223,38 @@ fn tier(parts: &mut Vec<Part>, x: f32, z: f32, y0: f32, w: f32, d: f32, h: f32, 
     y0 + h
 }
 
-/// Antenna mast: pole, crossbar and a warning light on top.
+/// Antenna mast: pole, crossbar and a warning light on top. Sized to read at the Close zoom
+/// (about 12 pixels a metre): a pole under 0.3 m was a pixel or two wide and vanished.
 fn mast(parts: &mut Vec<Part>, x: f32, z: f32, y: f32) {
-    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 1.3, z), Vec3::new(0.22, 2.6, 0.22)));
-    parts.push(bx(Slot::Dark, Vec3::new(x, y + 1.9, z), Vec3::new(1.6, 0.14, 0.14)));
-    parts.push(part(Prim::Sphere, Slot::Team, Vec3::new(x, y + 2.7, z), Vec3::splat(0.34)));
+    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 2.4, z), Vec3::new(0.45, 4.8, 0.45)));
+    parts.push(bx(Slot::Dark, Vec3::new(x, y + 3.6, z), Vec3::new(3.0, 0.28, 0.28)));
+    parts.push(part(Prim::Sphere, Slot::Team, Vec3::new(x, y + 5.0, z), Vec3::splat(0.75)));
 }
 
-/// A small radar dish on a pedestal, yawed so it is not a flat disc from above.
+/// A radar dish on a pedestal: a wide bowl with a dark face inside its rim, so it reads as a
+/// dish from above rather than a lid, and the feed horn standing out of it.
 fn dish(parts: &mut Vec<Part>, x: f32, z: f32, y: f32) {
-    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 0.45, z), Vec3::new(0.55, 0.9, 0.55)));
-    let mut bowl = cyl(Slot::Panel, Vec3::new(x, y + 1.5, z), Vec3::new(2.2, 0.35, 2.2));
-    bowl.yaw = 0.6;
-    parts.push(bowl);
-    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 1.95, z), Vec3::new(0.3, 0.7, 0.3)));
+    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 0.7, z), Vec3::new(0.9, 1.4, 0.9)));
+    parts.push(cyl(Slot::Panel, Vec3::new(x, y + 1.65, z), Vec3::new(3.6, 0.5, 3.6)));
+    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 1.9, z), Vec3::new(2.9, 0.06, 2.9)));
+    parts.push(cyl(Slot::Dark, Vec3::new(x, y + 2.5, z), Vec3::new(0.45, 1.2, 0.45)));
+}
+
+/// An EU roof as the footage's EU base has every roof and tier: a darker deck of plates and
+/// grilles (`Slot::Deck`) inset in a solid orange frame along the four edges, over the `w × d`
+/// block centred at `(x, z)` whose top is at `y`. It stands in for the chevron `hazard_trim`
+/// the other factions keep, whose roofs show their own plates (`surface.rs`) uncovered.
+#[allow(clippy::too_many_arguments)]
+fn roof(parts: &mut Vec<Part>, faction: Faction, x: f32, z: f32, w: f32, d: f32, y: f32) {
+    if faction != Faction::Eu {
+        return;
+    }
+    parts.push(block(Slot::Deck, x, z, y, w - 0.8, 0.12, d - 0.8));
+    let t = 0.45;
+    for s in [-1.0, 1.0] {
+        parts.push(block(Slot::Hazard, x, z + s * (d - t) / 2.0, y - 0.15, w + 0.1, 0.4, t));
+        parts.push(block(Slot::Hazard, x + s * (w - t) / 2.0, z, y - 0.15, t, 0.4, d - 2.0 * t));
+    }
 }
 
 /// Roof clutter centred at `(x, z)`: louvered vents, AC units with fan discs, pipe clusters and
@@ -433,16 +453,21 @@ fn command_center(p: &mut Vec<Part>, faction: Faction, w: f32) {
     p.push(block(Slot::Glow, 0.0, w * 0.44, 1.9, w * 0.26, 0.7, 0.12));
     p.push(block(accent, 0.0, w * 0.41, 3.5, w * 0.34, 0.35, 0.3));
     // Command tier at the back-left, then a penthouse and mast on top of it.
-    let top = tier(p, -w * 0.2, -w * 0.12, 6.8, w * 0.52, w * 0.5, 2.6, Slot::Panel);
-    let top = tier(p, -w * 0.22, -w * 0.14, top, w * 0.32, w * 0.3, 1.7, Slot::Hull);
+    let tier1 = tier(p, -w * 0.2, -w * 0.12, 6.8, w * 0.52, w * 0.5, 2.6, Slot::Panel);
+    roof(p, faction, -w * 0.2, -w * 0.12, w * 0.52, w * 0.5, tier1);
+    let top = tier(p, -w * 0.22, -w * 0.14, tier1, w * 0.32, w * 0.3, 1.7, Slot::Hull);
+    roof(p, faction, -w * 0.22, -w * 0.14, w * 0.32, w * 0.3, top);
     mast(p, -w * 0.22, -w * 0.14, top);
-    dish(p, w * 0.34, w * 0.24, 6.8);
+    dish(p, w * 0.32, w * 0.24, 6.8);
     // Landing pad on the open side of the roof: hazard deck markings, team flash at the centre.
     p.push(cyl(Slot::Dark, Vec3::new(w * 0.26, 6.95, 0.0), Vec3::new(w * 0.34, 0.3, w * 0.34)));
     p.push(cyl(Slot::Hazard, Vec3::new(w * 0.26, 7.15, 0.0), Vec3::new(w * 0.26, 0.12, w * 0.26)));
     p.push(cyl(Slot::Team, Vec3::new(w * 0.26, 7.24, 0.0), Vec3::new(w * 0.1, 0.1, w * 0.1)));
     hazard_trim_at(p, w * 0.26, 0.0, w * 0.42, w * 0.42, 7.2);
-    hazard_trim(p, w, w * 0.82, 6.8);
+    roof(p, faction, 0.0, -w * 0.06, w * 0.86, w * 0.7, 6.8);
+    if faction != Faction::Eu {
+        hazard_trim(p, w, w * 0.82, 6.8);
+    }
     roof_rail(p, w, w * 0.82, 6.8, 0.9, 0b0011);
     catwalk(p, -w * 0.36, w * 0.3, w * 0.34, 4.6, true);
     pipe_run(p, w * 0.5, -w * 0.18, w * 0.42, 5.0, false);
@@ -470,7 +495,9 @@ fn depot(p: &mut Vec<Part>, faction: Faction, w: f32) {
     p.push(block(Slot::Glow, 0.0, w * 0.46, 1.4, w * 0.34, 0.6, 0.12));
     p.push(block(accent, 0.0, w * 0.43, 3.5, w * 0.46, 0.4, 0.3));
     p.push(block(Slot::Concrete, 0.0, w * 0.62, 0.5, w * 0.5, 0.18, w * 0.22));
+    roof(p, faction, 0.0, 0.0, w * 0.78, w * 0.86, 4.1);
     let top = tier(p, -w * 0.08, -w * 0.14, 4.1, w * 0.58, w * 0.54, 2.2, Slot::Panel);
+    roof(p, faction, -w * 0.08, -w * 0.14, w * 0.58, w * 0.54, top);
     mast(p, -w * 0.28, -w * 0.3, top);
     // Pad for the airborne collectors, off the hall's side.
     p.push(cyl(Slot::Concrete, Vec3::new(w * 0.56, 0.7, -w * 0.18), Vec3::new(w * 0.3, 0.4, w * 0.3)));
@@ -478,7 +505,9 @@ fn depot(p: &mut Vec<Part>, faction: Faction, w: f32) {
     p.push(cyl(Slot::Team, Vec3::new(w * 0.56, 1.03, -w * 0.18), Vec3::new(w * 0.08, 0.1, w * 0.08)));
     catwalk(p, 0.0, w * 0.5, w * 0.52, 3.4, true);
     crate_yard(p, w * 0.26, w * 0.28, 0.5, 13, 2);
-    hazard_trim(p, w * 0.78, w * 0.86, 4.1);
+    if faction != Faction::Eu {
+        hazard_trim(p, w * 0.78, w * 0.86, 4.1);
+    }
     roof_rail(p, w * 0.78, w * 0.86, 4.1, 0.85, 0b1011);
     greebles(p, w * 0.3, w * 0.3, w * 0.16, w * 0.18, 4.1, 21, 4);
     pipe_run(p, w * 0.4, -w * 0.05, w * 0.5, 2.8, false);
@@ -492,7 +521,9 @@ fn plant(p: &mut Vec<Part>, faction: Faction, w: f32) {
     corner_trim(p, 0.0, 0.0, w * 0.9, w * 0.5, 0.5, 3.2, accent);
     wall_ribs(p, 0.0, w * 0.255, 0.5, 3.7, w * 0.84, 6, true);
     wall_seams(p, 0.0, w * 0.255, 1.0, w * 0.84, 2, true);
+    roof(p, faction, 0.0, 0.0, w * 0.9, w * 0.5, 3.7);
     let top = tier(p, 0.0, 0.0, 3.7, w * 0.68, w * 0.38, 1.6, Slot::Panel);
+    roof(p, faction, 0.0, 0.0, w * 0.68, w * 0.38, top);
     p.push(block(Slot::Glow, 0.0, w * 0.255, 1.6, w * 0.6, 0.6, 0.12));
     // Twin cooling stacks: shell, rim cap, accent band and a plinth each.
     for x in [-0.22, 0.22] {
@@ -503,7 +534,9 @@ fn plant(p: &mut Vec<Part>, faction: Faction, w: f32) {
     }
     pipe_run(p, 0.0, -w * 0.36, w * 0.44, 2.6, true);
     pipe_run(p, 0.0, w * 0.32, w * 0.7, 3.2, true);
-    hazard_trim(p, w * 0.68, w * 0.38, 3.7);
+    if faction != Faction::Eu {
+        hazard_trim(p, w * 0.68, w * 0.38, 3.7);
+    }
     roof_rail(p, w * 0.9, w * 0.5, 3.7, 0.85, 0b1011);
     greebles(p, 0.0, 0.0, w * 0.4, w * 0.22, top, 31, 3);
     p.push(block(accent, 0.0, w * 0.28, 3.1, w * 0.5, 0.4, 0.25));
@@ -522,12 +555,16 @@ fn barracks(p: &mut Vec<Part>, faction: Faction, w: f32) {
         p.push(block(Slot::Dark, w * x, w * 0.215, 0.4, w * 0.16, 2.2, 0.28));
         p.push(block(Slot::Glow, w * x, w * 0.24, 2.0, w * 0.13, 0.4, 0.1));
     }
+    roof(p, faction, 0.0, -w * 0.1, w * 0.9, w * 0.62, 3.6);
     let top = tier(p, 0.0, -w * 0.1, 3.6, w * 0.68, w * 0.42, 1.5, Slot::Panel);
+    roof(p, faction, 0.0, -w * 0.1, w * 0.68, w * 0.42, top);
     p.push(block(accent, 0.0, w * 0.38, 0.4, w * 0.9, 0.7, 0.22));
     // Flag on the yard corner.
     p.push(block(Slot::Dark, w * 0.42, w * 0.36, 0.4, 0.26, 3.2, 0.26));
     p.push(block(Slot::Team, w * 0.42 + 0.8, w * 0.36, 2.9, 1.5, 0.85, 0.1));
-    hazard_trim(p, w * 0.68, w * 0.42, 3.6);
+    if faction != Faction::Eu {
+        hazard_trim(p, w * 0.68, w * 0.42, 3.6);
+    }
     roof_rail(p, w * 0.9, w * 0.62, 3.6, 0.85, 0b1011);
     greebles(p, 0.0, -w * 0.12, w * 0.4, w * 0.22, top, 71, 3);
     pipe_run(p, -w * 0.46, -w * 0.08, w * 0.45, 2.6, false);
@@ -551,11 +588,16 @@ fn war_factory(p: &mut Vec<Part>, faction: Faction, w: f32) {
     }
     p.push(block(accent, 0.0, w * 0.365, 4.7, w * 0.62, 0.45, 0.35));
     catwalk(p, 0.0, w * 0.44, w * 0.7, 5.3, true);
-    let top = tier(p, 0.0, -w * 0.1, 6.1, w * 0.78, w * 0.52, 1.6, Slot::Panel);
-    let top = tier(p, -w * 0.16, -w * 0.16, top, w * 0.4, w * 0.32, 1.5, Slot::Hull);
+    roof(p, faction, 0.0, 0.0, w * 0.92, w * 0.72, 6.1);
+    let tier1 = tier(p, 0.0, -w * 0.1, 6.1, w * 0.78, w * 0.52, 1.6, Slot::Panel);
+    roof(p, faction, 0.0, -w * 0.1, w * 0.78, w * 0.52, tier1);
+    let top = tier(p, -w * 0.16, -w * 0.16, tier1, w * 0.4, w * 0.32, 1.5, Slot::Hull);
+    roof(p, faction, -w * 0.16, -w * 0.16, w * 0.4, w * 0.32, top);
     mast(p, -w * 0.16, -w * 0.16, top);
-    dish(p, w * 0.2, -w * 0.1, 7.7);
-    hazard_trim(p, w * 0.78, w * 0.52, 6.1);
+    dish(p, w * 0.24, -w * 0.12, tier1);
+    if faction != Faction::Eu {
+        hazard_trim(p, w * 0.78, w * 0.52, 6.1);
+    }
     roof_rail(p, w * 0.92, w * 0.72, 6.1, 0.9, 0b1011);
     pipe_run(p, -w * 0.475, -w * 0.05, w * 0.5, 3.6, false);
     pipe_run(p, w * 0.475, -w * 0.15, w * 0.4, 2.6, false);
@@ -579,11 +621,14 @@ fn lab(p: &mut Vec<Part>, faction: Faction, w: f32) {
     p.push(cyl(Slot::Panel, Vec3::new(0.0, 4.3, -w * 0.05), Vec3::new(w * 0.5, 0.8, w * 0.5)));
     p.push(part(Prim::Sphere, Slot::Panel, Vec3::new(0.0, 4.7, -w * 0.05), Vec3::new(w * 0.46, w * 0.3, w * 0.46)));
     p.push(cyl(accent, Vec3::new(0.0, 4.75, -w * 0.05), Vec3::new(w * 0.52, 0.2, w * 0.52)));
+    roof(p, faction, 0.0, 0.0, w * 0.8, w * 0.7, 3.9);
     mast(p, w * 0.3, w * 0.2, 3.9);
-    dish(p, -w * 0.28, w * 0.18, 3.9);
+    dish(p, -w * 0.26, w * 0.16, 3.9);
     p.push(block(Slot::Dark, w * 0.2, -w * 0.42, 0.5, w * 0.3, 1.4, w * 0.14));
     p.push(block(Slot::Panel, -w * 0.2, -w * 0.42, 0.5, w * 0.26, 1.0, w * 0.14));
-    hazard_trim(p, w * 0.8, w * 0.7, 3.9);
+    if faction != Faction::Eu {
+        hazard_trim(p, w * 0.8, w * 0.7, 3.9);
+    }
     roof_rail(p, w * 0.8, w * 0.7, 3.9, 0.8, 0b1011);
     greebles(p, -w * 0.25, -w * 0.25, w * 0.16, w * 0.14, 3.9, 57, 3);
 }
@@ -1211,6 +1256,13 @@ pub fn color(faction: Option<Faction>, slot: Slot) -> Color {
             Faction::Eu => Color::srgb(0.44, 0.45, 0.45),
             Faction::Apa => Color::srgb(0.21, 0.22, 0.23),
             Faction::Gla => Color::srgb(0.36, 0.30, 0.23),
+        },
+        // The footage's EU roofs are darker than their walls: grating and deck plates measure
+        // about 96-103 sRGB luminance in [dtl2Q_tUDDQ] at 270 s, against 124 on the lit wall tops.
+        Slot::Deck => match f {
+            Faction::Eu => Color::srgb(0.31, 0.31, 0.32),
+            Faction::Apa => Color::srgb(0.17, 0.18, 0.19),
+            Faction::Gla => Color::srgb(0.30, 0.25, 0.19),
         },
         Slot::Dark => Color::srgb(0.11, 0.11, 0.12),
         Slot::Team => TEAM_PALETTE[f as usize],

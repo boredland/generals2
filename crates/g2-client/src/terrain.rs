@@ -583,7 +583,7 @@ fn detail_image() -> Image {
 }
 
 /// Appends a box-filtered mip chain to a level-0 image (wgpu wants the levels concatenated).
-fn mip_chain(image: &mut Image) {
+pub(crate) fn mip_chain(image: &mut Image) {
     let mut data = image.data.clone().expect("level 0");
     let (mut w, mut h) = (image.texture_descriptor.size.width as usize, image.texture_descriptor.size.height as usize);
     let mut prev = data.clone();
