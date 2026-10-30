@@ -490,7 +490,7 @@ fn summary(args: &[String]) -> Result<(), String> {
     let map = resolve(&replay.map)?;
     replay.check(&map, rules())?;
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
-    let mut world = World::new(&setup, rules());
+    let mut world = World::start(&setup, rules(), replay.mission);
     for c in &replay.commands {
         world.schedule(c.clone());
     }

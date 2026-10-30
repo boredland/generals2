@@ -195,6 +195,21 @@ impl World {
             h.i64(c.damage as i64);
             h.u64(((c.from as u64) << 32) | c.until as u64);
         }
+        // Only in a mission, so other matches hash as before. What was said is output only.
+        if let Some(m) = &self.mission {
+            h.u64(0x6d69_7373_0000 | m.id.0 as u64);
+            for s in &m.objectives {
+                h.u64(*s as u64);
+            }
+            for &f in &m.fired {
+                h.u64(f as u64);
+            }
+            for &(tag, e) in &m.tags {
+                h.u64(tag as u64);
+                id(&mut h, e);
+            }
+            h.u64(m.result.map_or(2, u64::from));
+        }
         h.0
     }
 }

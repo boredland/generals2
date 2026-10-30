@@ -38,11 +38,26 @@ pub struct Sim {
 
 impl Sim {
     pub fn new(map: MapDef, source: Option<MapFile>, seed: u64, players: impl Into<Vec<PlayerSetup>>) -> Sim {
-        let players = players.into();
-        let teams = crate::models::team_slots(&players.iter().map(|p| p.faction).collect::<Vec<_>>());
-        let setup = MatchSetup { map, seed, players };
+        Sim::start(MatchSetup { map, seed, players: players.into() }, source, None)
+    }
+
+    /// A match of mission `id` (`g2_sim::mission`) on its own map, the local player in its
+    /// player seat; `player` hands that seat to the AI (watching, headless shots).
+    pub fn mission(id: g2_sim::MissionId, player: Option<g2_sim::AiLevel>, seed: u64) -> Result<Sim, String> {
+        let m = rules().mission(id);
+        let source =
+            if m.map.contains(':') { Some(g2_maps::load_file_named(&g2_maps::vendored_root(), m.map)?) } else { None };
+        let map = match &source {
+            Some(file) => file.to_map_def(m.map),
+            None => g2_maps::resolve(m.map)?,
+        };
+        Ok(Sim::start(m.setup(rules(), map, seed, player), source, Some(id)))
+    }
+
+    fn start(setup: MatchSetup, source: Option<MapFile>, mission: Option<g2_sim::MissionId>) -> Sim {
+        let teams = crate::models::team_slots(&setup.players.iter().map(|p| p.faction).collect::<Vec<_>>());
         Sim {
-            world: World::new(&setup, rules()),
+            world: World::start(&setup, rules(), mission),
             setup,
             speed: 1,
             source,

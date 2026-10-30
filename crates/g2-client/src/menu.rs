@@ -1,5 +1,5 @@
-//! Menus: main menu, controls, skirmish page, in-match pause and the score screen, laid out as
-//! Command & Conquer: Generals' own shell (docs/STYLE.md, "Menus").
+//! Menus: main menu, controls, skirmish page, missions and their briefings, in-match pause and
+//! the score screen, laid out as Command & Conquer: Generals' own shell (docs/STYLE.md, "Menus").
 //!
 //! The menu is UI drawn over the battlefield: the `Sim` resource always exists and is frozen
 //! (`speed = 0`) while a menu covers it, so opening or closing a menu needs no scene teardown.
@@ -100,6 +100,12 @@ pub enum Act {
     AcceptOptions,
     /// BACK: drop the changes made on the page and go back.
     CancelOptions,
+    /// The main menu's MISSIONS: the campaign page.
+    OpenMissions,
+    /// A mission in the campaign list: its briefing shows beside it.
+    PickMission(u16),
+    /// START MISSION: plays the picked mission.
+    StartMission,
 }
 
 /// One setting on the options page.
@@ -127,6 +133,8 @@ pub enum Screen {
     Generals,
     Alpha,
     Options,
+    /// The campaign: missions down the left, the picked one's briefing and objectives.
+    Missions,
 }
 
 /// One skirmish player: slot 0 is the human at the keyboard, the rest are AI.
@@ -237,6 +245,11 @@ pub struct Ui {
     pub earned: Option<(GeneralId, u32)>,
     /// The settings as they were when the options page opened, for BACK.
     pub options_before: Option<Settings>,
+    /// The mission the campaign page shows, and the one PLAY AGAIN replays after a mission.
+    pub mission: g2_sim::MissionId,
+    /// The match running is that mission (else a skirmish): the end screen offers the
+    /// campaign, and a win is saved to the profile.
+    pub in_mission: bool,
 }
 
 impl Default for Ui {
@@ -251,6 +264,8 @@ impl Default for Ui {
             refused: None,
             earned: None,
             options_before: None,
+            mission: g2_sim::MissionId(0),
+            in_mission: false,
         }
     }
 }
@@ -371,7 +386,9 @@ fn interact(
             pending.0.push(match (ui.screen, ui.paused) {
                 (Screen::Setup, _) if ui.map_select.is_some() => Act::CancelMapList,
                 (Screen::Options, _) => Act::CancelOptions,
-                (Screen::Setup | Screen::Controls | Screen::Generals | Screen::Alpha, _) => Act::BackToMain,
+                (Screen::Setup | Screen::Controls | Screen::Generals | Screen::Alpha | Screen::Missions, _) => {
+                    Act::BackToMain
+                }
                 (Screen::Match, false) => Act::Pause,
                 (Screen::Match, true) => Act::Resume,
                 (Screen::End, _) => Act::QuitToMenu,
@@ -381,6 +398,9 @@ fn interact(
     }
     if keys.just_pressed(KeyCode::Enter) && ui.screen == Screen::Setup {
         pending.0.push(Act::Start);
+    }
+    if keys.just_pressed(KeyCode::Enter) && ui.screen == Screen::Missions {
+        pending.0.push(Act::StartMission);
     }
 }
 
@@ -411,7 +431,13 @@ fn hide_hud(ui: Res<Ui>, mut roots: Query<&mut Visibility, HudRoots>) {
     let hidden = match ui.screen {
         Screen::Match => false,
         Screen::Options => !ui.paused,
-        Screen::Main | Screen::Controls | Screen::Setup | Screen::Generals | Screen::Alpha | Screen::End => true,
+        Screen::Main
+        | Screen::Controls
+        | Screen::Setup
+        | Screen::Generals
+        | Screen::Alpha
+        | Screen::End
+        | Screen::Missions => true,
     };
     for mut v in &mut roots {
         v.set_if_neq(if hidden { Visibility::Hidden } else { Visibility::Inherited });
@@ -434,6 +460,25 @@ fn apply_one(world: &mut World, act: Act) {
         }
         // Starting always rolls a fresh world, so "start" after quitting a match is a new game
         // and never a silent resume of the frozen one.
+        Act::StartMission => {
+            let id = world.resource::<Ui>().mission;
+            let unlocked = world.resource::<Profile>().unlocked(g2_rules::rules(), id.0 as usize);
+            if !unlocked {
+                return;
+            }
+            match Sim::mission(id, None, 1) {
+                Ok(sim) => {
+                    swap_world(world, sim);
+                    let mut ui = world.resource_mut::<Ui>();
+                    ui.in_mission = true;
+                    ui.earned = None;
+                    ui.screen = Screen::Match;
+                    ui.paused = false;
+                    world.resource_mut::<Sim>().speed = 1;
+                }
+                Err(e) => error!("cannot start mission: {e}"),
+            }
+        }
         Act::Start => {
             let mut config = world.resource::<Ui>().config.clone();
             if let Some(starts) = map_starts(world, &config.map) {
@@ -446,6 +491,7 @@ fn apply_one(world: &mut World, act: Act) {
                 Ok(sim) => {
                     swap_world(world, sim);
                     let mut ui = world.resource_mut::<Ui>();
+                    ui.in_mission = false;
                     ui.config = config;
                     ui.earned = None;
                     ui.screen = Screen::Match;
@@ -636,6 +682,19 @@ fn apply_one(world: &mut World, act: Act) {
                 // From the in-game menu the match stays paused behind the page.
                 ui.screen = Screen::Options;
             }
+            // Opens on the first mission not yet won, also from the end of a mission, so a win
+            // leads on to the next one.
+            Act::OpenMissions => {
+                world.resource_mut::<Sim>().speed = 0;
+                let rules = g2_rules::rules();
+                let profile = world.resource::<Profile>();
+                let next = rules.missions.iter().position(|m| !profile.won(m.key)).unwrap_or(0);
+                let mut ui = world.resource_mut::<Ui>();
+                ui.screen = Screen::Missions;
+                ui.paused = false;
+                ui.mission = g2_sim::MissionId(next as u16);
+            }
+            Act::PickMission(i) => world.resource_mut::<Ui>().mission = g2_sim::MissionId(i),
             Act::CycleOption(opt) => cycle_option(&mut world.resource_mut::<Settings>(), opt),
             Act::DefaultOptions => world.resource_mut::<Settings>().reset(),
             Act::AcceptOptions | Act::CancelOptions => {
@@ -648,7 +707,7 @@ fn apply_one(world: &mut World, act: Act) {
                 let mut ui = world.resource_mut::<Ui>();
                 ui.screen = if ui.paused { Screen::Match } else { Screen::Main };
             }
-            Act::Start | Act::QuitGame => unreachable!("handled above"),
+            Act::Start | Act::StartMission | Act::QuitGame => unreachable!("handled above"),
         },
     }
 }
@@ -682,6 +741,13 @@ fn watch_winner(sim: Res<Sim>, mut ui: ResMut<Ui>) {
 fn award_experience(sim: Res<Sim>, mut ui: ResMut<Ui>, mut profile: ResMut<Profile>) {
     if ui.screen != Screen::End || ui.earned.is_some() || sim.world.is_ai(sim.local) {
         return;
+    }
+    // A mission won is saved, so the next one opens.
+    if let Some(run) = sim.world.mission().filter(|r| r.result == Some(true) && ui.in_mission)
+        && !profile.won(run.def.key)
+    {
+        profile.win(run.def.key);
+        profile.save(g2_rules::rules());
     }
     let Some(g) = sim.world.player(sim.local).general else { return };
     let xp = match_experience(sim.world.winner() == Some(sim.local), sim.world.stats(sim.local).kills);
@@ -857,10 +923,18 @@ fn rebuild(
     if ui.screen == Screen::Match && !ui.paused {
         return;
     }
-    // The map preview is decoded once per map, not on every rebuild.
-    if ui.screen == Screen::Setup && preview.as_ref().is_none_or(|(m, _)| *m != ui.config.map) {
-        let handle = crate::front::map_preview(&ui.config.map).and_then(|img| images.as_mut().map(|i| i.add(img)));
-        *preview = Some((ui.config.map.clone(), handle));
+    // The map preview is decoded once per map, not on every rebuild: the skirmish page's map,
+    // or the campaign page's picked mission's.
+    let shown_map = match ui.screen {
+        Screen::Setup => Some(ui.config.map.as_str()),
+        Screen::Missions => Some(g2_rules::rules().mission(ui.mission).map),
+        _ => None,
+    };
+    if let Some(map) = shown_map
+        && preview.as_ref().is_none_or(|(m, _)| m != map)
+    {
+        let handle = crate::front::map_preview(map).and_then(|img| images.as_mut().map(|i| i.add(img)));
+        *preview = Some((map.to_owned(), handle));
     }
     let map_image = preview.as_ref().and_then(|(_, h)| h.clone());
     let maps = maps.as_ref().map(|m| m.0.as_slice());
@@ -905,6 +979,7 @@ fn rebuild(
                         Screen::Generals => generals(c, &kit, &ui, &profile),
                         Screen::Alpha => alpha(c, &kit, &import.status()),
                         Screen::Options => options(c, &kit, &settings, ui.paused),
+                        Screen::Missions => missions(c, &kit, &ui, &profile, map_image),
                     }
                 });
             side(root);
@@ -1057,6 +1132,7 @@ fn logo(c: &mut ChildSpawnerCommands, kit: &Kit, r: Node) {
 fn main_menu(c: &mut ChildSpawnerCommands, kit: &Kit) {
     logo(c, kit, rect(504.0, 16.0, 791.0, 110.0));
     let items = [
+        ("MISSIONS", Act::OpenMissions),
         ("SKIRMISH", Act::OpenSetup),
         ("ONSLAUGHT", Act::OpenOnslaught),
         ("GENERALS", Act::OpenGenerals),
@@ -1456,6 +1532,14 @@ fn end_screen(c: &mut ChildSpawnerCommands, kit: &Kit, sim: &Sim, ui: &Ui) {
     // Watching two AIs play (the local player is one of them) has no victory to claim.
     let watched = world.is_ai(sim.local);
     let headline = match winner {
+        // A mission's result is the mission's, whoever played the seat.
+        _ if let Some(won) = world.mission().and_then(|r| r.result) => {
+            if won {
+                "MISSION ACCOMPLISHED"
+            } else {
+                "MISSION FAILED"
+            }
+        }
         _ if watched => "MATCH OVER",
         Some(w) if w == sim.local => "VICTORY",
         Some(_) => "DEFEAT",
@@ -1520,8 +1604,9 @@ fn end_screen(c: &mut ChildSpawnerCommands, kit: &Kit, sim: &Sim, ui: &Ui) {
         ..rect(71.0, 389.0, 733.0, 506.0)
     })
     .with_children(|info| {
+        let map = world.mission().map_or(ui.config.map.as_str(), |r| r.def.map);
         info.spawn(kit.text(
-            &format!("{}  |  seed {}  |  {}", map_title(&ui.config.map), ui.config.seed, clock(world.tick())),
+            &format!("{}  |  seed {}  |  {}", map_title(map), sim.setup.seed, clock(world.tick())),
             13.0,
             GOLD,
             true,
@@ -1529,9 +1614,26 @@ fn end_screen(c: &mut ChildSpawnerCommands, kit: &Kit, sim: &Sim, ui: &Ui) {
         if let Some((g, xp)) = ui.earned {
             info.spawn(kit.text(&format!("{} earned {xp} XP.", world.rules.general(g).name), 13.0, WHITE, false));
         }
+        if let Some(run) = world.mission() {
+            let outcome = match run.result {
+                Some(true) => "accomplished",
+                Some(false) => "failed",
+                None => "abandoned",
+            };
+            info.spawn(kit.text(&format!("Mission {}: {outcome}.", run.def.name), 13.0, WHITE, true));
+            for (o, s) in run.def.objectives.iter().zip(&run.objectives) {
+                let (mark, ink) = objective_mark(*s);
+                info.spawn(kit.text(&format!("{mark}  {}", o.text), 12.0, ink, false));
+            }
+        }
     });
-    button(c, kit, "PLAY AGAIN", Act::Start, Look::Button, rect(68.0, 552.0, 241.0, 588.0), 16.0);
-    button(c, kit, "CHANGE SETUP", Act::ChangeSetup, Look::Button, rect(252.0, 552.0, 425.0, 588.0), 16.0);
+    let (again, other, other_label) = if ui.in_mission {
+        (Act::StartMission, Act::OpenMissions, "MISSIONS")
+    } else {
+        (Act::Start, Act::ChangeSetup, "CHANGE SETUP")
+    };
+    button(c, kit, "PLAY AGAIN", again, Look::Button, rect(68.0, 552.0, 241.0, 588.0), 16.0);
+    button(c, kit, other_label, other, Look::Button, rect(252.0, 552.0, 425.0, 588.0), 16.0);
     button(c, kit, "MAIN MENU", Act::QuitToMenu, Look::Button, rect(620.0, 552.0, 748.0, 588.0), 16.0);
 }
 
@@ -1605,6 +1707,101 @@ fn generals(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile)
         button(c, kit, "PROMOTE", Act::Promote, Look::Button, rect(94.0, 509.0, 268.0, 545.0), 16.0);
     }
     button(c, kit, "BACK", Act::BackToMain, Look::Button, rect(530.0, 509.0, 701.0, 545.0), 16.0);
+}
+
+/// The campaign page, as Zero Hour's Generals' Challenge (`ChallengeMenu.wnd`): its frame,
+/// title and rule; where it has the generals on a world map, the missions down the left and
+/// the picked one's map and briefing; its biography box below, holding the mission's
+/// objectives and the player's side with its portrait where Generals has the general's; and
+/// START MISSION and BACK at its Play and Back buttons. A mission opens once the one before it
+/// is won.
+fn missions(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile, preview: Option<Handle<Image>>) {
+    let rules = g2_rules::rules();
+    let picked = rules.mission(ui.mission);
+    frame(c, rect(41.0, 40.0, 760.0, 561.0), PANEL, GOLD);
+    c.spawn(Node { align_items: AlignItems::Center, ..rect(63.0, 43.0, 496.0, 78.0) })
+        .with_child(kit.text("MISSIONS", 26.0, GOLD, true));
+    c.spawn((rect(42.0, 78.0, 760.0, 79.0), BackgroundColor(GOLD)));
+    // The campaign, in order.
+    heading(c, kit, "Campaign", rect(58.0, 87.0, 290.0, 111.0));
+    for (i, m) in rules.missions.iter().enumerate() {
+        let y = 112.0 + 62.0 * i as f32;
+        let open = profile.unlocked(rules, i);
+        let state = if profile.won(m.key) {
+            "Won"
+        } else if open {
+            "Open"
+        } else {
+            "Locked"
+        };
+        // The map's own name, without the game it comes from, so a row fits two lines.
+        let map = m.map.split_once(':').map_or(m.map, |(_, n)| n);
+        let row =
+            format!("{}. {}  -  {state}\n{}, {map}", i + 1, m.name.to_uppercase(), faction_tag(m.sides[0].faction));
+        let on = i == ui.mission.0 as usize;
+        button(c, kit, &row, Act::PickMission(i as u16), Look::Row { on }, rect(58.0, y, 290.0, y + 56.0), 13.0);
+        if !open {
+            c.spawn((rect(58.0, y, 290.0, y + 56.0), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))));
+        }
+    }
+    // The picked mission: its map and briefing.
+    heading(c, kit, picked.name, rect(306.0, 87.0, 590.0, 111.0));
+    c.spawn(Node { padding: UiRect::all(px(4)), ..rect(302.0, 112.0, 594.0, 370.0) }).with_child(kit.text(
+        picked.briefing,
+        13.0,
+        WHITE,
+        false,
+    ));
+    frame(c, rect(604.0, 114.0, 745.0, 255.0), Color::BLACK, RUST);
+    if let Some(img) = preview {
+        c.spawn((ImageNode::new(img), rect(605.0, 115.0, 744.0, 254.0)));
+    }
+    label(c, kit, &map_title(picked.map), rect(598.0, 256.0, 751.0, 280.0), 12.0, WHITE, true);
+    let won = rules.missions.iter().filter(|m| profile.won(m.key)).count();
+    stats(
+        c,
+        kit,
+        (606.0, 676.0, 751.0),
+        290.0,
+        &[
+            ("Enemy", faction_tag(picked.sides[1].faction).to_owned()),
+            ("Won", format!("{won} of {}", rules.missions.len())),
+        ],
+    );
+    // The biography box: objectives, and the side the player commands.
+    frame(c, rect(199.0, 379.0, 747.0, 493.0), BOX, RUST);
+    label(c, kit, "Objectives", rect(203.0, 383.0, 400.0, 406.0), 14.0, GOLD, false);
+    for (k, o) in picked.objectives.iter().enumerate() {
+        let y = 405.0 + 17.0 * k as f32;
+        label(c, kit, &format!("\u{2022}  {}", o.text), rect(210.0, y, 635.0, y + 17.0), 12.0, WHITE, false);
+    }
+    frame(c, rect(641.0, 386.0, 738.0, 486.0), Color::BLACK, RUST);
+    portrait(c, kit, picked.sides[0].faction, picked.sides[0].general, rect(642.0, 387.0, 737.0, 485.0));
+    label(c, kit, faction_name(picked.sides[0].faction), rect(48.0, 383.0, 195.0, 406.0), 12.0, GOLD, false);
+    label(
+        c,
+        kit,
+        &format!("${} to start", thousands(picked.sides[0].credits)),
+        rect(48.0, 405.0, 195.0, 422.0),
+        12.0,
+        WHITE,
+        false,
+    );
+    if profile.unlocked(rules, ui.mission.0 as usize) {
+        button(c, kit, "START MISSION", Act::StartMission, Look::Button, rect(382.0, 505.0, 554.0, 541.0), 16.0);
+    } else {
+        label(c, kit, "Win the mission before this one first.", rect(320.0, 505.0, 570.0, 541.0), 13.0, INK_OFF, true);
+    }
+    button(c, kit, "BACK", Act::BackToMain, Look::Button, rect(576.0, 505.0, 748.0, 541.0), 16.0);
+}
+
+/// An objective's mark and colour: open, done (green) or failed (red).
+pub(crate) fn objective_mark(s: g2_sim::mission::Status) -> (&'static str, Color) {
+    match s {
+        g2_sim::mission::Status::Active => ("\u{25a1}", WHITE),
+        g2_sim::mission::Status::Done => ("\u{2713}", Color::srgb_u8(90, 230, 90)),
+        g2_sim::mission::Status::Failed => ("\u{2717}", Color::srgb_u8(240, 70, 50)),
+    }
 }
 
 /// A general's picture: the alpha portrait when imported, else a tile in the faction's colour
@@ -1993,5 +2190,59 @@ mod tests {
         assert_eq!((ui.screen, ui.paused), (Screen::Match, true), "back to the in-game menu");
         assert_eq!(Settings::load(Some(path.clone())).camera, Battlefield::Far, "ACCEPT saves");
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// The campaign: only the first mission opens at first; starting one plays it on its own
+    /// map and forces; winning it is saved and opens the next, and PLAY AGAIN replays the
+    /// mission, not a skirmish.
+    #[test]
+    fn missions_start_and_a_win_opens_the_next() {
+        let (mut app, _) = app();
+        let rules = g2_rules::rules();
+        act(&mut app, Act::OpenMissions);
+        assert_eq!(screen(&app), Screen::Missions);
+        act(&mut app, Act::PickMission(1));
+        act(&mut app, Act::StartMission);
+        assert_eq!(screen(&app), Screen::Missions, "the second mission is locked");
+        act(&mut app, Act::PickMission(0));
+        act(&mut app, Act::StartMission);
+        assert_eq!(screen(&app), Screen::Match);
+        let sim = app.world().resource::<Sim>();
+        let run = sim.world.mission().expect("a mission is running");
+        assert_eq!(run.def.key, rules.missions[0].key);
+        assert_eq!(sim.setup.map.name, rules.missions[0].map);
+        assert!(!sim.world.is_ai(sim.local), "the player plays their seat");
+        assert!(app.world().resource::<Ui>().in_mission);
+
+        // The enemy gives up: its headquarters goes with the rest of it, which is the
+        // mission's objective.
+        let hq = run.tagged(2).unwrap();
+        let mut sim = app.world_mut().resource_mut::<Sim>();
+        sim.world.submit(PlayerId(1), CommandKind::Surrender);
+        while sim.world.winner().is_none() && sim.world.tick() < 30 {
+            sim.world.step();
+        }
+        assert!(sim.world.entity(hq).is_none());
+        assert_eq!(sim.world.winner(), Some(PlayerId(0)));
+        app.update();
+        assert_eq!(screen(&app), Screen::End);
+        assert!(app.world().resource::<Profile>().won(rules.missions[0].key));
+        act(&mut app, Act::StartMission);
+        assert_eq!(app.world().resource::<Sim>().world.tick(), 0, "PLAY AGAIN: a fresh run of the mission");
+        assert!(app.world().resource::<Sim>().world.mission().is_some());
+        act(&mut app, Act::Pause);
+        act(&mut app, Act::QuitToMenu);
+        act(&mut app, Act::OpenMissions);
+        assert_eq!(app.world().resource::<Ui>().mission, g2_sim::MissionId(1), "opens on the next mission");
+        act(&mut app, Act::StartMission);
+        assert_eq!(app.world().resource::<Sim>().world.mission().unwrap().def.key, rules.missions[1].key);
+
+        // A skirmish after a mission is a skirmish again.
+        act(&mut app, Act::Pause);
+        act(&mut app, Act::QuitToMenu);
+        act(&mut app, Act::OpenSetup);
+        act(&mut app, Act::Start);
+        assert!(app.world().resource::<Sim>().world.mission().is_none());
+        assert!(!app.world().resource::<Ui>().in_mission);
     }
 }

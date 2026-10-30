@@ -7,7 +7,8 @@
 //!
 //! Saved as plain text at `$G2_PROFILE`, else `profile` in the game's data folder
 //! (`g2_frostbite::import::data_dir`: `~/.local/share/generals2` on Linux). One line per general:
-//! `general <name> xp <n> rank <n> bought <id,..> slotted <id,..>`, perks by id.
+//! `general <name> xp <n> rank <n> bought <id,..> slotted <id,..>`, perks by id; and one line
+//! of the campaign's missions won, by key: `missions <key,..>`.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -61,6 +62,8 @@ pub enum Refused {
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Profile {
     pub generals: BTreeMap<GeneralId, GeneralProgress>,
+    /// Missions won, by `Mission::key`, in the order they were first won.
+    pub missions: Vec<String>,
     /// Where it is saved; `None` keeps it in memory only (tests).
     pub path: Option<PathBuf>,
 }
@@ -80,12 +83,17 @@ impl Profile {
     pub fn load(path: Option<PathBuf>, rules: &Rules) -> Profile {
         let text = path.as_ref().and_then(|p| std::fs::read_to_string(p).ok()).unwrap_or_default();
         let mut generals = BTreeMap::new();
+        let mut missions = Vec::new();
         for line in text.lines() {
-            if let Some((g, p)) = parse_line(line, rules) {
+            if let Some(keys) = line.strip_prefix("missions ") {
+                let known = keys.split(',').filter(|k| rules.find_mission(k).is_some());
+                missions.extend(known.map(str::to_owned));
+            } else if let Some((g, p)) = parse_line(line, rules) {
                 generals.insert(g, p);
             }
         }
-        Profile { generals, path }
+        missions.dedup();
+        Profile { generals, missions, path }
     }
 
     /// Writes the profile; errors are reported and ignored (progress is not worth a crash).
@@ -103,12 +111,32 @@ impl Profile {
                 ids(&p.slotted)
             );
         }
+        if !self.missions.is_empty() {
+            out += &format!("missions {}\n", self.missions.join(","));
+        }
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         if let Err(e) = std::fs::write(path, out) {
             eprintln!("profile: can't save {}: {e}", path.display());
         }
+    }
+
+    /// Whether the mission with `key` has been won.
+    pub fn won(&self, key: &str) -> bool {
+        self.missions.iter().any(|k| k == key)
+    }
+
+    /// Records a win of the mission with `key`; winning it again changes nothing.
+    pub fn win(&mut self, key: &str) {
+        if !self.won(key) {
+            self.missions.push(key.to_owned());
+        }
+    }
+
+    /// Missions are played in order: the first, and each one after a mission won.
+    pub fn unlocked(&self, rules: &Rules, i: usize) -> bool {
+        i == 0 || rules.missions.get(i - 1).is_some_and(|m| self.won(m.key))
     }
 
     pub fn progress(&self, g: GeneralId) -> GeneralProgress {
@@ -273,10 +301,30 @@ mod tests {
             JY_SCAVENGER.0, BD_PROTECTOR_I.0, JY_SCAVENGER.0, BD_PROTECTOR_I.0
         );
         std::fs::write(&path, junk).unwrap();
-        let q = Profile::load(Some(path), rules());
+        let q = Profile::load(Some(path.clone()), rules());
         let j = q.progress(JUNKYARD);
         assert_eq!((q.generals.len(), j.xp, j.rank), (1, 7, MAX_RANK));
         assert_eq!((j.bought, j.slotted), (vec![JY_SCAVENGER], vec![JY_SCAVENGER]));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Missions won are saved by key and read back; unknown keys are dropped; each mission
+    /// opens once the one before it is won.
+    #[test]
+    fn missions_won_round_trip_and_unlock_in_order() {
+        let dir = std::env::temp_dir().join(format!("g2-profile-missions-{}", std::process::id()));
+        let path = dir.join("profile");
+        let keys: Vec<&str> = rules().missions.iter().map(|m| m.key).collect();
+        let mut p = Profile { path: Some(path.clone()), ..Default::default() };
+        assert!(p.unlocked(rules(), 0) && !p.unlocked(rules(), 1));
+        p.win(keys[0]);
+        p.win(keys[0]);
+        assert_eq!(p.missions, [keys[0]]);
+        assert!(p.unlocked(rules(), 1) && !p.unlocked(rules(), 2));
+        p.save(rules());
+        assert_eq!(Profile::load(Some(path.clone()), rules()), p);
+        std::fs::write(&path, format!("missions nowhere,{}\n", keys[1])).unwrap();
+        assert_eq!(Profile::load(Some(path), rules()).missions, [keys[1]]);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

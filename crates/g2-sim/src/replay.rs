@@ -14,11 +14,16 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3), v7 the `Research` command
 /// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14), v9 each player's slotted
 /// perks, v10 the power slot (`Power` is tag 15; tag 11 still decodes, as slot 0), v11 each
-/// player's general rank (1 before), v12 the `Transform` and `Special` commands (tags 16, 17).
-/// Older replays still decode.
-pub const VERSION: u16 = 12;
+/// player's general rank (1 before), v12 the `Transform` and `Special` commands (tags 16, 17),
+/// v14 the mission played (`MISSION_VERSION`). Older replays still decode.
+pub const VERSION: u16 = MISSION_VERSION;
+/// The first version with the mission field: a u16 after the players, `NO_MISSION` for none.
+/// Read only from this version on, so it composes with fields earlier versions add.
+const MISSION_VERSION: u16 = 14;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
+/// Encodes "no mission" in v14+.
+const NO_MISSION: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
 pub const HASH_INTERVAL: u32 = 30;
 
@@ -33,6 +38,8 @@ pub struct Replay {
     pub commands: Vec<Command>,
     /// `(tick, hash)` taken before stepping `tick`, every `HASH_INTERVAL` ticks.
     pub hashes: Vec<(u32, u64)>,
+    /// The mission played (`World::with_mission`); `None` for a skirmish, and before v14.
+    pub mission: Option<crate::mission::MissionId>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -64,6 +71,7 @@ impl Replay {
             }
             w.u8(p.rank);
         }
+        w.u16(self.mission.map_or(NO_MISSION, |m| m.0));
         w.u32(self.length_ticks);
         w.u32(self.commands.len() as u32);
         for c in &self.commands {
@@ -125,6 +133,10 @@ impl Replay {
             let rank = if version >= 11 { r.u8()? } else { 1 };
             players.push(PlayerSetup { faction, starting_credits, ai, general, perks, rank });
         }
+        let mission = match version {
+            MISSION_VERSION.. => Some(r.u16()?).filter(|&m| m != NO_MISSION).map(crate::mission::MissionId),
+            _ => None,
+        };
         let length_ticks = r.u32()?;
         let mut commands = Vec::new();
         for _ in 0..r.u32()? {
@@ -139,7 +151,7 @@ impl Replay {
         if r.at != bytes.len() {
             return Err(DecodeError::Truncated);
         }
-        Ok(Replay { map, map_fingerprint, seed, players, length_ticks, commands, hashes })
+        Ok(Replay { map, map_fingerprint, seed, players, length_ticks, commands, hashes, mission })
     }
 }
 
@@ -196,6 +208,12 @@ impl Replay {
         for (i, p) in self.players.iter().enumerate() {
             if p.general.is_none() && !p.perks.is_empty() {
                 return Err(format!("player {i}: perks without a general"));
+            }
+        }
+        if let Some(id) = self.mission {
+            let m = rules.missions.get(id.0 as usize).ok_or_else(|| format!("unknown mission id {}", id.0))?;
+            if !m.seats(&self.players) {
+                return Err(format!("the players don't seat mission {:?}", m.name));
             }
         }
         Ok(())

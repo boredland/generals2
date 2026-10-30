@@ -16,6 +16,7 @@ pub mod fixed;
 pub mod fog;
 mod hash;
 pub mod map;
+pub mod mission;
 pub mod nav;
 pub mod net;
 pub mod onslaught;
@@ -28,13 +29,14 @@ pub use defs::{Armour, BuildingRole, Class, Cost, Def, DefId, Faction, General, 
 pub use entity::{Entity, EntityId, GatherPhase, Order, PlayerId};
 pub use fixed::{Fx, Vec2};
 pub use map::{AiLevel, MapDef, MatchSetup, PlayerSetup};
+pub use mission::MissionId;
 pub use replay::Replay;
 pub use world::{Event, Player, Stats, TICKS_PER_SECOND, World};
 
 /// Runs a replay from its setup and reports the first checkpoint whose hash differs.
 pub fn verify_replay(replay: &Replay, map: MapDef, rules: &'static Rules) -> Result<u64, Divergence> {
     let setup = MatchSetup { map, seed: replay.seed, players: replay.players.clone() };
-    let mut world = World::new(&setup, rules);
+    let mut world = World::start(&setup, rules, replay.mission);
     for c in &replay.commands {
         world.schedule(c.clone());
     }

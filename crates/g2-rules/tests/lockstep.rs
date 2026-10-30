@@ -239,6 +239,7 @@ fn the_build_id_follows_the_rules() {
             upgrades: Box::leak(upgrades.into_boxed_slice()),
             perks: base.perks,
             support: base.support,
+            missions: base.missions,
         }))
     };
     let mut defs = base.defs.to_vec();

@@ -10,6 +10,8 @@ use g2_sim::defs::{
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
+pub mod missions;
+
 /// Stable ids into `RULES.defs`; `tests::id_constants_match_table_order` keeps them in sync.
 pub mod ids {
     use g2_sim::DefId;
@@ -1765,8 +1767,14 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
 /// Workers carry less per trip; the GLA compensates with a higher collector cap.
 const HARVEST_WORKER: CollectorSpec = CollectorSpec { capacity: 40, load_ticks: secs(2), unload_ticks: secs(1) };
 
-pub static RULES: Rules =
-    Rules { defs: &DEFS, generals: &GENERALS, upgrades: &UPGRADES, perks: &PERKS, support: &SUPPORT };
+pub static RULES: Rules = Rules {
+    defs: &DEFS,
+    generals: &GENERALS,
+    upgrades: &UPGRADES,
+    perks: &PERKS,
+    support: &SUPPORT,
+    missions: &missions::MISSIONS,
+};
 
 /// Zero Hour's player weapon upgrades are all +25% damage (96 of 97 `PLAYER_UPGRADE` bonuses in
 /// its `Weapon.ini`, e.g. AP Bullets, Uranium Shells).

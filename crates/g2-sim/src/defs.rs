@@ -492,6 +492,8 @@ pub struct Rules {
     /// Each faction's support powers, in slot order: every player of the faction has them,
     /// after their general's power (slot 0), as slots 1, 2, ...
     pub support: &'static [(Faction, Power)],
+    /// The missions, by `MissionId` (`crate::mission`).
+    pub missions: &'static [crate::mission::Mission],
 }
 
 impl Rules {
@@ -518,6 +520,14 @@ impl Rules {
     /// `faction`'s support powers, in slot order (the first is slot 1).
     pub fn support_powers(&self, faction: Faction) -> impl Iterator<Item = &Power> + '_ {
         self.support.iter().filter(move |(f, _)| *f == faction).map(|(_, p)| p)
+    }
+
+    pub fn mission(&self, id: crate::mission::MissionId) -> &crate::mission::Mission {
+        &self.missions[id.0 as usize]
+    }
+
+    pub fn find_mission(&self, key: &str) -> Option<crate::mission::MissionId> {
+        self.missions.iter().position(|m| m.key == key).map(|i| crate::mission::MissionId(i as u16))
     }
 
     pub fn find_general(&self, name: &str) -> Option<GeneralId> {
