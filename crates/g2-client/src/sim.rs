@@ -132,6 +132,7 @@ impl Sim {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: factions[1],
@@ -140,6 +141,7 @@ impl Sim {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ]
     }

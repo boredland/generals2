@@ -47,6 +47,8 @@ pub struct Player {
     pub perks: Vec<crate::defs::PerkId>,
     /// Rank with the general, from `PlayerSetup::rank`: sets its power's level.
     pub rank: u8,
+    /// Side, from `PlayerSetup::team`: 0 alone, else allied with every player of the same team.
+    pub team: u8,
 }
 
 /// Running totals for the end-of-match screen. Output only: nothing in the simulation reads
@@ -242,7 +244,15 @@ pub struct World {
 
 impl World {
     pub fn new(setup: &MatchSetup, rules: &'static Rules) -> World {
-        assert!(setup.players.len() <= setup.map.spawns.len(), "map has fewer spawns than players");
+        // The onslaught has no base, so it needs no start of its own.
+        assert!(
+            setup
+                .players
+                .iter()
+                .enumerate()
+                .all(|(i, p)| i < setup.map.spawns.len() || p.ai == Some(AiLevel::Onslaught)),
+            "map has fewer spawns than players"
+        );
         for p in &setup.players {
             if let Some(g) = p.general {
                 assert_eq!(
@@ -308,6 +318,7 @@ impl World {
                 hit_by_stealth: false,
                 perks: p.perks.clone(),
                 rank: p.rank,
+                team: p.team,
             });
             world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
             // The onslaught has no base: its waves are all there is of it.
@@ -371,6 +382,33 @@ impl World {
     /// that side of their building, so starts that mirror each other produce mirrored units.
     fn toward_centre(&self, pos: Vec2) -> Fx {
         if pos.y * Fx::from_int(2) > self.map.height { -Fx::ONE } else { Fx::ONE }
+    }
+
+    /// `player`'s start, if the map has one for them. An `Onslaught` player beyond the map's
+    /// starts (co-op: every start holds a defender) has none; its waves come from
+    /// `onslaught_origin`.
+    pub fn start(&self, player: PlayerId) -> Option<Vec2> {
+        self.map.spawns.get(player.0 as usize).copied()
+    }
+
+    /// Where a startless onslaught's waves appear: of the map's corners and edge midpoints (20
+    /// in from the edge, on open ground), the one farthest from the nearest defender's start,
+    /// so every base is about as far from it as the map allows. On Crater Ridge's diagonal
+    /// starts that is a free corner, the same walk from both. A function of the setup alone.
+    pub fn onslaught_origin(&self) -> Vec2 {
+        let (w, h, inset) = (self.map.width, self.map.height, Fx::from_int(20));
+        let (xs, ys) = ([inset, w / Fx::from_int(2), w - inset], [inset, h / Fx::from_int(2), h - inset]);
+        let starts: Vec<Vec2> = (0..self.players.len())
+            .map(|i| PlayerId(i as u8))
+            .filter(|&p| self.ai_level(p) != Some(AiLevel::Onslaught))
+            .filter_map(|p| self.start(p))
+            .collect();
+        let gap = |p: Vec2| starts.iter().map(|s| s.distance(p)).min().unwrap_or(Fx::ZERO);
+        ys.iter()
+            .flat_map(|&y| xs.iter().map(move |&x| Vec2::new(x, y)))
+            .filter(|&p| p != Vec2::new(xs[1], ys[1]) && self.map.walkable(p))
+            .max_by_key(|&p| (gap(p), std::cmp::Reverse((p.x, p.y))))
+            .unwrap_or(Vec2::new(xs[1], ys[1]))
     }
 
     // ---- queries -------------------------------------------------------------------------
@@ -438,11 +476,31 @@ impl World {
         self.ai.get(player.0 as usize).and_then(|a| a.as_ref()).map(|a| a.level())
     }
 
-    /// The last player standing, once every other player is defeated.
+    /// Whether `a` and `b` are on one side: the same player, or players of the same non-zero
+    /// team. Allies never shoot or splash each other, see what the other sees, and win together.
+    pub fn allied(&self, a: PlayerId, b: PlayerId) -> bool {
+        a == b || {
+            let team = |p: PlayerId| self.players.get(p.0 as usize).map_or(0, |p| p.team);
+            team(a) != 0 && team(a) == team(b)
+        }
+    }
+
+    /// Whether an entity owned by `owner` (`None`: neutral) is an enemy of `player`.
+    pub fn hostile(&self, player: PlayerId, owner: Option<PlayerId>) -> bool {
+        owner.is_some_and(|o| !self.allied(player, o))
+    }
+
+    /// The last side standing, once every other side is defeated: its first player still in
+    /// the game. Everyone on that side has won (`won`), the fallen too, as in Generals.
     pub fn winner(&self) -> Option<PlayerId> {
-        let mut alive = self.players.iter().enumerate().filter(|(_, p)| !p.defeated);
-        let (first, _) = alive.next()?;
-        alive.next().is_none().then_some(PlayerId(first as u8))
+        let mut alive = (0..self.players.len()).map(|i| PlayerId(i as u8)).filter(|&p| !self.player(p).defeated);
+        let first = alive.next()?;
+        alive.all(|p| self.allied(first, p)).then_some(first)
+    }
+
+    /// Whether `player`'s side won the match.
+    pub fn won(&self, player: PlayerId) -> bool {
+        self.winner().is_some_and(|w| self.allied(w, player))
     }
 
     /// Collectors bound to `center` plus collectors queued there.
@@ -716,7 +774,8 @@ impl World {
     }
 
     fn update_vision(&mut self) {
-        crate::fog::update(&mut self.visions, &self.entities, self.rules, ACQUIRE, self.tick);
+        let teams: Vec<u8> = self.players.iter().map(|p| p.team).collect();
+        crate::fog::update(&mut self.visions, &teams, &self.entities, self.rules, ACQUIRE, self.tick);
     }
 
     /// What `player` sees and has explored.
@@ -725,9 +784,10 @@ impl World {
     }
 
     /// Whether `player` sees entity `e` now: its cell is in view and, if it is stealthy, a
-    /// detector of theirs has it in range or it fired lately. Own entities are always seen.
+    /// detector of their side has it in range or it fired lately. Their side's entities are
+    /// always seen, an ally's stealth units too (Generals shows allies their friends' stealth).
     pub fn sees(&self, player: PlayerId, e: &Entity) -> bool {
-        if e.owner == Some(player) {
+        if e.owner.is_some_and(|o| self.allied(player, o)) {
             return true;
         }
         let v = &self.visions[player.0 as usize];
@@ -1804,7 +1864,7 @@ impl World {
     /// an attack order, once given, chases its target through fog while it lives. Whether it
     /// may be given is `attackable`.
     fn live_enemy(&self, owner: PlayerId, target: EntityId) -> Option<&Entity> {
-        self.entities.get(target).filter(|t| t.owner.is_some_and(|o| o != owner) && t.hp > 0 && t.inside.is_none())
+        self.entities.get(target).filter(|t| self.hostile(owner, t.owner) && t.hp > 0 && t.inside.is_none())
     }
 
     /// Whether `owner` may order an attack on `target`: a live enemy it sees now (a stealth
@@ -1823,7 +1883,7 @@ impl World {
         let near = w.shell.map_or(Fx::ZERO, |s| s.min_range);
         let mut best: Option<(bool, Fx, EntityId)> = None;
         for e in self.entities.iter() {
-            if !e.owner.is_some_and(|o| o != owner) || e.hp <= 0 || e.inside.is_some() {
+            if !self.hostile(owner, e.owner) || e.hp <= 0 || e.inside.is_some() {
                 continue;
             }
             let d = self.rules.def(e.def);
@@ -1943,7 +2003,7 @@ impl World {
             self.events.push(Event::Landed { at: s.at, radius: s.radius, source: s.source });
             for e in self.entities.iter() {
                 // Units inside something take nothing: the building or vehicle shields them.
-                if !e.owner.is_some_and(|o| o != s.owner) || e.hp <= 0 || e.inside.is_some() {
+                if !self.hostile(s.owner, e.owner) || e.hp <= 0 || e.inside.is_some() {
                     continue;
                 }
                 let d = self.rules.def(e.def);
@@ -1972,7 +2032,7 @@ impl World {
         }
         for c in self.clouds.iter().filter(|c| c.from <= tick) {
             for e in self.entities.iter() {
-                if !e.owner.is_some_and(|o| o != c.owner) || e.hp <= 0 || e.inside.is_some() {
+                if !self.hostile(c.owner, e.owner) || e.hp <= 0 || e.inside.is_some() {
                     continue;
                 }
                 let d = self.rules.def(e.def);
@@ -2080,7 +2140,7 @@ impl World {
                         .find(|e| e.owner == Some(player) && e.def == d && e.is_complete())
                         .map(|e| e.pos)
                 });
-                let from = site.unwrap_or(self.map.spawns[player.0 as usize]);
+                let from = site.or(self.start(player)).unwrap_or(at);
                 let flight = (from.distance(at) / speed.max(Fx::ONE)).floor_int().max(1) as u32;
                 let mut last = self.tick;
                 // A fixed pattern, not the RNG: the point first, then around it.
@@ -2535,7 +2595,8 @@ impl World {
 
     /// An `Onslaught` player's wave for this tick, if one is due: units of its faction, cycling
     /// through what its barracks and war factory train, placed on open ground in front of its
-    /// start (toward the map centre). They arrive idle; its AI sends them on next think.
+    /// start (toward the map centre), or at `onslaught_origin` without one. They arrive idle;
+    /// its AI sends them on next think.
     fn spawn_onslaught_waves(&mut self) {
         let Some(k) = crate::onslaught::wave_at(self.tick) else { return };
         for i in 0..self.players.len() {
@@ -2554,8 +2615,10 @@ impl World {
                 .flat_map(|d| d.produces.iter().copied())
                 .filter(|&u| !self.rules.def(u).flies())
                 .collect();
-            let spawn = self.map.spawns[i];
-            let front = spawn + Vec2::new(Fx::ZERO, Fx::from_int(30) * self.toward_centre(spawn));
+            let front = match self.start(owner) {
+                Some(spawn) => spawn + Vec2::new(Fx::ZERO, Fx::from_int(30) * self.toward_centre(spawn)),
+                None => self.onslaught_origin(),
+            };
             for n in 0..crate::onslaught::wave_size(k) {
                 let def = roster[(n as usize + k as usize) % roster.len()];
                 let at = if n == 0 { front } else { front + around(n - 1, Fx::from_int(6)) };

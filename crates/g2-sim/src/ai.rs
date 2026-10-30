@@ -111,7 +111,7 @@ impl Ai {
     /// The armour most of the visible enemy army (by combat strength) wears, if any is seen.
     fn enemy_armour(&self, world: &World) -> Option<Armour> {
         let mut by = [0i64; 3];
-        for e in world.entities().filter(|e| e.owner.is_some_and(|o| o != self.player) && world.sees(self.player, e)) {
+        for e in world.entities().filter(|e| world.hostile(self.player, e.owner) && world.sees(self.player, e)) {
             let a = world.rules.def(e.def).armour;
             if a != Armour::Structure {
                 by[a as usize] += strength(world, e);
@@ -124,7 +124,7 @@ impl Ai {
     /// Whether any visible enemy unit flies.
     fn enemy_air(&self, world: &World) -> bool {
         world.entities().any(|e| {
-            e.owner.is_some_and(|o| o != self.player) && world.rules.def(e.def).flies() && world.sees(self.player, e)
+            world.hostile(self.player, e.owner) && world.rules.def(e.def).flies() && world.sees(self.player, e)
         })
     }
 
@@ -172,7 +172,7 @@ impl Ai {
                 let seen: Vec<(Vec2, i64)> = vision
                     .memory
                     .values()
-                    .filter(|s| s.owner != self.player)
+                    .filter(|s| world.hostile(self.player, Some(s.owner)))
                     .map(|s| (s.pos, world.rules.def(s.def).hp as i64))
                     .collect();
                 let points: Vec<Vec2> = seen.iter().map(|&(p, _)| p).collect();
@@ -185,7 +185,7 @@ impl Ai {
             | PowerKind::Missiles { radius, missiles: shells, .. } => {
                 let enemies: Vec<&Entity> = world
                     .entities()
-                    .filter(|e| e.owner.is_some_and(|o| o != self.player) && world.sees(self.player, e))
+                    .filter(|e| world.hostile(self.player, e.owner) && world.sees(self.player, e))
                     .collect();
                 let points: Vec<Vec2> = enemies.iter().map(|e| e.pos).collect();
                 // A pattern of shells covers about three radii; a single blast just its own.
@@ -228,7 +228,7 @@ impl Ai {
                 let target = world
                     .entities()
                     .filter(|e| {
-                        e.owner.is_some_and(|o| o != self.player)
+                        world.hostile(self.player, e.owner)
                             && world.rules.def(e.def).is_building()
                             && world.sees(self.player, e)
                     })
@@ -546,7 +546,7 @@ impl Ai {
     fn waves(&self, world: &World, mine: &[&Entity], army: &[&Entity], home: Option<Vec2>, out: &mut Vec<CommandKind>) {
         let (me, rules) = (self.player, world.rules);
         let intruder = world.entities().find(|e| {
-            e.owner.is_some_and(|o| o != me)
+            world.hostile(me, e.owner)
                 && rules.def(e.def).is_unit()
                 && rules.def(e.def).weapon().is_some()
                 && world.sees(me, e)
@@ -580,7 +580,9 @@ impl Ai {
 
     /// `Onslaught`: no economy, no base building. Every idle unit (a wave the sim has just
     /// placed, or what is left of one) attack-moves on the nearest enemy building it knows, else
-    /// scouts for one, so every wave reaches the player.
+    /// scouts for one, so every wave reaches the player. Without a start of its own (co-op, the
+    /// waves coming from `World::onslaught_origin`) each wave splits evenly between the enemy
+    /// players still in the game, in unit order, so no defender is left out.
     fn onslaught(&self, world: &World, out: &mut Vec<CommandKind>) {
         let (me, rules) = (self.player, world.rules);
         let idle: Vec<EntityId> = world
@@ -594,10 +596,44 @@ impl Ai {
             })
             .map(|e| e.id)
             .collect();
-        if !idle.is_empty()
-            && let Some(target) = self.enemy_base(world, world.map.spawns[me.0 as usize])
-        {
+        if idle.is_empty() {
+            return;
+        }
+        let Some(home) = world.start(me) else {
+            let origin = world.onslaught_origin();
+            let targets: Vec<PlayerId> = (0..world.players().len() as u8)
+                .map(PlayerId)
+                .filter(|&p| world.hostile(me, Some(p)) && !world.player(p).defeated && world.start(p).is_some())
+                .collect();
+            for (k, &p) in targets.iter().enumerate() {
+                let units: Vec<EntityId> = idle.iter().skip(k).step_by(targets.len()).copied().collect();
+                if let (false, Some(target)) = (units.is_empty(), self.base_of(world, p, origin)) {
+                    out.push(CommandKind::AttackMove { units, target });
+                }
+            }
+            return;
+        };
+        if let Some(target) = self.enemy_base(world, home) {
             out.push(CommandKind::AttackMove { units: idle, target });
+        }
+    }
+
+    /// Where a split wave sent at `player` heads: just outside the building of theirs this AI
+    /// remembers nearest `from`, else outside their start's command center while it is out of
+    /// sight, else wherever `enemy_base` scouts (their last buildings stand elsewhere).
+    fn base_of(&self, world: &World, player: PlayerId, from: Vec2) -> Option<Vec2> {
+        let vision = world.vision(self.player);
+        let seen = vision
+            .memory
+            .iter()
+            .filter(|(_, s)| s.owner == player)
+            .min_by_key(|(id, s)| (s.pos.distance(from), **id))
+            .map(|(_, s)| (s.pos, world.rules.def(s.def).radius));
+        let cc = world.rules.def(world.rules.command_center(world.player(player).faction)).radius;
+        match (seen, world.start(player)) {
+            (Some((pos, radius)), _) => Some(stand_off(pos, radius, from)),
+            (None, Some(start)) if !vision.is_visible(start) => Some(stand_off(start, cc, from)),
+            _ => self.enemy_base(world, from),
         }
     }
 
@@ -618,7 +654,7 @@ impl Ai {
         let Some(home) = home else { return };
         let vision = world.vision(me);
         let enemies: Vec<&Entity> =
-            world.entities().filter(|e| e.owner.is_some_and(|o| o != me) && e.hp > 0 && world.sees(me, e)).collect();
+            world.entities().filter(|e| world.hostile(me, e.owner) && e.hp > 0 && world.sees(me, e)).collect();
         let sum = |units: &mut dyn Iterator<Item = &&Entity>| units.map(|e| strength(world, e)).sum::<i64>();
         let seen_now = sum(&mut enemies.iter());
         // Slow fade (a 64th per second): an army that walked out of sight still exists.
@@ -790,9 +826,18 @@ impl Ai {
                 .map(|e| e.pos);
             let nearest = |points: &mut dyn Iterator<Item = Vec2>| points.min_by_key(|&p| (p.distance(home), p.x, p.y));
             let likely: Vec<Vec2> = world.map.spawns.iter().copied().chain(resources).collect();
-            // Every start but our own (the one nearest home).
-            let own = world.map.spawns.iter().copied().min_by_key(|&s| (s.distance(home), s.x, s.y));
-            let theirs: Vec<Vec2> = world.map.spawns.iter().copied().filter(|&s| Some(s) != own).collect();
+            // Every start but our own (the one nearest home; none for a startless onslaught,
+            // whose home is where its waves appear) and our allies'.
+            let me = self.player;
+            let own = world
+                .start(me)
+                .and_then(|_| world.map.spawns.iter().copied().min_by_key(|&s| (s.distance(home), s.x, s.y)));
+            let ally =
+                |i: usize| i < world.players().len() && i != me.0 as usize && world.allied(me, PlayerId(i as u8));
+            let theirs: Vec<Vec2> = (world.map.spawns.iter().copied().enumerate())
+                .filter(|&(i, s)| Some(s) != own && !ally(i))
+                .map(|(_, s)| s)
+                .collect();
             let near_theirs = |p: Vec2| theirs.iter().map(|&s| s.distance(p)).min().unwrap_or(Fx::ZERO);
             nearest(&mut likely.iter().copied().filter(|&p| !vision.is_explored(p)))
                 .or_else(|| {
@@ -805,13 +850,7 @@ impl Ai {
                 .map(|p| (p, Fx::from_int(5)))
         };
         let (pos, radius) = seen.or_else(scout)?;
-        let delta = home - pos;
-        let dist = delta.length();
-        if dist == Fx::ZERO {
-            return Some(pos);
-        }
-        let stand_off = radius + Fx::from_int(8);
-        Some(pos + delta.scale(stand_off.min(dist) / dist))
+        Some(stand_off(pos, radius, home))
     }
 
     fn free_well(&self, world: &World, derrick: crate::defs::DefId, around: Vec2) -> Option<Vec2> {
@@ -827,6 +866,18 @@ impl Ai {
         }
         best.map(|(_, p)| p)
     }
+}
+
+/// Just outside a building of `radius` at `pos`, on the side facing `from`: not its centre, a
+/// blocked cell no route can end on.
+fn stand_off(pos: Vec2, radius: Fx, from: Vec2) -> Vec2 {
+    let delta = from - pos;
+    let dist = delta.length();
+    if dist == Fx::ZERO {
+        return pos;
+    }
+    let gap = radius + Fx::from_int(8);
+    pos + delta.scale(gap.min(dist) / dist)
 }
 
 /// Whether `p` is within `DEFEND_RADIUS` of the edge of one of the base's buildings (a held

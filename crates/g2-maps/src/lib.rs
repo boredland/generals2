@@ -1089,6 +1089,7 @@ mod tests {
                         general: None,
                         perks: Vec::new(),
                         rank: 1,
+                        team: 0,
                     })
                     .to_vec(),
             };
@@ -1126,6 +1127,7 @@ mod tests {
                     general: None,
                     perks: Vec::new(),
                     rank: 1,
+                    team: 0,
                 })
                 .to_vec(),
         };

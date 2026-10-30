@@ -9,17 +9,24 @@
 //! and a mismatch is a desync.
 //!
 //! Commands from the peer are scheduled as the peer's player, so the sim's own ownership checks
-//! refuse anything aimed at the other player's units.
+//! refuse anything aimed at the other player's units. AI players (co-op Onslaught's waves) need
+//! no peer: the AI runs inside the sim, on both machines alike.
+//!
+//! Before the match, the lobby: the host offers the match as it stands (`Lobby`), the joiner
+//! answers with the seat it picked (`Seat`), and once the joiner is ready the host starts it
+//! with `Hello`, which the joiner accepts with `Join`. On a local network hosts are found by a
+//! `Beacon` query, as Generals' LAN lobby finds games.
 
 use std::collections::BTreeMap;
 
 use crate::command::{Command, CommandKind};
+use crate::defs::{Faction, GeneralId, PerkId};
 use crate::entity::PlayerId;
 use crate::replay::{DecodeError, HASH_INTERVAL, Reader, Replay, Writer};
 use crate::world::World;
 
-/// Bumped on any change to `Message` or to how turns are scheduled.
-pub const PROTOCOL: u16 = 2;
+/// Bumped on any change to `Message`, `Beacon` or to how turns are scheduled.
+pub const PROTOCOL: u16 = 3;
 /// Bumped on any change to simulation logic that the rules tables don't show (AI, combat,
 /// movement): two machines must run the same sim, or they drift apart within a second.
 pub const SIM_VERSION: u32 = 11;
@@ -41,6 +48,74 @@ pub const DELAY_TURNS: u32 = 2;
 // Hash checks sit on turn boundaries, where both machines are at the same point.
 const _: () = assert!(HASH_INTERVAL.is_multiple_of(TURN_TICKS));
 
+/// The UDP port of LAN discovery, Generals' own `lobbyPort` (`LANAPI.cpp`); the game itself
+/// listens on Generals' `NETWORK_BASE_PORT_NUMBER`, 8088, unless the host picks another.
+pub const BEACON_PORT: u16 = 8086;
+pub const GAME_PORT: u16 = 8088;
+
+/// LAN discovery, one datagram each: a lobby broadcasts `Query`, and every host with a game
+/// open answers `Game` to the asker. Generals' LAN lobby announces games every 10 seconds and
+/// drops one unheard for 20 (`s_resendDelta`); asking, a list fills at once instead.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Beacon {
+    Query {
+        protocol: u16,
+    },
+    /// A hosted game: its TCP port, name (the host's), map, mode, and whether its joiner seat
+    /// is free. `build` lets the list mark games this build can't join.
+    Game {
+        protocol: u16,
+        build: u64,
+        port: u16,
+        name: String,
+        map: String,
+        coop: bool,
+        open: bool,
+    },
+}
+
+const BEACON_MAGIC: &[u8; 4] = b"G2LN";
+
+impl Beacon {
+    pub fn encode(&self) -> Vec<u8> {
+        let mut w = Writer(BEACON_MAGIC.to_vec());
+        match self {
+            Beacon::Query { protocol } => {
+                w.u8(0);
+                w.u16(*protocol);
+            }
+            Beacon::Game { protocol, build, port, name, map, coop, open } => {
+                w.u8(1);
+                w.u16(*protocol);
+                w.u64(*build);
+                w.u16(*port);
+                w.bytes(name.as_bytes());
+                w.bytes(map.as_bytes());
+                w.u8(*coop as u8 | (*open as u8) << 1);
+            }
+        }
+        w.0
+    }
+
+    /// Any datagram may arrive on the port, so anything else is `None`, not an error.
+    pub fn decode(bytes: &[u8]) -> Option<Beacon> {
+        let rest = bytes.strip_prefix(BEACON_MAGIC)?;
+        let mut r = Reader { b: rest, at: 0 };
+        let text = |r: &mut Reader| r.bytes().ok().and_then(|b| String::from_utf8(b.to_vec()).ok());
+        let b = match r.u8().ok()? {
+            0 => Beacon::Query { protocol: r.u16().ok()? },
+            1 => {
+                let (protocol, build, port) = (r.u16().ok()?, r.u64().ok()?, r.u16().ok()?);
+                let (name, map) = (text(&mut r)?, text(&mut r)?);
+                let flags = r.u8().ok()?;
+                Beacon::Game { protocol, build, port, name, map, coop: flags & 1 != 0, open: flags & 2 != 0 }
+            }
+            _ => return None,
+        };
+        (r.at == rest.len()).then_some(b)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Message {
     /// Host to joiner: the match to play, as a replay with no commands yet, and the host's
@@ -56,6 +131,34 @@ pub enum Message {
         build: u64,
     },
     Turn(Turn),
+    /// Host to joiner, in the lobby: the match as it stands, the joiner's seat as player 1.
+    /// `revision` counts the host's own changes (map, mode, its seat): a joiner's ready counts
+    /// only for the revision it saw, so any change the host makes clears it, as Generals' game
+    /// options clear every accept.
+    Lobby {
+        protocol: u16,
+        build: u64,
+        setup: Replay,
+        revision: u32,
+        /// The host's player name, for the joiner's player list.
+        name: String,
+    },
+    /// Joiner to host, in the lobby: the seat the joiner picked, and whether they are ready.
+    Seat(Seat),
+}
+
+/// The joiner's choices in the lobby. The host checks them against the rules before taking
+/// them into the match (`Replay::check`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Seat {
+    /// The joiner's player name, shown in the host's player list.
+    pub name: String,
+    pub faction: Faction,
+    pub general: Option<GeneralId>,
+    pub perks: Vec<PerkId>,
+    pub rank: u8,
+    /// Ready for the host's offer of this `revision`; `None` while not ready.
+    pub ready: Option<u32>,
 }
 
 /// One player's orders for one turn.
@@ -98,6 +201,32 @@ impl Message {
                     None => w.u8(0),
                 }
             }
+            Message::Lobby { protocol, build, setup, revision, name } => {
+                w.u8(3);
+                w.u16(*protocol);
+                w.u64(*build);
+                w.bytes(&setup.encode());
+                w.u32(*revision);
+                w.bytes(name.as_bytes());
+            }
+            Message::Seat(s) => {
+                w.u8(4);
+                w.bytes(s.name.as_bytes());
+                w.u8(s.faction as u8);
+                w.u16(s.general.map_or(u16::MAX, |g| g.0));
+                w.u8(s.perks.len() as u8);
+                for k in &s.perks {
+                    w.u16(k.0);
+                }
+                w.u8(s.rank);
+                match s.ready {
+                    Some(rev) => {
+                        w.u8(1);
+                        w.u32(rev);
+                    }
+                    None => w.u8(0),
+                }
+            }
         }
         w.0
     }
@@ -122,6 +251,30 @@ impl Message {
                     t => return Err(DecodeError::BadTag(t)),
                 };
                 Message::Turn(Turn { turn, commands, check })
+            }
+            3 => Message::Lobby {
+                protocol: r.u16()?,
+                build: r.u64()?,
+                setup: Replay::decode(r.bytes()?)?,
+                revision: r.u32()?,
+                name: r.text()?,
+            },
+            4 => {
+                let name = r.text()?;
+                let faction = r.faction()?;
+                let general = Some(r.u16()?).filter(|&g| g != u16::MAX).map(GeneralId);
+                let n = r.u8()? as usize;
+                if n > crate::defs::PERK_SLOTS {
+                    return Err(DecodeError::BadTag(n as u8));
+                }
+                let perks = (0..n).map(|_| r.u16().map(PerkId)).collect::<Result<_, _>>()?;
+                let rank = r.u8()?;
+                let ready = match r.u8()? {
+                    0 => None,
+                    1 => Some(r.u32()?),
+                    t => return Err(DecodeError::BadTag(t)),
+                };
+                Message::Seat(Seat { name, faction, general, perks, rank, ready })
             }
             t => return Err(DecodeError::BadTag(t)),
         };

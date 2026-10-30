@@ -17,6 +17,7 @@ fn setup() -> MatchSetup {
             general: None,
             perks: Vec::new(),
             rank: 1,
+            team: 0,
         })
         .to_vec();
     MatchSetup { map: crater_ridge(), seed: 7, players }
@@ -204,13 +205,30 @@ fn a_machine_waits_for_the_peer_and_refuses_gaps() {
 fn messages_round_trip_and_garbage_is_refused() {
     let setup = World::new(&setup(), rules()).replay(&setup());
     let msgs = [
-        Message::Hello { protocol: 1, build: 7, setup },
+        Message::Hello { protocol: 1, build: 7, setup: setup.clone() },
         Message::Join { protocol: 1, build: u64::MAX },
         Message::Turn(Turn { turn: 9, commands: vec![], check: None }),
         Message::Turn(Turn {
             turn: 12,
             commands: vec![CommandKind::Surrender, CommandKind::Power { slot: 0, at: Vec2::from_int(3, 4) }],
             check: Some((30, 0xdead_beef)),
+        }),
+        Message::Lobby { protocol: 3, build: 7, setup, revision: 4, name: "Hôte".into() },
+        Message::Seat(g2_sim::net::Seat {
+            name: "Joiner".into(),
+            faction: g2_sim::Faction::Gla,
+            general: Some(g2_sim::GeneralId(2)),
+            perks: vec![g2_sim::defs::PerkId(1), g2_sim::defs::PerkId(3)],
+            rank: 3,
+            ready: Some(4),
+        }),
+        Message::Seat(g2_sim::net::Seat {
+            name: String::new(),
+            faction: g2_sim::Faction::Eu,
+            general: None,
+            perks: vec![],
+            rank: 1,
+            ready: None,
         }),
     ];
     for m in &msgs {
@@ -223,6 +241,33 @@ fn messages_round_trip_and_garbage_is_refused() {
     let mut huge = vec![2u8, 0, 0, 0, 0];
     huge.extend_from_slice(&u32::MAX.to_le_bytes());
     assert!(Message::decode(&huge).is_err());
+}
+
+/// LAN discovery datagrams survive their encoding; anything else on the port is ignored.
+#[test]
+fn beacons_round_trip_and_strays_are_ignored() {
+    use g2_sim::net::Beacon;
+    let beacons = [
+        Beacon::Query { protocol: 3 },
+        Beacon::Game {
+            protocol: 3,
+            build: 9,
+            port: 8088,
+            name: "Host".into(),
+            map: "zh:Tournament Desert".into(),
+            coop: true,
+            open: false,
+        },
+    ];
+    for b in &beacons {
+        let bytes = b.encode();
+        assert_eq!(Beacon::decode(&bytes).as_ref(), Some(b));
+        for cut in 0..bytes.len() {
+            assert_eq!(Beacon::decode(&bytes[..cut]), None, "{b:?} cut at {cut}");
+        }
+        assert_eq!(Beacon::decode(&[bytes.as_slice(), &[0]].concat()), None, "trailing bytes");
+    }
+    assert_eq!(Beacon::decode(b"hello, anyone?"), None);
 }
 
 /// The build id is stable for one build and changes with any rules table, so two releases

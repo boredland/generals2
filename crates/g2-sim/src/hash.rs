@@ -87,6 +87,10 @@ impl World {
             if p.hit_by_stealth {
                 h.u64(0x6873_7468);
             }
+            // Only on a team, so matches without teams (every replay before v13) hash as before.
+            if p.team != 0 {
+                h.u64(0x7465_616d_0000 | p.team as u64);
+            }
         }
         for v in &self.visions {
             v.hash_into(|x| h.u64(x));

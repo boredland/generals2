@@ -19,6 +19,7 @@ fn setup(seed: u64, ai: [bool; 2], factions: [Faction; 2]) -> MatchSetup {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .collect(),
     }

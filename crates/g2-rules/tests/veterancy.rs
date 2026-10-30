@@ -16,8 +16,24 @@ fn world(f0: Faction, f1: Faction) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
-            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
+            PlayerSetup {
+                faction: f0,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            },
+            PlayerSetup {
+                faction: f1,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            },
         ],
     };
     World::new(&setup, rules())
@@ -200,6 +216,7 @@ fn matches_with_promotions_replay_exactly() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Gla,
@@ -208,6 +225,7 @@ fn matches_with_promotions_replay_exactly() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };

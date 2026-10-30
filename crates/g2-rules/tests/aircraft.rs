@@ -19,8 +19,24 @@ fn world(f0: Faction, f1: Faction) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
-            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
+            PlayerSetup {
+                faction: f0,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            },
+            PlayerSetup {
+                faction: f1,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            },
         ],
     };
     World::new(&setup, rules())
@@ -111,6 +127,7 @@ fn aircraft_fly_straight_over_impassable_terrain() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Gla,
@@ -119,6 +136,7 @@ fn aircraft_fly_straight_over_impassable_terrain() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };
@@ -231,6 +249,7 @@ fn matches_with_aircraft_replay_exactly() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Apa,
@@ -239,6 +258,7 @@ fn matches_with_aircraft_replay_exactly() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };

@@ -22,6 +22,7 @@ fn setup(f0: Faction, f1: Faction, ai: [bool; 2]) -> MatchSetup {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .to_vec(),
     }

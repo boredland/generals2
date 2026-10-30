@@ -14,9 +14,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// `Power` command (tag 11), v6 the `Onslaught` level (AI byte 3), v7 the `Research` command
 /// (tag 12), v8 the `Garrison` and `Evacuate` commands (tags 13, 14), v9 each player's slotted
 /// perks, v10 the power slot (`Power` is tag 15; tag 11 still decodes, as slot 0), v11 each
-/// player's general rank (1 before), v12 the `Transform` and `Special` commands (tags 16, 17).
-/// Older replays still decode.
-pub const VERSION: u16 = 12;
+/// player's general rank (1 before), v12 the `Transform` and `Special` commands (tags 16, 17),
+/// v13 each player's team (0, alone, before). Older replays still decode.
+pub const VERSION: u16 = 13;
 /// Encodes "no general" in v3+.
 const NO_GENERAL: u16 = u16::MAX;
 /// Hash checkpoint spacing in ticks.
@@ -63,6 +63,7 @@ impl Replay {
                 w.u16(k.0);
             }
             w.u8(p.rank);
+            w.u8(p.team);
         }
         w.u32(self.length_ticks);
         w.u32(self.commands.len() as u32);
@@ -93,12 +94,7 @@ impl Replay {
         let seed = r.u64()?;
         let mut players = Vec::new();
         for _ in 0..r.u32()? {
-            let faction = match r.u8()? {
-                0 => Faction::Eu,
-                1 => Faction::Apa,
-                2 => Faction::Gla,
-                t => return Err(DecodeError::BadTag(t)),
-            };
+            let faction = r.faction()?;
             let starting_credits = r.i64()?;
             let ai = match (version, r.u8()?) {
                 (_, 0) => None,
@@ -123,7 +119,8 @@ impl Replay {
                 _ => Vec::new(),
             };
             let rank = if version >= 11 { r.u8()? } else { 1 };
-            players.push(PlayerSetup { faction, starting_credits, ai, general, perks, rank });
+            let team = if version >= 13 { r.u8()? } else { 0 };
+            players.push(PlayerSetup { faction, starting_credits, ai, general, perks, rank, team });
         }
         let length_ticks = r.u32()?;
         let mut commands = Vec::new();
@@ -159,13 +156,11 @@ impl Replay {
                 map.fingerprint()
             ));
         }
-        if self.players.len() > map.spawns.len() {
-            return Err(format!(
-                "{} players but map {:?} has {} starts",
-                self.players.len(),
-                self.map,
-                map.spawns.len()
-            ));
+        // The onslaught has no base, so it needs no start of its own (`World::start`).
+        let homeless =
+            self.players.iter().enumerate().skip(map.spawns.len()).find(|(_, p)| p.ai != Some(AiLevel::Onslaught));
+        if let Some((i, _)) = homeless {
+            return Err(format!("player {i} has no start: map {:?} has {}", self.map, map.spawns.len()));
         }
         for (i, p) in self.players.iter().enumerate() {
             let Some(g) = p.general else { continue };
@@ -353,6 +348,17 @@ impl Reader<'_> {
     pub(crate) fn bytes(&mut self) -> Result<&[u8], DecodeError> {
         let n = self.u32()? as usize;
         self.take(n)
+    }
+    pub(crate) fn text(&mut self) -> Result<String, DecodeError> {
+        String::from_utf8(self.bytes()?.to_vec()).map_err(|_| DecodeError::BadUtf8)
+    }
+    pub(crate) fn faction(&mut self) -> Result<Faction, DecodeError> {
+        match self.u8()? {
+            0 => Ok(Faction::Eu),
+            1 => Ok(Faction::Apa),
+            2 => Ok(Faction::Gla),
+            t => Err(DecodeError::BadTag(t)),
+        }
     }
     fn id(&mut self) -> Result<EntityId, DecodeError> {
         Ok(EntityId { index: self.u32()?, generation: self.u32()? })

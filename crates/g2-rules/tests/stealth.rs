@@ -16,8 +16,24 @@ fn setup(f0: Faction, f1: Faction) -> MatchSetup {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
-            PlayerSetup { faction: f1, starting_credits: 100_000, ai: None, general: None, perks: Vec::new(), rank: 1 },
+            PlayerSetup {
+                faction: f0,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            },
+            PlayerSetup {
+                faction: f1,
+                starting_credits: 100_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            },
         ],
     }
 }

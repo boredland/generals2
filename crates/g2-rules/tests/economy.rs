@@ -14,7 +14,15 @@ fn world(f0: Faction, credits: i64) -> World {
         map: crater_ridge(),
         seed: 1,
         players: vec![
-            PlayerSetup { faction: f0, starting_credits: credits, ai: None, general: None, perks: Vec::new(), rank: 1 },
+            PlayerSetup {
+                faction: f0,
+                starting_credits: credits,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            },
             PlayerSetup {
                 faction: Faction::Eu,
                 starting_credits: credits,
@@ -22,6 +30,7 @@ fn world(f0: Faction, credits: i64) -> World {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };
@@ -219,6 +228,7 @@ fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Gla,
@@ -227,6 +237,7 @@ fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };
@@ -301,6 +312,7 @@ fn piles_deplete_and_vanish() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Eu,
@@ -309,6 +321,7 @@ fn piles_deplete_and_vanish() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };
@@ -344,6 +357,7 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Eu,
@@ -352,6 +366,7 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };
@@ -472,6 +487,7 @@ fn a_general_discounts_and_speeds_up_its_units() {
                         general: Some(g2_rules::generals::BULLDOG),
                         perks: Vec::new(),
                         rank: 1,
+                        team: 0,
                     },
                     PlayerSetup {
                         faction: Faction::Eu,
@@ -480,6 +496,7 @@ fn a_general_discounts_and_speeds_up_its_units() {
                         general: None,
                         perks: Vec::new(),
                         rank: 1,
+                        team: 0,
                     },
                 ],
             };
@@ -529,6 +546,7 @@ fn a_general_discounts_and_speeds_up_its_units() {
                 general: p.general,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .collect(),
     };
@@ -551,6 +569,7 @@ fn a_general_of_another_faction_is_refused_at_setup() {
                 general: Some(g2_rules::generals::JUNKYARD),
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Gla,
@@ -559,6 +578,7 @@ fn a_general_of_another_faction_is_refused_at_setup() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };
@@ -581,6 +601,7 @@ fn the_general_is_part_of_the_state_hash() {
                     general,
                     perks: Vec::new(),
                     rank: 1,
+                    team: 0,
                 },
                 PlayerSetup {
                     faction: Faction::Gla,
@@ -589,6 +610,7 @@ fn the_general_is_part_of_the_state_hash() {
                     general: None,
                     perks: Vec::new(),
                     rank: 1,
+                    team: 0,
                 },
             ],
         };
@@ -612,6 +634,7 @@ fn replays_with_invalid_generals_are_refused() {
                 general: Some(g2_rules::generals::BULLDOG),
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
             PlayerSetup {
                 faction: Faction::Gla,
@@ -620,6 +643,7 @@ fn replays_with_invalid_generals_are_refused() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             },
         ],
     };
@@ -645,6 +669,7 @@ fn surrender_defeats_the_player_and_the_last_one_standing_wins() {
                     general: None,
                     perks: Vec::new(),
                     rank: 1,
+                    team: 0,
                 },
                 PlayerSetup {
                     faction: Faction::Gla,
@@ -653,6 +678,7 @@ fn surrender_defeats_the_player_and_the_last_one_standing_wins() {
                     general: None,
                     perks: Vec::new(),
                     rank: 1,
+                    team: 0,
                 },
             ],
         },
@@ -862,6 +888,7 @@ fn mutual_kills_resolve_together() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .to_vec(),
     };
@@ -1039,6 +1066,7 @@ fn destroying_every_building_and_constructor_defeats_a_player() {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .collect(),
     };

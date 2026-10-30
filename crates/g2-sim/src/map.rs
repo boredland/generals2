@@ -73,6 +73,10 @@ pub struct PlayerSetup {
     /// The player's rank with that general, 1-5 (from their profile): sets the level of its
     /// power (`defs::POWER_LEVEL_RANKS`). 1 without a general.
     pub rank: u8,
+    /// The player's side: players with the same non-zero team are allies (they never shoot or
+    /// splash each other, share their vision and win together); 0, the default, plays alone,
+    /// as Generals' LAN lobby's "-" team.
+    pub team: u8,
 }
 
 /// How strong the built-in AI plays. `Easy` is the original wave AI. `Normal` judges the battle

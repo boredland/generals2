@@ -1,6 +1,8 @@
-//! Two-player matches over the network: a TCP link carrying `g2_sim::net::Message`s, the
-//! handshake, and this client's side of the lockstep. The host picks the match and plays
-//! player 0; the joiner plays player 1.
+//! Matches over the network: a TCP link carrying `g2_sim::net::Message`s, the handshake, and
+//! this client's side of the lockstep. The host picks the match and plays player 0; the joiner
+//! plays player 1, against the host (versus) or beside them against the Onslaught's waves
+//! (co-op, the waves an AI player 2 that runs in both sims). The lobby (`lobby.rs`) sets the
+//! match up; `--host`/`--join` skip it.
 //!
 //! Frames are a little-endian `u32` length, then the message. One thread reads and one writes,
 //! so neither a slow peer nor a full socket buffer ever blocks a frame.
@@ -13,7 +15,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use g2_sim::net::{Lockstep, Message, NetError, PROTOCOL, build_id};
-use g2_sim::{CommandKind, PlayerId, Replay, World};
+use g2_sim::{CommandKind, Faction, PlayerId, PlayerSetup, Replay, World};
 
 /// Larger than any message this protocol sends (a `Hello` is well under a kilobyte).
 const MAX_FRAME: usize = 1 << 20;
@@ -33,7 +35,7 @@ pub struct Link {
 }
 
 impl Link {
-    fn new(stream: TcpStream) -> std::io::Result<Link> {
+    pub(crate) fn new(stream: TcpStream) -> std::io::Result<Link> {
         stream.set_nodelay(true)?;
         // A peer that stops reading fills the socket buffer; a write then gives up instead of
         // blocking forever, so closing the link (and quitting the match) can't hang.
@@ -146,6 +148,73 @@ pub fn accept(link: &Link) {
     link.send(&Message::Join { protocol: PROTOCOL, build: build_id(g2_rules::rules()) });
 }
 
+/// The team host and joiner share in co-op; the waves play alone (team 0).
+pub const COOP_TEAM: u8 = 1;
+
+/// The waves' faction in co-op: the first, in `Faction::ALL` order, that neither defender
+/// plays, so the waves look like neither of them; EU, APA, GLA all taken can't happen with two.
+pub fn wave_faction(defenders: [Faction; 2]) -> Faction {
+    Faction::ALL.into_iter().find(|f| !defenders.contains(f)).unwrap_or(Faction::Gla)
+}
+
+/// Co-op's third player: the Onslaught AI of `faction`, as a skirmish's Onslaught seat plays
+/// (`ai_perks`, `ai_rank`, no general), on no team. Player 2 on a two-start map, so it has no
+/// start: its waves come from `World::onslaught_origin` and split between both bases.
+pub fn waves(faction: Faction) -> PlayerSetup {
+    let level = g2_sim::AiLevel::Onslaught;
+    PlayerSetup {
+        faction,
+        starting_credits: 5_000,
+        ai: Some(level),
+        general: None,
+        perks: g2_sim::ai::ai_perks(g2_rules::rules(), None, level),
+        rank: g2_sim::ai::ai_rank(level),
+        team: 0,
+    }
+}
+
+/// The original map files or the built-in map by name, as a match on it needs: the sim's map
+/// and the parsed source for drawing (`None` for the built-in map).
+pub fn resolve_map(name: &str) -> Result<(g2_sim::MapDef, Option<g2_maps::MapFile>), String> {
+    let source =
+        if name.contains(':') { Some(g2_maps::load_file_named(&g2_maps::vendored_root(), name)?) } else { None };
+    let map = match &source {
+        Some(file) => file.to_map_def(name),
+        None => g2_maps::resolve(name)?,
+    };
+    Ok((map, source))
+}
+
+/// Whether `setup` is a match two machines can play: two humans, host and joiner, against each
+/// other (no teams), or on one team with the Onslaught's waves as a third player of no team.
+pub fn check_shape(setup: &Replay) -> Result<(), String> {
+    let p = &setup.players;
+    let humans = p.len() >= 2 && p[0].ai.is_none() && p[1].ai.is_none();
+    let versus = humans && p.len() == 2 && p[0].team == 0 && p[1].team == 0;
+    let coop = humans
+        && p.len() == 3
+        && p[0].team != 0
+        && p[0].team == p[1].team
+        && p[2].ai == Some(g2_sim::AiLevel::Onslaught)
+        && p[2].team != p[0].team;
+    if versus || coop {
+        Ok(())
+    } else {
+        Err("the host offered a match that is neither two players against each other nor two against the waves".into())
+    }
+}
+
+/// The match `setup` offers, played as `me`: on a map this build has, unchanged, with generals
+/// this build knows, of a shape two machines can play.
+pub fn match_sim(setup: &Replay, me: PlayerId) -> Result<crate::sim::Sim, String> {
+    let (map, source) = resolve_map(&setup.map)?;
+    setup.check(&map, g2_rules::rules())?;
+    check_shape(setup)?;
+    let mut sim = crate::sim::Sim::new(map, source, setup.seed, setup.players.clone());
+    sim.local = me;
+    Ok(sim)
+}
+
 /// This client's side of a network match.
 pub struct Online {
     link: Link,
@@ -241,6 +310,7 @@ mod tests {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .to_vec();
         let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 5, players);
@@ -293,6 +363,92 @@ mod tests {
         assert!(log.iter().any(|c| c.player == PlayerId(0)) && log.iter().any(|c| c.player == PlayerId(1)));
     }
 
+    /// Co-op Onslaught over a real loopback socket, to the end: host and joiner on one team, the
+    /// waves a third, AI player that runs in both sims. Each side only sends a dozer out, so the
+    /// waves overrun both bases: the match ends with the same winner on both machines on the
+    /// same tick, and both agree on every hash check and on the final state.
+    #[test]
+    fn coop_onslaught_runs_to_the_end_in_sync_over_tcp() {
+        let mut players: Vec<PlayerSetup> = [Faction::Eu, Faction::Gla]
+            .map(|faction| PlayerSetup {
+                faction,
+                starting_credits: 5_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: COOP_TEAM,
+            })
+            .to_vec();
+        players.push(waves(wave_faction([Faction::Eu, Faction::Gla])));
+        let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 7, players);
+        let setup = host_sim.world.replay(&host_sim.setup);
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let host_link = std::thread::spawn(move || host(port, setup));
+        let (link, hello) = loop {
+            match join(&format!("127.0.0.1:{port}")) {
+                Ok(j) => break j,
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        };
+        let mut joiner = match_sim(&hello, PlayerId(1)).expect("a co-op match the joiner can play");
+        accept(&link);
+        joiner.online = Some(Online::new(link, PlayerId(1), PlayerId(0)));
+        host_sim.online = Some(Online::new(host_link.join().unwrap().unwrap(), PlayerId(0), PlayerId(1)));
+
+        let mut sims = [host_sim, joiner];
+        let end = g2_sim::onslaught::wave_tick(g2_sim::onslaught::WAVES) + 30 * 300;
+        let started = std::time::Instant::now();
+        let over = |s: &Sim| s.world.winner().is_some() || s.world.tick() >= end;
+        while !sims.iter().all(over) {
+            assert!(
+                started.elapsed() < Duration::from_secs(240),
+                "stuck at ticks {} / {}",
+                sims[0].world.tick(),
+                sims[1].world.tick()
+            );
+            for s in &mut sims {
+                // A scout each, so both players' orders go over the wire.
+                if s.world.tick() == 90 {
+                    let me = s.local;
+                    let rules = s.world.rules;
+                    let dozer = s
+                        .world
+                        .entities()
+                        .find(|e| e.owner == Some(me) && rules.def(e.def).is_constructor())
+                        .unwrap()
+                        .id;
+                    s.order(CommandKind::Move { units: vec![dozer], target: g2_sim::Vec2::from_int(200, 200) });
+                }
+                // Several steps per poll: the match runs ten minutes of game time.
+                for first in [true, false, false, false] {
+                    if over(s) || !s.may_step(first) {
+                        break;
+                    }
+                    s.world.step();
+                }
+                assert_eq!(s.online.as_ref().unwrap().failed, None);
+            }
+            // Spinning without a pause starved the socket threads on the macOS CI runner.
+            std::thread::sleep(Duration::from_micros(200));
+        }
+        let [a, b] = &sims;
+        assert_eq!(a.world.tick(), b.world.tick(), "the match ended on the same tick on both");
+        assert_eq!(a.world.state_hash(), b.world.state_hash());
+        assert_eq!(a.world.winner(), Some(PlayerId(2)), "two idle defenders are overrun");
+        assert!(a.world.player(PlayerId(0)).defeated && a.world.player(PlayerId(1)).defeated);
+        let log = a.world.replay(&a.setup).commands;
+        assert_eq!(log, b.world.replay(&b.setup).commands);
+        assert!(log.iter().any(|c| c.player == PlayerId(0)) && log.iter().any(|c| c.player == PlayerId(1)));
+        let replay = a.world.replay(&a.setup);
+        assert_eq!(
+            g2_sim::verify_replay(&replay, g2_rules::crater_ridge(), g2_rules::rules()),
+            Ok(a.world.state_hash())
+        );
+    }
+
     /// The same over the client's real schedule (`SimPlugin`'s fixed update), for 10 seconds of
     /// game time at 30 ticks a second: both apps keep pace, neither stalls for long, and they
     /// agree on every hash check (a desync would stop them with a message).
@@ -308,6 +464,7 @@ mod tests {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .to_vec();
         let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 2, players.clone());
@@ -393,6 +550,7 @@ mod tests {
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
+                team: 0,
             })
             .to_vec();
         let mut host_sim = Sim::new(g2_rules::crater_ridge(), None, 3, players);
