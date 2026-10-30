@@ -452,12 +452,24 @@ mod headless {
             return AppExit::error();
         }
         // The last few ticks' tracers and blasts, plus every shell still in the air, drawn
-        // where it is along its flight, so the frame shows the battle as it stands.
+        // where it is along its flight, so the frame shows the battle as it stands. Blasts and
+        // kills before those ticks come along with their age, for the craters, wrecks and smoke
+        // they leave (`fx::Aftermath`).
         let mut hits = crate::sim::Hits::default();
+        let mut aftermath = crate::fx::Aftermath::default();
+        let reach = (crate::fx::AFTERMATH_SECS * g2_sim::TICKS_PER_SECOND as f32) as u32;
         for t in 0..ticks {
             sim.world.step();
             if t + 4 >= ticks {
                 crate::sim::collect_shots(&sim.world, &mut hits);
+            } else if t + reach >= ticks {
+                let mut past = crate::sim::Hits::default();
+                crate::sim::collect_shots(&sim.world, &mut past);
+                let age = (ticks - t) as f32 / g2_sim::TICKS_PER_SECOND as f32;
+                aftermath.0.extend(past.0.into_iter().filter_map(|s| match s {
+                    crate::sim::Shot::Blast { .. } | crate::sim::Shot::Hit { killed: true, .. } => Some((s, age)),
+                    _ => None,
+                }));
             }
         }
         hits.0.retain(|s| !matches!(s, crate::sim::Shot::Shell { .. }));
@@ -507,6 +519,7 @@ mod headless {
             crate::rig::RigPlugin,
         ))
         .insert_resource(hits)
+        .insert_resource(aftermath)
         // Warm-up frames run on wall time; frozen effects survive until the capture.
         .insert_resource(crate::view::FreezeEffects)
         .insert_resource(crate::hud::HeadlessScreen(Vec2::new(size.0 as f32, size.1 as f32)))

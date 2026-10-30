@@ -241,7 +241,7 @@ struct Layout<'a> {
 
 /// What a retail terrain texture class reads as, for our own palette.
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum Ground {
+pub(crate) enum Ground {
     Grass,
     Dirt,
     Sand,
@@ -252,7 +252,7 @@ enum Ground {
 
 impl Ground {
     /// Classifies by the texture class name (`GrassMediumType3`, `CliffLargeType1snow`, ...).
-    fn of(class: &str) -> Ground {
+    pub(crate) fn of(class: &str) -> Ground {
         let c = class.to_ascii_lowercase();
         if c.contains("snow") {
             Ground::Snow
