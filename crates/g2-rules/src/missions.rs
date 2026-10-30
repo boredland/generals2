@@ -5,7 +5,7 @@
 //! Positions are world units on each map (Crater Ridge is built in; the others are the
 //! original game's maps as `g2_maps` imports them). Wave sizes and timings are placeholders,
 //! tuned until the `Normal` AI in the player's seat wins every mission
-//! (`tests/missions.rs`).
+//! (`g2-maps/tests/campaign.rs`).
 
 use g2_sim::TICKS_PER_SECOND as S;
 use g2_sim::defs::Faction::{Apa, Eu, Gla};
@@ -176,9 +176,9 @@ pub static MISSIONS: [Mission; 4] = [
         map: "gen:Alpine Assault",
         briefing: "The EU has built a firebase above the old mining town, and its guns cover the only \
                    pass through the mountains. Our cell in the valley is small, but the people of the \
-                   town remember who feeds them. Take the pass, where the miners have hidden weapons for \
-                   us, then tear the firebase down to the last wall. Expect their patrols to come looking \
-                   for you.",
+                   town remember who feeds them. Take the pass, where the miners have hidden weapons and \
+                   money for us, then tear the firebase down to the last wall. Expect their patrols to \
+                   come looking for you.",
         sides: &[
             Side { faction: Gla, credits: 4_000, ai: Easy, general: None },
             Side { faction: Eu, credits: 2_000, ai: Normal, general: None },
@@ -209,14 +209,25 @@ pub static MISSIONS: [Mission; 4] = [
             },
         ],
         triggers: &[
+            // Measured with the `Normal` AI in the player's seat: since the EU harvester carries
+            // 190 a trip, the firebase out-earns the cell, and with three Scorpions and nothing
+            // more here the AI lost (at 9:26), as it did at most credit levels tried for either
+            // side. With five and 2,000 credits it wins with 4,000 to 5,000 credits of its own
+            // against every enemy level tried from 500 to 4,000; with 3,000 or 3,500 it wins up
+            // to 3,000 enemy credits.
             Trigger {
                 when: When::Done(0),
                 then: &[
-                    Action::Say("The miners kept their word: Scorpions and technicals at the pass."),
+                    Action::Say("The miners kept their word: Scorpions, technicals and 2,000 credits at the pass."),
                     Action::Spawn {
-                        forces: &[f(0, GLA_TANK, 198, 227).times(3), f(0, GLA_TECHNICAL, 225, 224).times(2)],
+                        forces: &[
+                            f(0, GLA_TANK, 198, 227).times(3),
+                            f(0, GLA_TANK, 220, 215).times(2),
+                            f(0, GLA_TECHNICAL, 225, 224).times(2),
+                        ],
                         attack: None,
                     },
+                    Action::Credits { player: 0, amount: 2_000 },
                 ],
             },
             Trigger {
@@ -257,10 +268,12 @@ pub static MISSIONS: [Mission; 4] = [
                    building around it. If our command center falls, the operation is over.",
         sides: &[
             Side { faction: Eu, credits: 5_000, ai: Easy, general: None },
-            // Measured with the `Normal` AI in the player's seat: 3,000 credits and the two
-            // Gatlings below is the hardest of the settings tried that it still wins (at 4:28);
-            // 3,500 credits with them, or four Gatlings, overrun its command center.
-            Side { faction: Apa, credits: 3_000, ai: Normal, general: None },
+            // Measured with the `Normal` AI in the player's seat: 3,250 credits and the four
+            // Gatlings below is the hardest of the settings tried that it still wins with 4,500,
+            // 5,000 and 5,500 credits of its own (at 8:43 with 5,000). 3,500 credits with them
+            // overrun its command center (with 5,000 and 5,500), and so do five Gatlings (with
+            // 4,500 and 5,500) and six or more (with 5,000).
+            Side { faction: Apa, credits: 3_250, ai: Normal, general: None },
         ],
         forces: &[
             f(0, EU_CC, 167, 352).tagged(1),
@@ -283,7 +296,7 @@ pub static MISSIONS: [Mission; 4] = [
             f(1, APA_RED_GUARD, 150, 160).times(4),
             f(1, APA_TANK_HUNTER, 130, 150).times(2),
             f(1, APA_WARLORD, 190, 165).times(2),
-            f(1, APA_GATLING, 215, 150).times(2),
+            f(1, APA_GATLING, 215, 150).times(4),
         ],
         objectives: &[
             Objective { text: "Destroy the APA headquarters.", goal: Goal::Destroy { tag: 2 } },
