@@ -163,6 +163,44 @@ fn every_mesh_decodes_inside_its_bounds() {
     assert!(bound > 2_500, "{bound} materials with a diffuse map");
 }
 
+/// A unit's or building's static mesh and its skinned twin (`X_mesh`, `X_skn_mesh`) are one
+/// model: same materials, so a material coloured on one is coloured on the other. The
+/// variation databases bind no maps for some static meshes (the GLA oil derrick's lists its
+/// one material without parameters in every level), and those were drawn white.
+#[test]
+fn static_meshes_are_coloured_like_their_skinned_twins() {
+    let Some(a) = install() else { return };
+    let maps = material::diffuse_maps(&a, &mut |name, e| panic!("{name}: {e}"));
+    let materials = |name: &str| {
+        let m = mesh::read(&a, &a.res[name]).unwrap();
+        let mut slots = vec![String::new(); m.subsets.iter().map(|s| s.material_index + 1).max().unwrap_or(0)];
+        for s in m.subsets.iter().filter(|s| !s.shadow_only) {
+            slots[s.material_index].clone_from(&s.material);
+        }
+        slots
+    };
+    let coloured = |name: &str, i: usize| maps.get(name).and_then(|s| s.get(i)).is_some_and(Option::is_some);
+    let mut twins = 0;
+    let mut white = Vec::new();
+    for (skinned, _) in a.res_of(res_type::MESH_SET) {
+        let Some(stem) = skinned.strip_suffix("_skn_mesh") else { continue };
+        let static_mesh = format!("{stem}_mesh");
+        if !a.res.contains_key(&static_mesh) || materials(&static_mesh) != materials(skinned) {
+            continue;
+        }
+        twins += 1;
+        for (i, name) in materials(skinned).iter().enumerate() {
+            if coloured(skinned, i) && !coloured(&static_mesh, i) {
+                white.push(format!("{static_mesh} {name}"));
+            }
+        }
+    }
+    assert_eq!(twins, 37);
+    assert!(white.is_empty(), "coloured only when skinned: {white:?}");
+    let derrick = &maps["_rts/art/_gla/gs_oilderrick/gs_oilderrick_mesh"];
+    assert_eq!(derrick, &[Some("_rts/art/_gla/gs_oilderrick/gs_oilderrick_di".to_owned())]);
+}
+
 /// A texture the models need but the install lacks (its res taken out of the index here)
 /// leaves those models untextured, and each gets one manifest line naming the texture;
 /// the rest of the import goes on.
