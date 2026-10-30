@@ -102,7 +102,7 @@ fn a_generals_constructor_places_its_defence() {
 }
 
 /// A general's power is at level 1 below rank 3, level 2 from rank 3 and level 3 from rank 5:
-/// Junkyard's ambush brings 4, 5 then 6 squads, and the level comes into play.
+/// Junkyard's ambush brings 3, 4 then 5 squads, and the level comes into play.
 #[test]
 fn the_power_grows_with_rank() {
     let count = |rank| {
@@ -112,7 +112,7 @@ fn the_power_grows_with_rank() {
             k => panic!("{k:?}"),
         }
     };
-    assert_eq!([1, 2, 3, 4, 5].map(count), [4, 4, 5, 5, 6]);
+    assert_eq!([1, 2, 3, 4, 5].map(count), [3, 3, 4, 4, 5]);
     let s = setup(Faction::Gla, Some(JUNKYARD), 5);
     let mut w = World::new(&s, rules());
     let ready = w.power_wait(P0, 0).unwrap();
@@ -121,7 +121,7 @@ fn the_power_grows_with_rank() {
     }
     let before = w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count();
     assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: s.map.spawns[0] + Vec2::from_int(25, 25) }), vec![]);
-    assert_eq!(w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count(), before + 6);
+    assert_eq!(w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count(), before + 5);
 }
 
 /// A replay keeps each player's rank: a rank-5 match replays to the same hash, and the same

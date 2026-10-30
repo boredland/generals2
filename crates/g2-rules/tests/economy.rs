@@ -103,8 +103,9 @@ fn harvesters_carry_supplies_from_pile_to_center() {
     let harvester = first(&w, P0, EU_HARVESTER).expect("harvester trained");
     assert!(matches!(w.entity(harvester).unwrap().order, Order::Gather { .. }));
     let earned = w.player(P0).credits - (before - cost);
-    assert!(earned >= 300, "only {earned} credits delivered in 60 s");
-    assert_eq!(earned % 100, 0, "deliveries come in full 100-credit loads");
+    let load = rules().def(EU_HARVESTER).collector().unwrap().capacity;
+    assert!(earned >= 3 * load, "only {earned} credits delivered in 60 s");
+    assert_eq!(earned % load, 0, "deliveries come in full {load}-credit loads");
     assert_eq!(delivered, earned, "every credit earned is reported as a delivery");
 }
 

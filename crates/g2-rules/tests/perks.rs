@@ -49,7 +49,7 @@ fn power_perks_tune_the_generals_power() {
     let (PowerKind::Ambush { count: a, .. }, PowerKind::Ambush { count: b, .. }) = (plain.kind, tuned.kind) else {
         panic!("Junkyard's power is the ambush")
     };
-    assert_eq!((a, b), (4, 6));
+    assert_eq!((a, b), (3, 4), "half again as many, rounded down");
     assert_eq!(w.power_in(P1, 0), Some(plain), "the other player's power is untouched");
 
     // The shorter first wait is real: the power works before the untuned one could.
@@ -64,7 +64,7 @@ fn power_perks_tune_the_generals_power() {
         w.step();
     }
     assert!(w.tick() < plain.first_ticks);
-    assert_eq!(w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count(), before + 6);
+    assert_eq!(w.entities().filter(|e| e.owner == Some(P0) && e.def == GLA_RPG).count(), before + 4);
 }
 
 fn build(w: &mut World, who: PlayerId, def: DefId, pos: Vec2) -> EntityId {

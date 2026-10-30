@@ -4,10 +4,11 @@ use g2_rules::rules;
 use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World, record, verify_replay};
 
 /// `Normal` against `Easy`, every faction pairing from both starts on three maps: `Normal`
-/// wins clearly overall (measured 36 of 54 with the alpha's footprints: Crater Ridge 6,
-/// Tournament Desert 17, Alpine Assault 13; across all 86 skirmish maps 1,254 to 272, 22
-/// undecided). On Crater Ridge Easy wins more: Normal's first wave is small and Easy
-/// out-trades it at both ends of the map. The AIs have no randomness, so these matches are
+/// wins clearly overall (measured 48 of 54 after the balance pass: Crater Ridge 12,
+/// Tournament Desert 18, Alpine Assault 18; across all 86 skirmish maps 1,401 to 143, 4
+/// undecided; 36 of 54 and 1,254 to 272 before, when war factories could wall in their own
+/// tanks). Crater Ridge is still the closest: Normal's first wave is small and Easy can
+/// out-trade it at both ends of the map. The AIs have no randomness, so these matches are
 /// fixed. Mirror matches, with the AI's own memory in the state hash, replay exactly.
 #[test]
 fn normal_ai_beats_easy_and_replays_exactly() {
@@ -39,5 +40,5 @@ fn normal_ai_beats_easy_and_replays_exactly() {
             }
         }
     }
-    assert!(normal_wins >= 36, "Normal won only {normal_wins} of 54 against Easy");
+    assert!(normal_wins >= 48, "Normal won only {normal_wins} of 54 against Easy");
 }
