@@ -29,7 +29,7 @@ use crate::world::World;
 pub const PROTOCOL: u16 = 3;
 /// Bumped on any change to simulation logic that the rules tables don't show (AI, combat,
 /// movement): two machines must run the same sim, or they drift apart within a second.
-pub const SIM_VERSION: u32 = 11;
+pub const SIM_VERSION: u32 = 12;
 
 /// What both machines must agree on before a match: `SIM_VERSION` and the rules tables
 /// (every unit, building, weapon, general, upgrade and perk). Two different releases almost always
