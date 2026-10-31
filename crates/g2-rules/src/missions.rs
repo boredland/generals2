@@ -275,14 +275,14 @@ pub static MISSIONS: [Mission; 8] = [
                    building around it. If our command center falls, the operation is over.",
         sides: &[
             Side { faction: Eu, credits: 5_000, ai: Some(Easy), general: None, builds: None },
-            // Measured with the `Normal` AI in the player's seat (the AI of main 3c6cd29, which
-            // places its guns and routes constructors) and the waves walking their routes in
-            // formation: 3,750 credits and the five Gatlings below is the hardest of the settings
-            // tried that it still wins with 4,500, 5,000 and 5,500 credits of its own (at 13:26
-            // with 5,000). Results don't grow with the enemy's strength: four Gatlings with 3,500
-            // or 3,750 credits lose with 5,000, three with 3,500 lose with 5,000 and 5,500, and
-            // 4,000 credits lose with any of three to six Gatlings tried.
-            Side { faction: Apa, credits: 3_750, ai: Some(Normal), general: None, builds: None },
+            // Measured with the `Normal` AI in the player's seat and units steering around each
+            // other: 3,000 credits and the six Gatlings below is the hardest of the settings tried
+            // (2,750 to 3,750 credits, two to six Gatlings) that it still wins with 4,500, 5,000
+            // and 5,500 credits of its own (at 7:35 with 5,000). Results don't grow with the
+            // enemy's strength: 3,750 credits win only with two Gatlings, 3,250 lose with six, and
+            // four Gatlings lose with 5,000 at any credit level from 3,000 up. Before steering,
+            // 3,750 credits and five Gatlings was the hardest it won (now lost at 10:25).
+            Side { faction: Apa, credits: 3_000, ai: Some(Normal), general: None, builds: None },
         ],
         forces: &[
             f(0, EU_CC, 167, 352).tagged(1),
@@ -305,7 +305,7 @@ pub static MISSIONS: [Mission; 8] = [
             f(1, APA_RED_GUARD, 150, 160).times(4),
             f(1, APA_TANK_HUNTER, 130, 150).times(2),
             f(1, APA_WARLORD, 190, 165).times(2),
-            f(1, APA_GATLING, 215, 150).times(5),
+            f(1, APA_GATLING, 215, 150).times(6),
         ],
         objectives: &[
             Objective { text: "Destroy the APA headquarters.", goal: Goal::Destroy { tag: 2 } },
@@ -605,7 +605,10 @@ pub static MISSIONS: [Mission; 8] = [
             f(1, EU_GUN_TURRET, 230, 160),
             f(1, EU_GUN_TURRET, 232, 104),
             f(1, EU_GUN_TURRET, 225, 200),
-            f(1, EU_ROCKETS, 215, 132).times(3),
+            // Two squads: with three (the first setting) the AI lost on Normal once units steered
+            // around each other. Tried: 1,250 to 2,000 credits, one to three squads, one to
+            // three guarding tanks; this is the smallest change that wins on Easy and Normal.
+            f(1, EU_ROCKETS, 215, 132).times(2),
             f(1, EU_RECON, 190, 60).times(4).tagged(4).patrol(&[(190, 60), (185, 190), (140, 250)]),
             f(1, EU_AEGIS, 250, 205).times(3).guard(area(250, 205, 30)),
         ],

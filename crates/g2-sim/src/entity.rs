@@ -137,6 +137,9 @@ pub struct Entity {
     pub rally: Option<Vec2>,
     /// The current plan for reaching the order's goal. Part of the state hash.
     pub route: Route,
+    /// Ground units that steer around each other: how far the unit walked on its own last
+    /// tick (separation's pushes aside), so others can tell where it is going. Zero otherwise.
+    pub vel: Vec2,
 }
 
 /// A deployable unit's mode. Only `Packed` can move; only `Deployed` fires the main gun.
@@ -291,6 +294,7 @@ mod tests {
             special_at: 0,
             rally: None,
             route: Route::default(),
+            vel: Vec2::ZERO,
         }
     }
 

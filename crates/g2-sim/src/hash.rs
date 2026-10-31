@@ -175,6 +175,12 @@ impl World {
                 h.i64(p.x.0);
                 h.i64(p.y.0);
             }
+            // Only while the unit walked last tick: steering reads it next tick.
+            if e.vel != crate::fixed::Vec2::ZERO {
+                h.u64(0x7665_6c00);
+                h.i64(e.vel.x.0);
+                h.i64(e.vel.y.0);
+            }
         }
         h.u64(self.shells.len() as u64);
         for s in &self.shells {
