@@ -986,9 +986,35 @@ impl World {
         Ok(e)
     }
 
-    /// The units inside `container`, in entity order.
+    /// The units inside `container`, in entity order: for a tunnel, inside any tunnel of its
+    /// owner's network (`BuildingRole::Tunnel`), which share one garrison.
     pub fn occupants(&self, container: EntityId) -> Vec<EntityId> {
-        self.entities.iter().filter(|e| e.inside == Some(container)).map(|e| e.id).collect()
+        let network = self.tunnels_with(container);
+        self.entities
+            .iter()
+            .filter(|e| e.inside.is_some_and(|c| c == container || network.contains(&c)))
+            .map(|e| e.id)
+            .collect()
+    }
+
+    /// Every finished, standing tunnel of the network `container` belongs to, in entity order;
+    /// empty when it is no tunnel.
+    pub fn tunnels_with(&self, container: EntityId) -> Vec<EntityId> {
+        let Some(c) = self.entities.get(container) else { return Vec::new() };
+        if self.rules.def(c.def).role() != Some(BuildingRole::Tunnel) {
+            return Vec::new();
+        }
+        let owner = c.owner;
+        self.entities
+            .iter()
+            .filter(|t| {
+                t.owner == owner
+                    && t.hp > 0
+                    && t.is_complete()
+                    && self.rules.def(t.def).role() == Some(BuildingRole::Tunnel)
+            })
+            .map(|t| t.id)
+            .collect()
     }
 
     /// Free places in `container` for `player`'s infantry: its garrison's capacity minus those
@@ -1008,8 +1034,9 @@ impl World {
         self.garrison_room(player, container).is_some_and(|room| room > 0)
     }
 
-    /// Everyone inside `container` steps out around it, idle; a civilian building left empty
-    /// is neutral again.
+    /// Everyone inside `container` steps out around it, idle (from a tunnel, everyone in its
+    /// network, whichever tunnel they went in by); a civilian building left empty is neutral
+    /// again.
     fn evacuate(&mut self, container: EntityId) {
         let Some(c) = self.entities.get(container) else { return };
         let (at, r) = (c.pos, self.rules.def(c.def).radius);
@@ -1592,8 +1619,14 @@ impl World {
                 })
                 .sum();
             let idle = self.rules.def(e.def).veterancy.filter(|_| self.rank(e) >= 2 && e.order == Order::Idle);
-            let heal = repair + idle.map_or(0, |v| v.idle_regen);
+            // A container that heals (a tunnel) restores its full hit points over its time:
+            // that share of them each second, rounded up.
             let max = self.max_hp(e);
+            let healer = e.inside.and_then(|c| self.entities.get(c)).and_then(|c| self.rules.def(c.def).garrison);
+            let mend = healer
+                .filter(|g| g.heal_ticks > 0)
+                .map_or(0, |g| (max.max(0) as u64 * TICKS_PER_SECOND as u64).div_ceil(g.heal_ticks as u64) as i32);
+            let heal = repair + idle.map_or(0, |v| v.idle_regen) + mend;
             if heal > 0 && e.hp < max {
                 let e = self.entities.get_mut(id).unwrap();
                 e.hp = (e.hp + heal).min(max);
@@ -3014,15 +3047,27 @@ impl World {
             }
         }
         // Units inside a destroyed building or vehicle die with it (the alpha's
-        // `DieWithGarrison`).
+        // `DieWithGarrison`); in a tunnel network they move to another standing tunnel of it,
+        // and die with the last (Zero Hour's `TunnelContain`).
         for id in self.entities.ids() {
             let e = self.entities.get(id).unwrap();
             let Some(c) = e.inside else { continue };
             if self.entities.get(c).is_none_or(|c| c.hp <= 0) {
                 let owner = e.owner;
-                self.entities.get_mut(id).unwrap().hp = 0;
-                if let Some(o) = owner {
-                    self.stats[o.0 as usize].units_lost += 1;
+                let other = self
+                    .entities
+                    .get(c)
+                    .filter(|c| self.rules.def(c.def).role() == Some(BuildingRole::Tunnel))
+                    .and_then(|_| self.tunnels_with(c).first().copied());
+                let e = self.entities.get_mut(id).unwrap();
+                match other {
+                    Some(t) => e.inside = Some(t),
+                    None => {
+                        e.hp = 0;
+                        if let Some(o) = owner {
+                            self.stats[o.0 as usize].units_lost += 1;
+                        }
+                    }
                 }
             }
         }

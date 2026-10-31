@@ -154,12 +154,14 @@ pub struct Deploy {
 /// Room for infantry inside a building or vehicle, after the alpha's `RtsGarrisonComponentData`:
 /// up to `capacity` units (a squad takes one place). With `fires`, they shoot out from its edge
 /// with `range_bonus` added to their weapons' reach; inside they can't be targeted, and die
-/// with it.
+/// with it. With `heal_ticks` above 0, a unit inside regains its full hit points over that
+/// long (Zero Hour's tunnel `TimeForFullHeal`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Garrison {
     pub capacity: u32,
     pub fires: bool,
     pub range_bonus: Fx,
+    pub heal_ticks: u32,
 }
 
 /// A unit's aimed special shot (the Shadow Tank's Particle Accelerator): fired once at a
@@ -254,6 +256,11 @@ pub enum BuildingRole {
     /// What a unit turns into where it stands (the GLA Battle Bus's bunker, `Def::becomes`):
     /// immobile, holds infantry who fire out, and doesn't keep a player in the game.
     Bunker,
+    /// One entrance of its owner's tunnel network (the GLA's): every tunnel of one player
+    /// shares one garrison, its `capacity` the whole network's, so a unit that goes in at one
+    /// may come out at any other. While one tunnel stands the units inside live on; they die
+    /// with the last.
+    Tunnel,
 }
 
 #[derive(Clone, Debug)]

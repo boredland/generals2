@@ -97,6 +97,7 @@ pub mod ids {
     pub const GLA_BATTLE_BUNKER: DefId = DefId(79);
     pub const EU_SPY_DRONE: DefId = DefId(80);
     pub const APA_SORTIE_FIGHTER: DefId = DefId(81);
+    pub const GLA_TUNNEL: DefId = DefId(82);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -518,7 +519,7 @@ const fn garrison_buster(mut w: Weapon, bonus: i32) -> Weapon {
 
 /// `d` carries up to `capacity` infantry that can't fire from inside (the alpha's transports).
 const fn carrying(mut d: Def, capacity: u32) -> Def {
-    d.garrison = Some(Garrison { capacity, fires: false, range_bonus: Fx::ZERO });
+    d.garrison = Some(Garrison { capacity, fires: false, range_bonus: Fx::ZERO, heal_ticks: 0 });
     d
 }
 
@@ -582,7 +583,24 @@ const fn status(kind: StatusKind, percent: i32, secs_: u32) -> StatusEffect {
 /// squads who fire out with `range_bonus`.
 const fn bunker(name: &'static str, faction: Faction, hp: i32, radius: i64, capacity: u32, range_bonus: i64) -> Def {
     let mut d = building(name, faction, BuildingRole::Bunker, 0, hp, credits(0), 0, radius, NONE);
-    d.garrison = Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(range_bonus) });
+    d.garrison = Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(range_bonus), heal_ticks: 0 });
+    d
+}
+
+/// A tunnel network entrance (`BuildingRole::Tunnel`): every one of a player's shares a
+/// garrison of `capacity`, healing whoever is inside to full in `heal_secs`. They can't fire
+/// out.
+const fn tunnel(
+    name: &'static str,
+    hp: i32,
+    cost: Cost,
+    build_secs: u32,
+    radius: i64,
+    capacity: u32,
+    heal_secs: u32,
+) -> Def {
+    let mut d = building(name, Faction::Gla, BuildingRole::Tunnel, 0, hp, cost, build_secs, radius, NONE);
+    d.garrison = Some(Garrison { capacity, fires: false, range_bonus: Fx::ZERO, heal_ticks: secs(heal_secs) });
     d
 }
 
@@ -634,7 +652,7 @@ const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3
 const HARVEST_AIR: CollectorSpec = CollectorSpec { capacity: 190, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 82] = [
+static DEFS: [Def; 83] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -802,7 +820,16 @@ static DEFS: [Def; 82] = [
         16,
         true,
         Some(HARVEST_WORKER),
-        &[GLA_STASH, GLA_DERRICK, GLA_BARRACKS, GLA_FACTORY, GLA_SALVAGE_BAY, GLA_ROCKET_SITE, GLA_SCUD_STORM],
+        &[
+            GLA_STASH,
+            GLA_DERRICK,
+            GLA_BARRACKS,
+            GLA_FACTORY,
+            GLA_SALVAGE_BAY,
+            GLA_ROCKET_SITE,
+            GLA_TUNNEL,
+            GLA_SCUD_STORM,
+        ],
     ),
     // src: Supply center collector cap GLA 8.
     building(
@@ -1744,6 +1771,13 @@ static DEFS: [Def; 82] = [
     // au_airfighter_sortie2 (400, armour 0) for the Sortie.
     support_jet("EU Spy Drone", Faction::Eu, 80, Armour::Light),
     support_jet("APA Sortie Fighter", Faction::Apa, 400, Armour::Light),
+    // src: the alpha's gs_tunnelnetwork_entrance (built by the Worker): MaxHealth 500, $600,
+    // BuildTime 30 s, build grid half-extent 10. Its garrison numbers aren't in its data (its
+    // `RtsTunnelAccessComponentData` holds only a rally distance), so they are Zero Hour's
+    // (EA's GPL INI, reference only): `MaxTunnelCapacity` 10 for the network, `TimeForFullHeal`
+    // 5 s. The alpha's exit (gs_tunnelnetwork_exit, $300) is trained at an entrance; here
+    // every tunnel is a full entrance.
+    tunnel("GLA Tunnel Network", 500, credits(600), 30, 10, 10, 5),
 ];
 
 /// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
@@ -1934,7 +1968,7 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
         researches: NO_RESEARCH,
         experience: 0,
         veterancy: None,
-        garrison: Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(8) }),
+        garrison: Some(Garrison { capacity, fires: true, range_bonus: Fx::from_int(8), heal_ticks: 0 }),
         stealth: false,
         detection: Fx::ZERO,
         becomes: None,
@@ -4371,6 +4405,7 @@ mod tests {
             (GLA_BATTLE_BUNKER, "GLA Battle Bunker"),
             (EU_SPY_DRONE, "EU Spy Drone"),
             (APA_SORTIE_FIGHTER, "APA Sortie Fighter"),
+            (GLA_TUNNEL, "GLA Tunnel Network"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

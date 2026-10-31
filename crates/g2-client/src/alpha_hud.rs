@@ -169,6 +169,10 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
         "APA Sortie Fighter" => {
             ("BuildButtons/Active/APA/AU_AirFighter", "UnitPortraits/APA/Vehicles/AU_AirFighter_Portrait")
         }
+        "GLA Tunnel Network" => (
+            "BuildButtons/Active/GLA/GS_TunnelNetworkEntrance",
+            "UnitPortraits/GLA/Structures/GS_TunnelNetworkEntrance_Portrait",
+        ),
         "GLA Scud Storm" => {
             ("BuildButtons/Active/GLA/GS_ScudStorm", "UnitPortraits/GLA/Structures/GS_ScudStorm_Portrait")
         }

@@ -493,6 +493,7 @@ pub fn building(faction: Faction, role: BuildingRole, r: f32, trains_infantry: b
     match (faction, role) {
         (_, BuildingRole::Civilian) => civilian(&mut p, r),
         (_, BuildingRole::Bunker) => battle_bunker(&mut p, r),
+        (_, BuildingRole::Tunnel) => tunnel(&mut p, r),
         (_, BuildingRole::Defense) => turret(&mut p, faction, r),
         (_, BuildingRole::Superweapon) => scud_storm(&mut p, w),
         (_, BuildingRole::OilDerrick { .. }) => derrick(&mut p, faction, r),
@@ -535,6 +536,37 @@ fn battle_bunker(p: &mut Vec<Part>, r: f32) {
     sandbags(p, -ring, ring, ring, ring, 0.2, 5);
     sandbags(p, -ring, -ring * 0.6, -ring, ring * 0.6, 0.2, 3);
     sandbags(p, ring, -ring * 0.6, ring, ring * 0.6, 0.2, 3);
+}
+
+/// A GLA tunnel entrance: a low earth mound (stepped, in the scrap browns) with a dark shaft
+/// opening in its front, framed in timber under a team-coloured awning, a ramp leading down to
+/// it, sandbags either side and a lookout pole. Low and wide, so it reads as a hole in the
+/// ground rather than a building.
+fn tunnel(p: &mut Vec<Part>, r: f32) {
+    let w = r * 1.6;
+    // The mound: three stepped slabs, each a little narrower and rotated, so it looks heaped.
+    for (k, (s, hgt)) in [(1.0, 0.9), (0.78, 0.8), (0.52, 0.7)].into_iter().enumerate() {
+        let mut slab =
+            block(Slot::Crate(if k == 1 { 4 } else { 0 }), 0.0, -w * 0.08, k as f32 * 0.8, w * s, hgt, w * s * 0.85);
+        slab.yaw = k as f32 * 0.18;
+        p.push(slab);
+    }
+    // The shaft: a black opening in the mound's front, timber frame and lintel around it.
+    let front = w * 0.34;
+    p.push(block(Slot::Oil, 0.0, front, 0.0, w * 0.34, 1.7, w * 0.2));
+    for x in [-1.0, 1.0] {
+        p.push(block(Slot::Wood, x * w * 0.2, front + w * 0.06, 0.0, 0.35, 2.0, 0.35));
+    }
+    p.push(block(Slot::Wood, 0.0, front + w * 0.06, 2.0, w * 0.46, 0.3, 0.4));
+    p.push(block(Slot::Team, 0.0, front + w * 0.14, 2.3, w * 0.52, 0.16, w * 0.16));
+    // Ramp down into it and the dirt it was dug from.
+    p.push(block(Slot::Dark, 0.0, front + w * 0.24, 0.0, w * 0.3, 0.12, w * 0.24));
+    sandbags(p, -w * 0.48, front + w * 0.1, -w * 0.26, front + w * 0.18, 0.0, 3);
+    sandbags(p, w * 0.26, front + w * 0.18, w * 0.48, front + w * 0.1, 0.0, 3);
+    scrap(p, -w * 0.3, -w * 0.3, 0.9, w * 0.2, w * 0.2, 23);
+    // Lookout pole with a flag, so a tunnel is found among the base's crates.
+    p.push(block(Slot::Wood, w * 0.36, -w * 0.3, 0.0, 0.25, 5.0, 0.25));
+    flag(p, w * 0.36, -w * 0.3, 4.4, 0.9, 0.6, 3);
 }
 
 /// A base defence on a concrete pad: EU a squat armoured box with a long twin autocannon, APA

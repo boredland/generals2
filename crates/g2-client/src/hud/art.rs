@@ -112,7 +112,7 @@ impl Icon {
                 BuildingRole::Lab => Icon::Lab,
                 BuildingRole::Defense => Icon::Defense,
                 BuildingRole::Superweapon => Icon::Missile,
-                BuildingRole::Civilian | BuildingRole::Bunker => Icon::Building,
+                BuildingRole::Civilian | BuildingRole::Bunker | BuildingRole::Tunnel => Icon::Building,
             },
             Class::SupplyPile => Icon::Supply,
             Class::OilWell => Icon::Derrick,
