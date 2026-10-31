@@ -112,7 +112,7 @@ impl Icon {
                 BuildingRole::Lab => Icon::Lab,
                 BuildingRole::Defense => Icon::Defense,
                 BuildingRole::Superweapon => Icon::Missile,
-                BuildingRole::Civilian | BuildingRole::Bunker => Icon::Building,
+                BuildingRole::Civilian | BuildingRole::Bunker | BuildingRole::Tunnel => Icon::Building,
             },
             Class::SupplyPile => Icon::Supply,
             Class::OilWell => Icon::Derrick,
@@ -129,7 +129,7 @@ impl Icon {
             PowerKind::Airstrike { .. } => Icon::Aircraft,
             PowerKind::Recon { .. } => Icon::Recon,
             PowerKind::Missiles { .. } => Icon::Missile,
-            PowerKind::Cloak { .. } => Icon::Cloak,
+            PowerKind::Cloak { .. } | PowerKind::Decoys { .. } => Icon::Cloak,
             // A charge set in an enemy building: the building mark.
             PowerKind::Sabotage { .. } => Icon::Building,
         }

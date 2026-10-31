@@ -35,6 +35,11 @@ struct Outriggers;
 #[derive(Component)]
 struct StealthHalo;
 
+/// A glowing double ring under an own hologram (Misdirection's), so its owner tells copies
+/// from the real units; the enemy sees a unit like any other.
+#[derive(Component)]
+struct DecoyHalo;
+
 /// What a kill leaves behind: it sits on the ground for `life` seconds, then sinks out of sight
 /// over the last `SINK_SECS` and goes.
 #[derive(Component)]
@@ -444,6 +449,19 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
                 Transform::from_xyz(0.0, 0.12, 0.0).with_scale(Vec3::new(r, 1.0, r)),
                 Visibility::Hidden,
             ));
+            // Only a hologram of ours shows it: built hidden for everything else, and an
+            // entity is never turned into one.
+            let mine = e.decoy_until.is_some() && e.owner == Some(sim.local);
+            for (k, scale) in [(0, 1.35), (1, 1.75)] {
+                let r = def.radius.to_f32() * scale;
+                c.spawn((
+                    DecoyHalo,
+                    Mesh3d(assets.ring.clone()),
+                    MeshMaterial3d(assets.materials[&(Some(Faction::Eu), SlotKey::from(Slot::Glow))].clone()),
+                    Transform::from_xyz(0.0, 0.14 + 0.02 * k as f32, 0.0).with_scale(Vec3::new(r, 1.0, r)),
+                    if mine { Visibility::Inherited } else { Visibility::Hidden },
+                ));
+            }
         }
     });
     root.id()

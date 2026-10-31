@@ -508,6 +508,7 @@ impl World {
             route: Route::default(),
             vel: Vec2::ZERO,
             statuses: Vec::new(),
+            decoy_until: None,
         }
     }
 
@@ -1011,9 +1012,35 @@ impl World {
         Ok(e)
     }
 
-    /// The units inside `container`, in entity order.
+    /// The units inside `container`, in entity order: for a tunnel, inside any tunnel of its
+    /// owner's network (`BuildingRole::Tunnel`), which share one garrison.
     pub fn occupants(&self, container: EntityId) -> Vec<EntityId> {
-        self.entities.iter().filter(|e| e.inside == Some(container)).map(|e| e.id).collect()
+        let network = self.tunnels_with(container);
+        self.entities
+            .iter()
+            .filter(|e| e.inside.is_some_and(|c| c == container || network.contains(&c)))
+            .map(|e| e.id)
+            .collect()
+    }
+
+    /// Every finished, standing tunnel of the network `container` belongs to, in entity order;
+    /// empty when it is no tunnel.
+    pub fn tunnels_with(&self, container: EntityId) -> Vec<EntityId> {
+        let Some(c) = self.entities.get(container) else { return Vec::new() };
+        if self.rules.def(c.def).role() != Some(BuildingRole::Tunnel) {
+            return Vec::new();
+        }
+        let owner = c.owner;
+        self.entities
+            .iter()
+            .filter(|t| {
+                t.owner == owner
+                    && t.hp > 0
+                    && t.is_complete()
+                    && self.rules.def(t.def).role() == Some(BuildingRole::Tunnel)
+            })
+            .map(|t| t.id)
+            .collect()
     }
 
     /// Free places in `container` for `player`'s infantry: its garrison's capacity minus those
@@ -1033,8 +1060,9 @@ impl World {
         self.garrison_room(player, container).is_some_and(|room| room > 0)
     }
 
-    /// Everyone inside `container` steps out around it, idle; a civilian building left empty
-    /// is neutral again.
+    /// Everyone inside `container` steps out around it, idle (from a tunnel, everyone in its
+    /// network, whichever tunnel they went in by); a civilian building left empty is neutral
+    /// again.
     fn evacuate(&mut self, container: EntityId) {
         let Some(c) = self.entities.get(container) else { return };
         let (at, r) = (c.pos, self.rules.def(c.def).radius);
@@ -1337,7 +1365,8 @@ impl World {
                 let units = self.own_units(player, units, |d| d.can_garrison()).map_err(|_| Reject::CannotGarrison)?;
                 for u in units {
                     let e = self.entities.get_mut(u).unwrap();
-                    if e.inside.is_none() {
+                    // A hologram has nowhere to go inside.
+                    if e.inside.is_none() && e.decoy_until.is_none() {
                         e.order = Order::Garrison { container: *container };
                         e.home = None;
                     }
@@ -1355,7 +1384,9 @@ impl World {
             CommandKind::Transform { units } => {
                 let units =
                     self.own_units(player, units, |d| d.becomes.is_some()).map_err(|_| Reject::CannotTransform)?;
-                for u in units {
+                let real: Vec<EntityId> =
+                    units.into_iter().filter(|&u| self.entities.get(u).unwrap().decoy_until.is_none()).collect();
+                for u in real {
                     self.transform(u);
                 }
                 Ok(())
@@ -1370,7 +1401,10 @@ impl World {
                     .own_units(player, units, |d| d.special.is_some_and(|s| s.weapon.targets.hits(flying)))
                     .map_err(|_| Reject::SpecialNotReady)?
                     .into_iter()
-                    .filter(|&u| self.entities.get(u).unwrap().special_at <= tick)
+                    .filter(|&u| {
+                        let e = self.entities.get(u).unwrap();
+                        e.special_at <= tick && e.decoy_until.is_none()
+                    })
                     .collect();
                 if ready.is_empty() {
                     return Err(Reject::SpecialNotReady);
@@ -1399,7 +1433,7 @@ impl World {
                     .into_iter()
                     .filter(|&u| {
                         let e = self.entities.get(u).unwrap();
-                        e.ability_at <= tick && e.inside.is_none() && !e.stunned()
+                        e.ability_at <= tick && e.inside.is_none() && !e.stunned() && e.decoy_until.is_none()
                     })
                     .collect();
                 if ready.is_empty() {
@@ -1642,8 +1676,14 @@ impl World {
                 })
                 .sum();
             let idle = self.rules.def(e.def).veterancy.filter(|_| self.rank(e) >= 2 && e.order == Order::Idle);
-            let heal = repair + idle.map_or(0, |v| v.idle_regen);
+            // A container that heals (a tunnel) restores its full hit points over its time:
+            // that share of them each second, rounded up.
             let max = self.max_hp(e);
+            let healer = e.inside.and_then(|c| self.entities.get(c)).and_then(|c| self.rules.def(c.def).garrison);
+            let mend = healer
+                .filter(|g| g.heal_ticks > 0)
+                .map_or(0, |g| (max.max(0) as u64 * TICKS_PER_SECOND as u64).div_ceil(g.heal_ticks as u64) as i32);
+            let heal = repair + idle.map_or(0, |v| v.idle_regen) + mend;
             if heal > 0 && e.hp < max {
                 let e = self.entities.get_mut(id).unwrap();
                 e.hp = (e.hp + heal).min(max);
@@ -2329,16 +2369,20 @@ impl World {
             e.revealed_until = Some(tick + STEALTH_REVEAL_TICKS);
         }
         e.cloaked_until = None;
+        // A hologram fires as its original does, harmlessly.
+        let real = self.entities.get(id).unwrap().decoy_until.is_none();
         if w.suicidal {
             // The charge goes off with the unit: its blast, set off as it is swept away.
             self.entities.get_mut(id).unwrap().hp = 0;
-            self.stats[owner.0 as usize].units_lost += 1;
+            if real {
+                self.stats[owner.0 as usize].units_lost += 1;
+            }
             return pos;
         }
         match w.shell {
             None => {
                 let damage = w.damage_vs(armour) + self.garrison_bonus_vs(w.garrison_bonus, target);
-                self.shots.push((id, owner, target, damage, false));
+                self.shots.push((id, owner, target, if real { damage } else { 0 }, false));
             }
             Some(s) => {
                 let flight = (pos.distance(tpos) / s.speed).floor_int().max(1) as u32;
@@ -2351,10 +2395,10 @@ impl World {
                     at: tpos,
                     fired: self.tick,
                     lands,
-                    damage: w.damage,
-                    bonus: w.bonus,
+                    damage: if real { w.damage } else { 0 },
+                    bonus: if real { w.bonus } else { [0; 4] },
                     radius: s.radius,
-                    garrison_bonus: w.garrison_bonus,
+                    garrison_bonus: if real { w.garrison_bonus } else { 0 },
                     source,
                 });
                 self.events.push(Event::Fired { shooter: id, from: pos, at: tpos, lands, source });
@@ -2391,8 +2435,13 @@ impl World {
                 if e.pos.distance(s.at) - d.radius > s.radius {
                     continue;
                 }
-                let damage =
-                    (s.damage + s.bonus[d.armour as usize]).max(1) + self.garrison_bonus_vs(s.garrison_bonus, e.id);
+                // A hologram's shell (no damage at all) bursts for show only.
+                let harmless = s.damage == 0 && s.bonus == [0; 4];
+                let damage = if harmless {
+                    0
+                } else {
+                    (s.damage + s.bonus[d.armour as usize]).max(1) + self.garrison_bonus_vs(s.garrison_bonus, e.id)
+                };
                 self.shots.push((s.shooter, s.owner, e.id, damage, true));
             }
         }
@@ -2691,6 +2740,41 @@ impl World {
                     }
                 }
             }
+            PowerKind::Decoys { radius, ticks } => {
+                // Each copy appears beside its original, on open ground, its order copied too,
+                // so a group on the move goes on as one twice its size.
+                let until = self.tick + ticks;
+                let originals: Vec<(DefId, Vec2, Order)> = self
+                    .entities
+                    .iter()
+                    .filter(|e| {
+                        let d = self.rules.def(e.def);
+                        e.owner == Some(player)
+                            && d.is_unit()
+                            && d.weapon().is_some()
+                            && !d.flies()
+                            && e.hp > 0
+                            && e.inside.is_none()
+                            && e.decoy_until.is_none()
+                            && e.pos.distance(at) <= radius
+                    })
+                    .map(|e| (e.def, e.pos, e.order))
+                    .collect();
+                if originals.is_empty() {
+                    return Err(Reject::InvalidTarget);
+                }
+                for (k, (def, pos, order)) in originals.into_iter().enumerate() {
+                    let r = self.rules.def(def).radius * Fx::from_int(2) + SLACK;
+                    let spot = self.nav.free_point(self.map.clamp(pos + around(k as u32 % 8, r)));
+                    let copy = self.spawn_owned(def, player, spot);
+                    let e = self.entities.get_mut(copy).unwrap();
+                    e.decoy_until = Some(until);
+                    e.order = match order {
+                        Order::Move { .. } | Order::AttackMove { .. } | Order::Attack { .. } => order,
+                        _ => Order::Idle,
+                    };
+                }
+            }
             PowerKind::Sabotage { damage } => {
                 // The visible enemy building under the point, nearest its centre first.
                 let target = self
@@ -2793,6 +2877,26 @@ impl World {
     fn resolve_shots(&mut self) {
         for (shooter, by, target, damage, splash) in core::mem::take(&mut self.shots) {
             let Some(t) = self.entities.get(target) else { continue };
+            // A hologram goes at the first hit, whatever it was hit by: nothing to kill, no
+            // experience, no loss. To the shooter it looks like any hit.
+            if t.decoy_until.is_some() {
+                let (at, victim, def) = (t.pos, t.owner, t.def);
+                if t.hp > 0 {
+                    self.entities.get_mut(target).unwrap().hp = 0;
+                    self.events.push(Event::Hit {
+                        shooter,
+                        target,
+                        at,
+                        damage,
+                        killed: true,
+                        splash,
+                        target_def: def,
+                        by,
+                        victim,
+                    });
+                }
+                continue;
+            }
             let toughness: i32 = t.owner.map_or(0, |o| {
                 self.effects(o, t.def)
                     .map(|x| match x {
@@ -2801,18 +2905,22 @@ impl World {
                     })
                     .sum()
             });
-            let damage = if toughness == 0 { damage } else { (damage * (100 + toughness) / 100).max(1) };
+            // A hologram's shots (damage 0, `engage`) hit nothing; the rest deal at least 1.
+            let damage = if toughness == 0 || damage == 0 { damage } else { (damage * (100 + toughness) / 100).max(1) };
             let shield = t.status_percent(StatusKind::Toughness);
-            let damage = if shield == 100 { damage } else { (damage * shield / 100).max(1) };
+            let damage = if shield == 100 || damage == 0 { damage } else { (damage * shield / 100).max(1) };
             let tick = self.tick;
             let t = self.entities.get_mut(target).unwrap();
             let was_alive = t.hp > 0;
             t.hp -= damage;
-            t.last_hit = Some(tick);
+            if damage > 0 {
+                t.last_hit = Some(tick);
+            }
             let killed = was_alive && t.hp <= 0;
             let at = t.pos;
             let (victim, def) = (t.owner, t.def);
             if let Some(v) = victim
+                && damage > 0
                 && self.entities.get(shooter).is_some_and(|s| self.rules.def(s.def).stealth)
             {
                 self.players[v.0 as usize].hit_by_stealth = true;
@@ -3059,6 +3167,7 @@ impl World {
         for id in self.entities.ids() {
             let e = self.entities.get(id).unwrap();
             if e.hp <= 0
+                && e.decoy_until.is_none()
                 && self.rules.def(e.def).becomes.is_some()
                 && e.owner.is_some_and(|o| !self.players[o.0 as usize].defeated)
             {
@@ -3066,15 +3175,27 @@ impl World {
             }
         }
         // Units inside a destroyed building or vehicle die with it (the alpha's
-        // `DieWithGarrison`).
+        // `DieWithGarrison`); in a tunnel network they move to another standing tunnel of it,
+        // and die with the last (Zero Hour's `TunnelContain`).
         for id in self.entities.ids() {
             let e = self.entities.get(id).unwrap();
             let Some(c) = e.inside else { continue };
             if self.entities.get(c).is_none_or(|c| c.hp <= 0) {
                 let owner = e.owner;
-                self.entities.get_mut(id).unwrap().hp = 0;
-                if let Some(o) = owner {
-                    self.stats[o.0 as usize].units_lost += 1;
+                let other = self
+                    .entities
+                    .get(c)
+                    .filter(|c| self.rules.def(c.def).role() == Some(BuildingRole::Tunnel))
+                    .and_then(|_| self.tunnels_with(c).first().copied());
+                let e = self.entities.get_mut(id).unwrap();
+                match other {
+                    Some(t) => e.inside = Some(t),
+                    None => {
+                        e.hp = 0;
+                        if let Some(o) = owner {
+                            self.stats[o.0 as usize].units_lost += 1;
+                        }
+                    }
                 }
             }
         }
@@ -3088,9 +3209,11 @@ impl World {
                 self.entities.get_mut(id).unwrap().owner = None;
                 continue;
             }
-            if depleted || e.hp <= 0 || owner_out {
+            // A hologram vanishes as its time runs out, leaving nothing behind.
+            let faded = e.decoy_until.is_some_and(|t| t <= self.tick + 1);
+            if depleted || e.hp <= 0 || owner_out || faded {
                 // A unit with a parting blast sets it off as it dies (not as its player leaves).
-                if let (Some(blast), Some(owner), false) = (d.blast, e.owner, owner_out)
+                if let (Some(blast), Some(owner), false, None) = (d.blast, e.owner, owner_out, e.decoy_until)
                     && e.hp <= 0
                 {
                     let (at, def, lands) = (e.pos, e.def, self.tick + 1);

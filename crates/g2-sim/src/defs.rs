@@ -154,12 +154,14 @@ pub struct Deploy {
 /// Room for infantry inside a building or vehicle, after the alpha's `RtsGarrisonComponentData`:
 /// up to `capacity` units (a squad takes one place). With `fires`, they shoot out from its edge
 /// with `range_bonus` added to their weapons' reach; inside they can't be targeted, and die
-/// with it.
+/// with it. With `heal_ticks` above 0, a unit inside regains its full hit points over that
+/// long (Zero Hour's tunnel `TimeForFullHeal`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Garrison {
     pub capacity: u32,
     pub fires: bool,
     pub range_bonus: Fx,
+    pub heal_ticks: u32,
 }
 
 /// A unit's aimed special shot (the Shadow Tank's Particle Accelerator): fired once at a
@@ -254,6 +256,11 @@ pub enum BuildingRole {
     /// What a unit turns into where it stands (the GLA Battle Bus's bunker, `Def::becomes`):
     /// immobile, holds infantry who fire out, and doesn't keep a player in the game.
     Bunker,
+    /// One entrance of its owner's tunnel network (the GLA's): every tunnel of one player
+    /// shares one garrison, its `capacity` the whole network's, so a unit that goes in at one
+    /// may come out at any other. While one tunnel stands the units inside live on; they die
+    /// with the last.
+    Tunnel,
 }
 
 #[derive(Clone, Debug)]
@@ -511,6 +518,11 @@ pub enum PowerKind {
     /// Aimed at an enemy building the player can see (the point must fall on it): that
     /// building alone takes `damage` at once. Anything else under the point is refused.
     Sabotage { damage: i32 },
+    /// Each of the player's armed ground units within `radius` of the point gets a holographic
+    /// copy beside it (`Entity::decoy_until`): a unit of its def that takes orders and fires
+    /// like it, dealing no damage, and vanishes after `ticks` or at the first hit. To enemies
+    /// it is a unit like any other.
+    Decoys { radius: Fx, ticks: u32 },
 }
 
 /// An area power acting once, `delay_ticks` after the order, on what stands within `radius`
@@ -739,6 +751,9 @@ fn tuned(rules: &Rules, mut power: Power, perks: &[PerkId]) -> Power {
             kind
         }
         PowerKind::Cloak { radius, ticks } => PowerKind::Cloak { radius, ticks: scale(ticks as i64, strength) as u32 },
+        PowerKind::Decoys { radius, ticks } => {
+            PowerKind::Decoys { radius, ticks: scale(ticks as i64, strength) as u32 }
+        }
         PowerKind::Sabotage { damage } => PowerKind::Sabotage { damage: scale(damage as i64, strength) as i32 },
     };
     power
