@@ -2,10 +2,13 @@
 //! on a fixed schedule, larger each time, and attack. The player wins by outlasting the last
 //! wave, and loses the usual way, when their base is gone.
 //!
-//! The archive only names the mode ("Onslaught PvE mode", due in the alpha update of the week
-//! of 28 October 2013, which never shipped) and describes none of it, so the schedule, the wave
-//! sizes and the unit mix here are all placeholders. The schedule is a function of the tick
-//! alone, so it adds no state to the hash.
+//! The archive barely describes it: the mode was due in the alpha update of the week of
+//! 28 October 2013, which never shipped. Patch preview #4 (24 October 2013) planned two
+//! players with a prebuilt base and no resource collection against eight waves of an AI
+//! general, and a 2013 alpha recording counts down 1:58 to its first wave and about 1:45
+//! between the next. Here the defender plays a whole skirmish economy, so the schedule, the
+//! wave sizes and the unit mix are tuned by measurement instead. The schedule is a function of
+//! the tick alone, so it adds no state to the hash.
 
 use crate::world::TICKS_PER_SECOND;
 
@@ -15,9 +18,11 @@ pub const FIRST_WAVE: u32 = 150 * TICKS_PER_SECOND;
 pub const WAVE_EVERY: u32 = 75 * TICKS_PER_SECOND;
 pub const WAVES: u32 = 10;
 
-/// Units in wave `k` (0-based): 2, 3, 4, ... 11.
+/// Units in wave `k` (0-based), five more every three waves: 2, 3, 5, 7, 8, 10, 12, 13, 15, 17.
+/// One more each wave (2 to 11) stopped being a threat once the Normal AI's factories and
+/// collectors were fixed: it held 716 of 768 decided matches on all 86 skirmish maps.
 pub fn wave_size(k: u32) -> u32 {
-    2 + k
+    2 + 5 * k / 3
 }
 
 /// Experience every unit of wave `k` arrives with: none for the first three, then enough for
