@@ -35,9 +35,6 @@ struct Outriggers;
 #[derive(Component)]
 struct StealthHalo;
 
-#[derive(Component)]
-struct Rotor;
-
 /// What a kill leaves behind: it sits on the ground for `life` seconds, then sinks out of sight
 /// over the last `SINK_SECS` and goes.
 #[derive(Component)]
@@ -74,9 +71,10 @@ pub struct Mirror(pub BTreeMap<EntityId, Entity>);
 
 /// The procedural look's part meshes by `surface::key`, one for every part size a model can
 /// have: UVs in metres for that size, so the surface maps keep their scale. Every def's model,
-/// scaffold and outriggers in every faction.
-fn part_meshes(meshes: &mut Assets<Mesh>) -> BTreeMap<(u8, [i32; 3]), Handle<Mesh>> {
-    let mut out = BTreeMap::new();
+/// scaffold and outriggers in every faction. Track bands get theirs per step of their run
+/// (`surface::tread_mesh`), under the same key.
+fn part_meshes(meshes: &mut Assets<Mesh>) -> PartMeshes {
+    let mut out = PartMeshes::default();
     for def in g2_rules::rules().defs.iter() {
         let r = def.radius.to_f32();
         let mut parts = models::scaffold(r * 1.75, 7.0);
@@ -85,10 +83,23 @@ fn part_meshes(meshes: &mut Assets<Mesh>) -> BTreeMap<(u8, [i32; 3]), Handle<Mes
             parts.extend(models::parts_for(def, f));
         }
         for p in &parts {
-            out.entry(crate::surface::key(p)).or_insert_with_key(|&k| meshes.add(crate::surface::part_mesh(k)));
+            let key = crate::surface::key(p);
+            if p.motion == models::Motion::Tread {
+                out.treads
+                    .entry(key)
+                    .or_insert_with(|| std::array::from_fn(|phase| meshes.add(crate::surface::tread_mesh(key, phase))));
+            } else {
+                out.parts.entry(key).or_insert_with(|| meshes.add(crate::surface::part_mesh(key)));
+            }
         }
     }
     out
+}
+
+#[derive(Default)]
+struct PartMeshes {
+    parts: BTreeMap<(u8, [i32; 3]), Handle<Mesh>>,
+    treads: BTreeMap<(u8, [i32; 3]), [Handle<Mesh>; crate::surface::TREAD_PHASES]>,
 }
 
 #[derive(Resource)]
@@ -98,7 +109,7 @@ struct Assets3d {
     sphere: Handle<Mesh>,
     /// `part_meshes`; empty with an imported alpha, which draws any part it has no model for
     /// (scaffolds, mostly) on the plain primitives above, as before.
-    parts: BTreeMap<(u8, [i32; 3]), Handle<Mesh>>,
+    parts: PartMeshes,
     /// Every slot but `Team` per faction (`None` for neutral resources); `SlotKey::vehicle`
     /// keys hold the vehicles' variants of the metal slots.
     materials: BTreeMap<(Option<Faction>, SlotKey), Handle<StandardMaterial>>,
@@ -117,9 +128,11 @@ struct Assets3d {
 
 impl Assets3d {
     fn mesh(&self, p: &Part) -> Handle<Mesh> {
-        match self.parts.get(&crate::surface::key(p)) {
-            Some(mesh) => mesh.clone(),
-            None => match p.prim {
+        let key = crate::surface::key(p);
+        match (self.parts.parts.get(&key), self.parts.treads.get(&key)) {
+            (Some(mesh), _) if p.motion != models::Motion::Tread => mesh.clone(),
+            (_, Some(run)) if p.motion == models::Motion::Tread => run[0].clone(),
+            _ => match p.prim {
                 Prim::Box => self.cube.clone(),
                 Prim::Cylinder => self.cylinder.clone(),
                 Prim::Sphere => self.sphere.clone(),
@@ -145,6 +158,7 @@ impl From<Slot> for SlotKey {
             Slot::Oil => 7,
             Slot::Wood => 8,
             Slot::Deck => 9,
+            Slot::Tread => 10,
             Slot::Crate(i) => 16 + i % 5,
         })
     }
@@ -172,9 +186,13 @@ impl Plugin for ViewPlugin {
             Update,
             (
                 setup_scene.run_if(crate::menu::scene_start),
+                // Before the mirror despawns a dead squad's root, so its soldiers can stay.
+                crate::procanim::leave_bodies,
                 sync_entities,
                 interpolate,
-                spin_rotors,
+                crate::procanim::drive,
+                crate::procanim::pose_parts,
+                crate::procanim::lay_bodies,
                 crate::fx::setup.run_if(crate::menu::scene_start),
                 spawn_effects,
                 crate::fx::age,
@@ -204,6 +222,7 @@ fn setup_scene(
         Slot::Hull,
         Slot::Panel,
         Slot::Dark,
+        Slot::Tread,
         Slot::Team,
         Slot::Hazard,
         Slot::Concrete,
@@ -223,7 +242,7 @@ fn setup_scene(
         let (roughness, metallic, emissive) = match slot {
             Slot::Glow => (0.3, 0.0, base_color.to_linear() * 1.5),
             Slot::Oil => (0.08, 0.0, LinearRgba::BLACK),
-            Slot::Hull | Slot::Panel | Slot::Deck | Slot::Dark => (0.55, 0.35, LinearRgba::BLACK),
+            Slot::Hull | Slot::Panel | Slot::Deck | Slot::Dark | Slot::Tread => (0.55, 0.35, LinearRgba::BLACK),
             _ => (0.8, 0.0, LinearRgba::BLACK),
         };
         let plain = StandardMaterial { base_color, perceptual_roughness: roughness, metallic, emissive, ..default() };
@@ -257,7 +276,7 @@ fn setup_scene(
         cube: meshes.add(Cuboid::new(1.0, 1.0, 1.0)),
         cylinder: meshes.add(Cylinder::new(0.5, 1.0)),
         sphere: meshes.add(Sphere::new(0.5).mesh().ico(2).unwrap()),
-        parts: if textured { part_meshes(&mut meshes) } else { BTreeMap::new() },
+        parts: if textured { part_meshes(&mut meshes) } else { PartMeshes::default() },
         materials: table,
         team,
         rubble: materials.add(StandardMaterial {
@@ -302,10 +321,13 @@ fn with_maps(m: StandardMaterial, maps: &SurfaceMaps) -> StandardMaterial {
 }
 
 /// Spawns `parts` in `faction`'s materials, with team-coloured parts in palette entry `team`;
-/// a `vehicle`'s metal in its own finer finish.
+/// a `vehicle`'s metal in its own finer finish. Parts that move (`procanim.rs`) follow the
+/// pose of `owner`, the sim entity's root; without one they stand still.
+#[allow(clippy::too_many_arguments)]
 fn spawn_parts(
     parent: &mut ChildSpawnerCommands,
     assets: &Assets3d,
+    owner: Option<Entity>,
     faction: Option<Faction>,
     team: usize,
     vehicle: bool,
@@ -318,13 +340,13 @@ fn spawn_parts(
             Slot::Team => assets.team[team].clone(),
             _ => assets.materials[&(faction, key)].clone(),
         };
-        let mut e = parent.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(material),
-            Transform::from_translation(p.at).with_rotation(Quat::from_rotation_y(p.yaw)).with_scale(p.size),
-        ));
-        if p.spin {
-            e.insert(Rotor);
+        let rest = p.transform();
+        let mut e = parent.spawn((Mesh3d(mesh), MeshMaterial3d(material), rest));
+        if let Some(owner) = owner.filter(|_| p.motion != models::Motion::Still) {
+            e.insert(crate::procanim::Moving { owner, rest, motion: p.motion });
+        }
+        if let (models::Motion::Tread, Some(run)) = (p.motion, assets.parts.treads.get(&crate::surface::key(p))) {
+            e.insert(crate::procanim::Tread(run.clone()));
         }
     }
 }
@@ -339,9 +361,14 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
     let mut root = commands.spawn((
         crate::menu::MatchEntity,
         SimRef(e.id),
+        crate::procanim::Drive::new(e.id),
         Transform::from_translation(sim.to_world(e.pos) + Vec3::Y * flight_height(def)),
         Visibility::default(),
     ));
+    // With an imported alpha its scaffolds stay as they were, still; a def it has no model
+    // for moves as in the procedural look.
+    let owner = root.id();
+    let scaffold_owner = (!assets.parts.parts.is_empty()).then_some(owner);
     root.with_children(|c| {
         c.spawn((Body, Transform::default(), Visibility::default())).with_children(|b| match alpha {
             Some((scene, offset)) => {
@@ -367,18 +394,18 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
                     b.spawn((WorldAssetRoot(scene.clone()), Transform::from_translation(at + *offset)));
                 }
             }
-            None => spawn_parts(b, assets, faction, team, vehicle, &parts),
+            None => spawn_parts(b, assets, Some(owner), faction, team, vehicle, &parts),
         });
         if def.is_building() {
             let w = def.radius.to_f32() * 1.75;
             let scaffold: Vec<Part> = models::scaffold(w, 7.0);
             c.spawn((Scaffold, Transform::default(), Visibility::Hidden))
-                .with_children(|s| spawn_parts(s, assets, faction, team, false, &scaffold));
+                .with_children(|s| spawn_parts(s, assets, scaffold_owner, faction, team, false, &scaffold));
         }
         if def.deploy.is_some() && alpha.is_none() {
             let legs = models::outriggers(def.radius.to_f32());
             c.spawn((Outriggers, Transform::default(), Visibility::Hidden))
-                .with_children(|s| spawn_parts(s, assets, faction, team, vehicle, &legs));
+                .with_children(|s| spawn_parts(s, assets, Some(owner), faction, team, vehicle, &legs));
         }
         // Stealth units, and any unit a cloaking power may cover: a dark ring on the ground
         // while hidden, so their owner sees which ones the enemy can't.
@@ -530,12 +557,6 @@ pub const FLIGHT_HEIGHT: f32 = 16.5;
 /// How high `def` flies above the ground: `FLIGHT_HEIGHT` for aircraft, 0 for ground units.
 pub fn flight_height(def: &g2_sim::Def) -> f32 {
     if def.flies() { FLIGHT_HEIGHT } else { 0.0 }
-}
-
-fn spin_rotors(time: Res<Time>, mut q: Query<&mut Transform, With<Rotor>>) {
-    for mut tf in &mut q {
-        tf.rotate_y(time.delta_secs() * 18.0);
-    }
 }
 
 /// Combat effects (`fx.rs`) for every shot since the last frame, and the wreck of every kill;

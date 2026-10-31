@@ -234,6 +234,35 @@ pub struct Deliveries(pub Vec<(g2_sim::EntityId, i64)>);
 #[derive(Resource, Default)]
 pub struct Hits(pub Vec<Shot>);
 
+/// Each entity's last shot: the tick it fired and where at, so the view can aim and kick its
+/// gun (`procanim.rs`), base defences included, which keep no target in their order. Gathered
+/// per step like `Deliveries`, and kept for `FIRE_MEMORY_TICKS`.
+#[derive(Resource, Default)]
+pub struct Fire(pub std::collections::BTreeMap<g2_sim::EntityId, (u32, g2_sim::Vec2)>);
+
+/// How long a shot is remembered: a defence keeps facing where it last fired for this long.
+pub const FIRE_MEMORY_TICKS: u32 = 3 * TICKS_PER_SECOND;
+
+impl Fire {
+    /// Records the shots of `world`'s last step and forgets the old ones. A shell's blast
+    /// (`splash`) is no shot of the victim's neighbours' shooter, whose `Fired` it already was.
+    pub fn observe(&mut self, world: &World) {
+        use g2_sim::world::Event;
+        let tick = world.tick();
+        for e in world.events() {
+            match *e {
+                Event::Hit { shooter, at, splash: false, .. }
+                | Event::Fired { shooter, at, .. }
+                | Event::SpecialFired { shooter, at, .. } => {
+                    self.0.insert(shooter, (tick, at));
+                }
+                _ => {}
+            }
+        }
+        self.0.retain(|_, (t, _)| *t + FIRE_MEMORY_TICKS >= tick);
+    }
+}
+
 /// Sounds the local player should hear, gathered per step like `Deliveries` (see
 /// `audio::sim_cues`); the sound drains it every frame. Apps without sound (headless renders,
 /// tests) never drain it, so it keeps only the newest `HEARD_MAX`.
@@ -289,6 +318,7 @@ impl Plugin for SimPlugin {
             .init_resource::<Previous>()
             .init_resource::<Deliveries>()
             .init_resource::<Hits>()
+            .init_resource::<Fire>()
             .init_resource::<Heard>()
             .init_resource::<crate::alerts::Alerts>()
             .add_systems(FixedUpdate, step_sim);
@@ -300,6 +330,7 @@ fn step_sim(
     mut prev: ResMut<Previous>,
     mut deliveries: ResMut<Deliveries>,
     mut hits: ResMut<Hits>,
+    mut fire: ResMut<Fire>,
     mut heard: ResMut<Heard>,
     mut alerts: ResMut<crate::alerts::Alerts>,
 ) {
@@ -332,6 +363,7 @@ fn step_sim(
             sim.rolled_out = rolled_out;
         }
         collect_shots(&sim.world, &mut hits);
+        fire.observe(&sim.world);
         alerts.observe(&sim.world, me);
         heard.0.extend(crate::audio::sim_cues(&sim));
         if heard.0.len() > HEARD_MAX {
