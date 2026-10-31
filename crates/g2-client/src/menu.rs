@@ -19,6 +19,7 @@ use std::sync::mpsc;
 use bevy::prelude::*;
 use bevy::ui::RelativeCursorPosition;
 use g2_sim::defs::PerkId;
+use g2_sim::mission::Difficulty;
 use g2_sim::{AiLevel, CommandKind, Faction, GeneralId, PlayerId, PlayerSetup};
 
 use crate::hud::clock;
@@ -107,7 +108,9 @@ pub enum Act {
     OpenMissions,
     /// A mission in the campaign list: its briefing shows beside it.
     PickMission(u16),
-    /// START MISSION: plays the picked mission.
+    /// The campaign page's Difficulty cell: Easy, Normal, Hard, then Easy again.
+    CycleDifficulty,
+    /// START MISSION: plays the picked mission at the difficulty picked.
     StartMission,
     /// The main menu's NETWORK: the LAN lobby, listing games on the local network.
     OpenLobby,
@@ -288,6 +291,8 @@ pub struct Ui {
     pub options_before: Option<Settings>,
     /// The mission the campaign page shows, and the one PLAY AGAIN replays after a mission.
     pub mission: g2_sim::MissionId,
+    /// The difficulty the campaign page plays its missions at.
+    pub difficulty: g2_sim::mission::Difficulty,
     /// The match running is that mission (else a skirmish): the end screen offers the
     /// campaign, and a win is saved to the profile.
     pub in_mission: bool,
@@ -309,6 +314,7 @@ impl Default for Ui {
             earned: None,
             options_before: None,
             mission: g2_sim::MissionId(0),
+            difficulty: g2_sim::mission::Difficulty::Normal,
             in_mission: false,
             lobby: crate::lobby::Form::default(),
         }
@@ -534,12 +540,12 @@ fn apply_one(world: &mut World, act: Act) {
         // Starting always rolls a fresh world, so "start" after quitting a match is a new game
         // and never a silent resume of the frozen one.
         Act::StartMission => {
-            let id = world.resource::<Ui>().mission;
+            let (id, difficulty) = (world.resource::<Ui>().mission, world.resource::<Ui>().difficulty);
             let unlocked = world.resource::<Profile>().unlocked(g2_rules::rules(), id.0 as usize);
             if !unlocked {
                 return;
             }
-            match Sim::mission(id, None, 1) {
+            match Sim::mission(id, difficulty, None, 1) {
                 Ok(sim) => {
                     swap_world(world, sim);
                     let mut ui = world.resource_mut::<Ui>();
@@ -766,6 +772,10 @@ fn apply_one(world: &mut World, act: Act) {
                 ui.mission = g2_sim::MissionId(next as u16);
             }
             Act::PickMission(i) => world.resource_mut::<Ui>().mission = g2_sim::MissionId(i),
+            Act::CycleDifficulty => {
+                let mut ui = world.resource_mut::<Ui>();
+                ui.difficulty = g2_sim::mission::Difficulty::ALL[(ui.difficulty as usize + 1) % 3];
+            }
             Act::CycleOption(opt) => cycle_option(&mut world.resource_mut::<Settings>(), opt),
             Act::DefaultOptions => world.resource_mut::<Settings>().reset(),
             Act::AcceptOptions | Act::CancelOptions => {
@@ -834,11 +844,11 @@ fn award_experience(sim: Res<Sim>, mut ui: ResMut<Ui>, mut profile: ResMut<Profi
     if ui.screen != Screen::End || ui.earned.is_some() || sim.world.is_ai(sim.local) {
         return;
     }
-    // A mission won is saved, so the next one opens.
+    // A mission won is saved, with its difficulty, so the next one opens.
     if let Some(run) = sim.world.mission().filter(|r| r.result == Some(true) && ui.in_mission)
-        && !profile.won(run.def.key)
+        && !profile.won_at(run.def.key, run.difficulty)
     {
-        profile.win(run.def.key);
+        profile.win(run.def.key, run.difficulty);
         profile.save(g2_rules::rules());
     }
     let Some(g) = sim.world.player(sim.local).general else { return };
@@ -2072,24 +2082,23 @@ fn missions(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile,
     c.spawn((rect(42.0, 78.0, 760.0, 79.0), BackgroundColor(GOLD)));
     // The campaign, in order.
     heading(c, kit, "Campaign", rect(58.0, 87.0, 290.0, 111.0));
+    // One line a mission, so eight fit above the biography box: its number, name, side, and
+    // the difficulties it has been won at (E, N, H), else whether it is open.
     for (i, m) in rules.missions.iter().enumerate() {
-        let y = 112.0 + 62.0 * i as f32;
+        let y = 113.0 + 32.0 * i as f32;
         let open = profile.unlocked(rules, i);
-        let state = if profile.won(m.key) {
-            "Won"
-        } else if open {
-            "Open"
-        } else {
-            "Locked"
+        let won: Vec<&str> =
+            Difficulty::ALL.into_iter().filter(|&d| profile.won_at(m.key, d)).map(|d| &d.name()[..1]).collect();
+        let state = match (won.is_empty(), open) {
+            (false, _) => format!("Won {}", won.join(" ")),
+            (true, true) => "Open".to_owned(),
+            (true, false) => "Locked".to_owned(),
         };
-        // The map's own name, without the game it comes from, so a row fits two lines.
-        let map = m.map.split_once(':').map_or(m.map, |(_, n)| n);
-        let row =
-            format!("{}. {}  -  {state}\n{}, {map}", i + 1, m.name.to_uppercase(), faction_tag(m.sides[0].faction));
+        let row = format!("{}. {}  {}  -  {state}", i + 1, m.name.to_uppercase(), faction_tag(m.sides[0].faction));
         let on = i == ui.mission.0 as usize;
-        button(c, kit, &row, Act::PickMission(i as u16), Look::Row { on }, rect(58.0, y, 290.0, y + 56.0), 13.0);
+        button(c, kit, &row, Act::PickMission(i as u16), Look::Row { on }, rect(58.0, y, 290.0, y + 30.0), 12.0);
         if !open {
-            c.spawn((rect(58.0, y, 290.0, y + 56.0), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))));
+            c.spawn((rect(58.0, y, 290.0, y + 30.0), BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.45))));
         }
     }
     // The picked mission: its map and briefing.
@@ -2106,6 +2115,7 @@ fn missions(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile,
     }
     label(c, kit, &map_title(picked.map), rect(598.0, 256.0, 751.0, 280.0), 12.0, WHITE, true);
     let won = rules.missions.iter().filter(|m| profile.won(m.key)).count();
+    let enemy = picked.sides[1..].iter().map(|s| ui.difficulty.credits(s.credits)).sum::<i64>();
     stats(
         c,
         kit,
@@ -2113,6 +2123,7 @@ fn missions(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile,
         290.0,
         &[
             ("Enemy", faction_tag(picked.sides[1].faction).to_owned()),
+            ("Funds", format!("${}", thousands(enemy))),
             ("Won", format!("{won} of {}", rules.missions.len())),
         ],
     );
@@ -2135,6 +2146,9 @@ fn missions(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile,
         WHITE,
         false,
     );
+    // Generals' skirmish page sets its options with cells; so does the campaign its difficulty.
+    label(c, kit, "Difficulty", rect(48.0, 430.0, 195.0, 450.0), 12.0, GOLD, false);
+    cell(c, kit, ui.difficulty.name(), Act::CycleDifficulty, rect(52.0, 452.0, 190.0, 474.0));
     if profile.unlocked(rules, ui.mission.0 as usize) {
         button(c, kit, "START MISSION", Act::StartMission, Look::Button, rect(382.0, 505.0, 554.0, 541.0), 16.0);
     } else {
@@ -2680,8 +2694,8 @@ mod tests {
     }
 
     /// The campaign: only the first mission opens at first; starting one plays it on its own
-    /// map and forces; winning it is saved and opens the next, and PLAY AGAIN replays the
-    /// mission, not a skirmish.
+    /// map and forces at the difficulty the cell shows; winning it is saved at that difficulty
+    /// and opens the next, and PLAY AGAIN replays the mission, not a skirmish.
     #[test]
     fn missions_start_and_a_win_opens_the_next() {
         let (mut app, _) = app();
@@ -2692,11 +2706,15 @@ mod tests {
         act(&mut app, Act::StartMission);
         assert_eq!(screen(&app), Screen::Missions, "the second mission is locked");
         act(&mut app, Act::PickMission(0));
+        assert_eq!(app.world().resource::<Ui>().difficulty, Difficulty::Normal);
+        act(&mut app, Act::CycleDifficulty);
+        assert_eq!(app.world().resource::<Ui>().difficulty, Difficulty::Hard);
         act(&mut app, Act::StartMission);
         assert_eq!(screen(&app), Screen::Match);
         let sim = app.world().resource::<Sim>();
         let run = sim.world.mission().expect("a mission is running");
         assert_eq!(run.def.key, rules.missions[0].key);
+        assert_eq!(run.difficulty, Difficulty::Hard);
         assert_eq!(sim.setup.map.name, rules.missions[0].map);
         assert!(!sim.world.is_ai(sim.local), "the player plays their seat");
         assert!(app.world().resource::<Ui>().in_mission);
@@ -2713,7 +2731,9 @@ mod tests {
         assert_eq!(sim.world.winner(), Some(PlayerId(0)));
         app.update();
         assert_eq!(screen(&app), Screen::End);
-        assert!(app.world().resource::<Profile>().won(rules.missions[0].key));
+        let profile = app.world().resource::<Profile>();
+        assert!(profile.won_at(rules.missions[0].key, Difficulty::Hard));
+        assert!(!profile.won_at(rules.missions[0].key, Difficulty::Normal));
         act(&mut app, Act::StartMission);
         assert_eq!(app.world().resource::<Sim>().world.tick(), 0, "PLAY AGAIN: a fresh run of the mission");
         assert!(app.world().resource::<Sim>().world.mission().is_some());

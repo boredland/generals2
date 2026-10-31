@@ -580,11 +580,13 @@ impl Ai {
         }
 
         // 5. Army: armed units (not base defences, which don't move). Units inside a garrison
-        // hold it; they aren't sent anywhere.
+        // hold it; they aren't sent anywhere. A mission's scripted squads (patrols, guards,
+        // routed waves) follow their script instead.
         let army: Vec<_> = mine
             .iter()
             .copied()
             .filter(|e| rules.def(e.def).is_unit() && rules.def(e.def).weapon().is_some() && e.inside.is_none())
+            .filter(|e| !world.scripted(e.id))
             .collect();
         let home = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos));
         let placed = self.place_guns(world, &army, home, out);

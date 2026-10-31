@@ -8,13 +8,15 @@
 //! Saved as plain text at `$G2_PROFILE`, else `profile` in the game's data folder
 //! (`g2_frostbite::import::data_dir`: `~/.local/share/generals2` on Linux). One line per general:
 //! `general <name> xp <n> rank <n> bought <id,..> slotted <id,..>`, perks by id; and one line
-//! of the campaign's missions won, by key: `missions <key,..>`.
+//! of the campaign's missions won, by key and difficulty: `missions <key>:<difficulty>,..`
+//! (a key alone, as older profiles saved it, is a win on Normal).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use bevy::prelude::*;
 use g2_sim::defs::{GeneralId, PerkId, Rules};
+use g2_sim::mission::Difficulty;
 
 /// The highest general rank: one perk slot per rank.
 pub const MAX_RANK: u8 = g2_sim::defs::PERK_SLOTS as u8;
@@ -62,8 +64,8 @@ pub enum Refused {
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Profile {
     pub generals: BTreeMap<GeneralId, GeneralProgress>,
-    /// Missions won, by `Mission::key`, in the order they were first won.
-    pub missions: Vec<String>,
+    /// Missions won, by `Mission::key` and difficulty, in the order they were first won.
+    pub missions: Vec<(String, Difficulty)>,
     /// Where it is saved; `None` keeps it in memory only (tests).
     pub path: Option<PathBuf>,
 }
@@ -85,14 +87,23 @@ impl Profile {
         let mut generals = BTreeMap::new();
         let mut missions = Vec::new();
         for line in text.lines() {
-            if let Some(keys) = line.strip_prefix("missions ") {
-                let known = keys.split(',').filter(|k| rules.find_mission(k).is_some());
-                missions.extend(known.map(str::to_owned));
+            if let Some(entries) = line.strip_prefix("missions ") {
+                for e in entries.split(',') {
+                    let (key, d) = match e.split_once(':') {
+                        Some((k, d)) => (k, Difficulty::from_name(d)),
+                        None => (e, Some(Difficulty::Normal)),
+                    };
+                    if let Some(d) = d
+                        && rules.find_mission(key).is_some()
+                        && !missions.iter().any(|(k, w)| k == key && *w == d)
+                    {
+                        missions.push((key.to_owned(), d));
+                    }
+                }
             } else if let Some((g, p)) = parse_line(line, rules) {
                 generals.insert(g, p);
             }
         }
-        missions.dedup();
         Profile { generals, missions, path }
     }
 
@@ -112,7 +123,9 @@ impl Profile {
             );
         }
         if !self.missions.is_empty() {
-            out += &format!("missions {}\n", self.missions.join(","));
+            let entries: Vec<String> =
+                self.missions.iter().map(|(k, d)| format!("{k}:{}", d.name().to_lowercase())).collect();
+            out += &format!("missions {}\n", entries.join(","));
         }
         if let Some(dir) = path.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -122,19 +135,25 @@ impl Profile {
         }
     }
 
-    /// Whether the mission with `key` has been won.
+    /// Whether the mission with `key` has been won, at any difficulty.
     pub fn won(&self, key: &str) -> bool {
-        self.missions.iter().any(|k| k == key)
+        self.missions.iter().any(|(k, _)| k == key)
     }
 
-    /// Records a win of the mission with `key`; winning it again changes nothing.
-    pub fn win(&mut self, key: &str) {
-        if !self.won(key) {
-            self.missions.push(key.to_owned());
+    /// Whether the mission with `key` has been won at `d`.
+    pub fn won_at(&self, key: &str, d: Difficulty) -> bool {
+        self.missions.iter().any(|(k, w)| k == key && *w == d)
+    }
+
+    /// Records a win of the mission with `key` at `d`; winning it again there changes nothing.
+    pub fn win(&mut self, key: &str, d: Difficulty) {
+        if !self.won_at(key, d) {
+            self.missions.push((key.to_owned(), d));
         }
     }
 
-    /// Missions are played in order: the first, and each one after a mission won.
+    /// Missions are played in order: the first, and each one after a mission won (at any
+    /// difficulty).
     pub fn unlocked(&self, rules: &Rules, i: usize) -> bool {
         i == 0 || rules.missions.get(i - 1).is_some_and(|m| self.won(m.key))
     }
@@ -308,8 +327,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    /// Missions won are saved by key and read back; unknown keys are dropped; each mission
-    /// opens once the one before it is won.
+    /// Missions won are saved by key and difficulty and read back; a key alone (an older
+    /// profile) is a win on Normal; unknown keys and difficulties are dropped; each mission
+    /// opens once the one before it is won, at any difficulty.
     #[test]
     fn missions_won_round_trip_and_unlock_in_order() {
         let dir = std::env::temp_dir().join(format!("g2-profile-missions-{}", std::process::id()));
@@ -317,14 +337,17 @@ mod tests {
         let keys: Vec<&str> = rules().missions.iter().map(|m| m.key).collect();
         let mut p = Profile { path: Some(path.clone()), ..Default::default() };
         assert!(p.unlocked(rules(), 0) && !p.unlocked(rules(), 1));
-        p.win(keys[0]);
-        p.win(keys[0]);
-        assert_eq!(p.missions, [keys[0]]);
+        p.win(keys[0], Difficulty::Hard);
+        p.win(keys[0], Difficulty::Hard);
+        p.win(keys[0], Difficulty::Easy);
+        assert_eq!(p.missions, [(keys[0].to_owned(), Difficulty::Hard), (keys[0].to_owned(), Difficulty::Easy)]);
+        assert!(p.won_at(keys[0], Difficulty::Hard) && !p.won_at(keys[0], Difficulty::Normal));
         assert!(p.unlocked(rules(), 1) && !p.unlocked(rules(), 2));
         p.save(rules());
         assert_eq!(Profile::load(Some(path.clone()), rules()), p);
-        std::fs::write(&path, format!("missions nowhere,{}\n", keys[1])).unwrap();
-        assert_eq!(Profile::load(Some(path), rules()).missions, [keys[1]]);
+        std::fs::write(&path, format!("missions nowhere,{},{}:brutal,{}:hard\n", keys[1], keys[2], keys[3])).unwrap();
+        let q = Profile::load(Some(path), rules()).missions;
+        assert_eq!(q, [(keys[1].to_owned(), Difficulty::Normal), (keys[3].to_owned(), Difficulty::Hard)]);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

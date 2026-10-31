@@ -219,6 +219,18 @@ impl World {
                 id(&mut h, e);
             }
             h.u64(m.result.map_or(2, u64::from));
+            // Only when set, so missions on Normal without scripts hash as before.
+            if m.difficulty != crate::mission::Difficulty::Normal {
+                h.u64(0x6469_6600 | m.difficulty as u64);
+            }
+            for s in &m.squads {
+                h.u64(0x7371_0000 | (s.owner.0 as u64) << 8 | s.tag.map_or(0xff, u64::from));
+                hash_script(&mut h, s.script);
+                h.u64(((s.leg as u64) << 32) | s.since as u64);
+                for &u in &s.units {
+                    id(&mut h, u);
+                }
+            }
         }
         h.0
     }
@@ -226,6 +238,26 @@ impl World {
 
 fn id(h: &mut Fnv, e: crate::entity::EntityId) {
     h.u64(((e.index as u64) << 32) | e.generation as u64);
+}
+
+fn hash_script(h: &mut Fnv, s: crate::mission::Script) {
+    use crate::mission::Script;
+    match s {
+        Script::Hold => h.u64(0),
+        Script::Patrol(p) | Script::Route(p) => {
+            h.u64(if matches!(s, Script::Patrol(_)) { 1 } else { 2 });
+            for &(x, y) in p {
+                h.i64(x);
+                h.i64(y);
+            }
+        }
+        Script::Guard(a) => {
+            h.u64(3);
+            h.i64(a.at.0);
+            h.i64(a.at.1);
+            h.i64(a.radius);
+        }
+    }
 }
 
 fn hash_order(h: &mut Fnv, o: Order) {

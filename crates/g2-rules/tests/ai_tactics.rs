@@ -3,7 +3,7 @@
 
 use g2_rules::ids::*;
 use g2_rules::{crater_ridge, rules};
-use g2_sim::mission::{Action, Force, Goal, Mission, MissionId, Objective, Side, Trigger, When};
+use g2_sim::mission::{Action, Difficulty, Force, Goal, Mission, MissionId, Objective, Side, Trigger, When};
 use g2_sim::world::Event;
 use g2_sim::{AiLevel, EntityId, Faction, Fx, Order, PlayerId, Rules, Vec2, World};
 
@@ -17,8 +17,8 @@ const S: u32 = g2_sim::TICKS_PER_SECOND;
 fn scene(ai: Faction, level: AiLevel, enemy: Faction, forces: Vec<Force>, triggers: Vec<Trigger>) -> World {
     let base = rules();
     let sides = vec![
-        Side { faction: ai, credits: 0, ai: level, general: None },
-        Side { faction: enemy, credits: 0, ai: AiLevel::Easy, general: None },
+        Side { faction: ai, credits: 0, ai: Some(level), general: None, builds: None },
+        Side { faction: enemy, credits: 0, ai: None, general: None, builds: None },
     ];
     let cc = |f: Faction| rules().command_center(f);
     let mut all = vec![Force::new(0, cc(ai), HOME.0, HOME.1), Force::new(1, cc(enemy), 320, 320)];
@@ -42,9 +42,8 @@ fn scene(ai: Faction, level: AiLevel, enemy: Faction, forces: Vec<Force>, trigge
         support: base.support,
         missions: Box::leak(vec![mission].into_boxed_slice()),
     }));
-    let mut s = r.missions[0].setup(r, crater_ridge(), 1, Some(level));
-    s.players[1].ai = None;
-    World::with_mission(&s, r, MissionId(0))
+    let s = r.missions[0].setup(r, crater_ridge(), 1, Some(level));
+    World::with_mission(&s, r, MissionId(0), Difficulty::Normal)
 }
 
 fn first(w: &World, owner: PlayerId, def: g2_sim::DefId) -> EntityId {
@@ -58,7 +57,7 @@ fn first(w: &World, owner: PlayerId, def: g2_sim::DefId) -> EntityId {
 fn easy_fires_a_ready_strike_at_a_visible_group() {
     let ready = rules().support_powers(Faction::Eu).next().unwrap().first_ticks;
     static TANKS: [Force; 1] = [Force::new(1, GLA_TANK, 112, 80).times(5)];
-    static ARRIVE: [Action; 1] = [Action::Spawn { forces: &TANKS, attack: None }];
+    static ARRIVE: [Action; 1] = [Action::Spawn { forces: &TANKS, route: &[] }];
     let arrive = Trigger { when: When::At(ready - S), then: &ARRIVE };
     let mut w = scene(Faction::Eu, AiLevel::Easy, Faction::Gla, vec![], vec![arrive]);
     let mut fired = None;

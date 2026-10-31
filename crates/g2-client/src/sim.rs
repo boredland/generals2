@@ -41,9 +41,14 @@ impl Sim {
         Sim::start(MatchSetup { map, seed, players: players.into() }, source, None)
     }
 
-    /// A match of mission `id` (`g2_sim::mission`) on its own map, the local player in its
-    /// player seat; `player` hands that seat to the AI (watching, headless shots).
-    pub fn mission(id: g2_sim::MissionId, player: Option<g2_sim::AiLevel>, seed: u64) -> Result<Sim, String> {
+    /// A match of mission `id` (`g2_sim::mission`) at `difficulty` on its own map, the local
+    /// player in its player seat; `player` hands that seat to the AI (watching, headless shots).
+    pub fn mission(
+        id: g2_sim::MissionId,
+        difficulty: g2_sim::mission::Difficulty,
+        player: Option<g2_sim::AiLevel>,
+        seed: u64,
+    ) -> Result<Sim, String> {
         let m = rules().mission(id);
         let source =
             if m.map.contains(':') { Some(g2_maps::load_file_named(&g2_maps::vendored_root(), m.map)?) } else { None };
@@ -51,10 +56,14 @@ impl Sim {
             Some(file) => file.to_map_def(m.map),
             None => g2_maps::resolve(m.map)?,
         };
-        Ok(Sim::start(m.setup(rules(), map, seed, player), source, Some(id)))
+        Ok(Sim::start(m.setup(rules(), map, seed, player), source, Some((id, difficulty))))
     }
 
-    fn start(setup: MatchSetup, source: Option<MapFile>, mission: Option<g2_sim::MissionId>) -> Sim {
+    fn start(
+        setup: MatchSetup,
+        source: Option<MapFile>,
+        mission: Option<(g2_sim::MissionId, g2_sim::mission::Difficulty)>,
+    ) -> Sim {
         let teams = crate::models::team_slots(&setup.players.iter().map(|p| p.faction).collect::<Vec<_>>());
         Sim {
             world: World::begin(&setup, rules(), mission),

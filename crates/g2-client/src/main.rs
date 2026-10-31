@@ -10,9 +10,9 @@
 //!             to a path holding {}, e.g. clip/{}.png); `--hover-slot N` shows the tooltip of
 //!             build-grid button N (from 0) as if hovered, for the `--select`ed building
 //!
-//! `--mission N|KEY` plays a mission of the campaign (1-4, or its key, e.g. `first-light`) on
-//! its own map and forces instead of a skirmish; with `--spectate` (or `--screenshot`) the
-//! Normal AI plays your side.
+//! `--mission N|KEY` plays a mission of the campaign (1-8, or its key, e.g. `first-light`) on
+//! its own map and forces instead of a skirmish, at `--difficulty easy|normal|hard` (Normal by
+//! default); with `--spectate` (or `--screenshot`) the Normal AI plays your side.
 //! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
 //! mode: no base, waves on a schedule, and you win by outlasting the last one.
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
@@ -113,8 +113,9 @@ struct Args {
     coop: bool,
     /// Join the network match hosted at this `host:port`.
     join: Option<String>,
-    /// Play this mission of the campaign instead of a skirmish.
+    /// Play this mission of the campaign instead of a skirmish, at this difficulty.
     mission: Option<g2_sim::MissionId>,
+    difficulty: g2_sim::mission::Difficulty,
     /// One team per player (0: none), as many players as digits: a team game with the skirmish
     /// page's teams. Players past the second play the next faction in turn, at the `--ai` level.
     teams: Option<Vec<u8>>,
@@ -148,6 +149,7 @@ fn parse_args() -> Result<Args, String> {
         coop: false,
         join: None,
         mission: None,
+        difficulty: g2_sim::mission::Difficulty::Normal,
         teams: None,
     };
     let mut it = std::env::args().skip(1);
@@ -271,6 +273,11 @@ fn parse_args() -> Result<Args, String> {
                 };
                 a.mission = Some(id);
             }
+            "--difficulty" => {
+                let v = it.next().unwrap_or_default();
+                a.difficulty = g2_sim::mission::Difficulty::from_name(&v)
+                    .ok_or_else(|| format!("--difficulty expects easy, normal or hard, got {v:?}"))?;
+            }
             "--coop" => a.coop = true,
             "--teams" => {
                 let v = it.next().ok_or("--teams needs a team digit per player, e.g. 1122")?;
@@ -332,6 +339,7 @@ fn main() -> AppExit {
                 screen: args.menu.unwrap_or(menu::Screen::Match),
                 paused: args.paused,
                 mission: args.mission.unwrap_or(g2_sim::MissionId(0)),
+                difficulty: args.difficulty,
                 in_mission: args.mission.is_some(),
                 ..default()
             };
@@ -384,14 +392,14 @@ fn main() -> AppExit {
             };
             headless::run(sim, ui, net, capture)
         }
-        None => windowed(sim, args.record, args.direct, args.mission),
+        None => windowed(sim, args.record, args.direct, args.mission.map(|m| (m, args.difficulty))),
     }
 }
 
 fn load_sim(args: &Args) -> Result<Sim, String> {
     let spectate = args.spectate || args.screenshot.is_some();
     if let Some(id) = args.mission {
-        let mut sim = Sim::mission(id, spectate.then_some(g2_sim::AiLevel::Normal), args.seed)?;
+        let mut sim = Sim::mission(id, args.difficulty, spectate.then_some(g2_sim::AiLevel::Normal), args.seed)?;
         sim.fog = !args.reveal;
         return Ok(sim);
     }
@@ -476,10 +484,17 @@ fn join_sim(addr: &str, reveal: bool) -> Result<Sim, String> {
     Ok(sim)
 }
 
-fn windowed(mut sim: Sim, record: Option<String>, direct: bool, mission: Option<g2_sim::MissionId>) -> AppExit {
+fn windowed(
+    mut sim: Sim,
+    record: Option<String>,
+    direct: bool,
+    mission: Option<(g2_sim::MissionId, g2_sim::mission::Difficulty)>,
+) -> AppExit {
     // The menu covers a frozen battlefield; a flag-chosen match starts running at once.
-    let mut ui =
-        menu::Ui { in_mission: mission.is_some(), mission: mission.unwrap_or(g2_sim::MissionId(0)), ..default() };
+    let mut ui = menu::Ui { in_mission: mission.is_some(), ..default() };
+    if let Some((id, d)) = mission {
+        (ui.mission, ui.difficulty) = (id, d);
+    }
     if direct {
         ui.screen = menu::Screen::Match;
     } else {

@@ -255,13 +255,22 @@ impl World {
     /// A match of mission `id`: the mission places every side's forces instead of the
     /// skirmish's command center and constructor at each start. `setup` seats its sides
     /// (`Mission::setup`).
-    pub fn with_mission(setup: &MatchSetup, rules: &'static Rules, id: crate::mission::MissionId) -> World {
-        World::begin(setup, rules, Some(id))
+    pub fn with_mission(
+        setup: &MatchSetup,
+        rules: &'static Rules,
+        id: crate::mission::MissionId,
+        difficulty: crate::mission::Difficulty,
+    ) -> World {
+        World::begin(setup, rules, Some((id, difficulty)))
     }
 
     /// `new` or `with_mission`, as `mission` says: how replays start their match.
-    pub fn begin(setup: &MatchSetup, rules: &'static Rules, mission: Option<crate::mission::MissionId>) -> World {
-        if let Some(id) = mission {
+    pub fn begin(
+        setup: &MatchSetup,
+        rules: &'static Rules,
+        mission: Option<(crate::mission::MissionId, crate::mission::Difficulty)>,
+    ) -> World {
+        if let Some((id, _)) = mission {
             assert!(rules.missions[id.0 as usize].seats(&setup.players), "the setup doesn't seat mission {}", id.0);
         }
         // The onslaught has no base, so it needs no start of its own.
@@ -356,8 +365,8 @@ impl World {
             world.spawn_owned(dozer, owner, world.map.clamp(spawn + Vec2::new(Fx::ZERO, offset)));
             debug_assert!(world.entities.get(cc_id).is_some());
         }
-        if let Some(id) = mission {
-            world.start_mission(id);
+        if let Some((id, difficulty)) = mission {
+            world.start_mission(id, difficulty);
         }
         world.update_power();
         world.update_vision();
@@ -490,7 +499,7 @@ impl World {
             length_ticks: self.tick,
             commands: self.log.clone(),
             hashes: self.checkpoints.clone(),
-            mission: self.mission.as_ref().map(|m| m.id),
+            mission: self.mission.as_ref().map(|m| (m.id, m.difficulty)),
         }
     }
 
@@ -569,9 +578,13 @@ impl World {
     }
 
     /// What `maker` (a factory def, or a constructor def) offers `player`: its own list, with
-    /// their general's units.
+    /// their general's units, and in a mission only what their side may build (`Side::builds`).
     pub fn offers_of(&self, player: PlayerId, maker: DefId) -> Vec<DefId> {
-        self.rules.offers_for(self.player(player).general, maker)
+        let mut offers = self.rules.offers_for(self.player(player).general, maker);
+        if let Some(list) = self.mission.as_ref().and_then(|m| m.def.sides.get(player.0 as usize)?.builds) {
+            offers.retain(|d| list.contains(d));
+        }
+        offers
     }
 
     /// `player`'s power in `slot`, if they have one there.
@@ -1219,7 +1232,7 @@ impl World {
     }
 
     /// The slowest selected unit's speed: a group moves at one pace and arrives together.
-    fn group_pace(&self, units: &[EntityId]) -> Fx {
+    pub(crate) fn group_pace(&self, units: &[EntityId]) -> Fx {
         units.iter().map(|&u| self.rules.def(self.entities.get(u).unwrap().def).speed()).min().unwrap_or(Fx::ZERO)
     }
 
@@ -1231,7 +1244,7 @@ impl World {
     /// A ground unit's slot inside a building or on blocked terrain moves to the nearest free
     /// cell; otherwise the unit could never arrive, and every attempt to route there would
     /// search the whole reachable map. Aircraft keep theirs: they fly over both.
-    fn formation(&self, units: &[EntityId], target: Vec2) -> Vec<(EntityId, Vec2)> {
+    pub(crate) fn formation(&self, units: &[EntityId], target: Vec2) -> Vec<(EntityId, Vec2)> {
         let target = self.map.clamp(target);
         let n = units.len() as i64;
         let spacing = units.iter().map(|&u| self.radius_of(u)).max().unwrap_or(SLACK) * Fx::from_int(2) + SLACK;
