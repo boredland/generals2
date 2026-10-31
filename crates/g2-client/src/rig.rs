@@ -19,6 +19,7 @@ use bevy::world_serialization::WorldInstanceReady;
 use g2_sim::{EntityId, GatherPhase, Order};
 
 use crate::alpha::{Action, ClipInfo};
+use crate::models::ROTOR_SPEED;
 use crate::sim::{Sim, to_world};
 use crate::view::SimRef;
 
@@ -70,9 +71,6 @@ pub struct RotorJoint {
     axis: Vec3,
 }
 
-/// Radians per second a rotor turns, as the procedural models' rotors (`view.rs`).
-const ROTOR_SPEED: f32 = 18.0;
-
 /// Radians per second a turret turns at most, so it swings rather than snaps.
 const TURRET_SPEED: f32 = 2.0;
 
@@ -118,12 +116,13 @@ struct Body {
     ground: f32,
 }
 
-/// How long a body lies, in sim seconds (the procedural kills' wrecks stay 25 s).
-const BODY_SECS: f32 = 15.0;
-const SINK_SECS: f32 = 3.0;
+/// How long a body lies, in sim seconds (the procedural kills' wrecks stay 25 s), sinking
+/// over the last `SINK_SECS`; `procanim.rs` lays its fallen soldiers down for as long.
+pub(crate) const BODY_SECS: f32 = 15.0;
+pub(crate) const SINK_SECS: f32 = 3.0;
 
 /// Sim seconds, with the frame's share of the next tick.
-fn sim_seconds(sim: &Sim, fixed: &Time<Fixed>) -> f32 {
+pub(crate) fn sim_seconds(sim: &Sim, fixed: &Time<Fixed>) -> f32 {
     let part = if sim.speed == 0 { 0.0 } else { fixed.overstep_fraction() };
     (sim.world.tick() as f32 + part) / g2_sim::TICKS_PER_SECOND as f32
 }
@@ -176,7 +175,7 @@ pub fn clips_loaded(world: &World) -> bool {
 /// What sim entity `id` is doing, for its model. `moved` is how far it went over the last
 /// step, when known: a unit that moved runs. Without it (a frame rendered straight after
 /// the sim ran), its order says whether it is on its way.
-fn action(sim: &Sim, id: EntityId, moved: Option<f32>) -> Action {
+pub(crate) fn action(sim: &Sim, id: EntityId, moved: Option<f32>) -> Action {
     let Some(e) = sim.world.entity(id) else { return Action::Idle };
     let walking = matches!(
         e.order,
@@ -451,7 +450,7 @@ fn update_aims(
 }
 
 /// Where entity `id` is aiming: the entity it attacks, if it is still there.
-fn aim_point(sim: &Sim, id: EntityId) -> Option<Vec3> {
+pub(crate) fn aim_point(sim: &Sim, id: EntityId) -> Option<Vec3> {
     let e = sim.world.entity(id)?;
     let target = match e.order {
         Order::Attack { target } => Some(target),

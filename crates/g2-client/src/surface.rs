@@ -36,6 +36,7 @@ pub enum Style {
     Roof(Faction),
     Armour(Faction),
     Dark,
+    Tread,
     Concrete,
     Wood,
     Crate,
@@ -55,6 +56,7 @@ pub fn style(faction: Option<Faction>, slot: Slot, vehicle: bool) -> Option<Styl
         Slot::Panel if f == Faction::Eu => Style::Siding(f),
         Slot::Panel | Slot::Deck => Style::Roof(f),
         Slot::Dark => Style::Dark,
+        Slot::Tread => Style::Tread,
         Slot::Team => Style::Team,
         Slot::Hazard => Style::Hazard,
         Slot::Concrete => Style::Concrete,
@@ -279,6 +281,15 @@ fn texel(style: Style, x: f32, y: f32) -> Texel {
             let tone = 1.0 + (plate - 0.5) * 0.1 + (fbm(u, v, 6, 3, 72) - 0.5) * 0.12 - (1.0 - seam) * 0.25;
             Texel::grey(tone, seam * 0.01, 1.0 + (fbm(u, v, 5, 3, 73) - 0.5) * 0.4, 1.0)
         }
+        // Track links `TREAD_PITCH` long, each with a raised cleat across its middle, so the
+        // run shows as the band scrolls (`tread_mesh`).
+        Style::Tread => {
+            let joint = groove(y, TREAD_PITCH, 0.03, 0.03);
+            let cleat = 1.0 - smoothstep(0.12, 0.18, (y.rem_euclid(TREAD_PITCH) - TREAD_PITCH / 2.0).abs());
+            let wear = fbm(u, v, 8, 3, 141);
+            let tone = 0.8 + cleat * 0.7 + (wear - 0.5) * 0.15 - (1.0 - joint) * 0.4;
+            Texel::grey(tone, joint * 0.02 + cleat * 0.02, 1.0 - cleat * 0.3, 1.0 + cleat * 0.8)
+        }
         // Cast slabs: a joint every 2 m, broad water stains, darker oil and dirt blotches, grit.
         Style::Concrete => {
             let joint = groove(x, 2.0, 0.02, 0.02).min(groove(y, 2.0, 0.02, 0.02));
@@ -385,6 +396,63 @@ const QUANTUM: f32 = 0.25;
 pub fn key(p: &Part) -> (u8, [i32; 3]) {
     let q = |s: f32| ((s / QUANTUM).round() as i32).max(1);
     (p.prim as u8, [q(p.size.x), q(p.size.y), q(p.size.z)])
+}
+
+/// Metres from one track link's cleat to the next; a whole number of them fit `TILE`, so the
+/// map repeats cleanly. Coarser than a real track's, so the run reads at a tank's speed: a
+/// Scorpion covers 0.37 m a sim tick, and a pattern that moves more than half its repeat
+/// between frames seems to run backwards.
+pub const TREAD_PITCH: f32 = 1.0;
+/// Steps a track band's run is drawn in, each a mesh with its map moved on by a share of a
+/// link (`tread_mesh`): moving the UVs, not the material, keeps every tread on one material.
+pub const TREAD_PHASES: usize = 8;
+
+/// A track band's mesh at `phase` of its run: a unit box like `box_mesh`, its map laid along
+/// the band's length (local Z) on every face, moved on by `phase` steps of `TREAD_PITCH /
+/// TREAD_PHASES`. Driving forward, the top run moves forward over the hull and the rest (the
+/// run on the ground, seen on the sides and underneath) backward, as a track's links do.
+pub fn tread_mesh(key: (u8, [i32; 3]), phase: usize) -> Mesh {
+    let size = Vec3::new(key.1[0] as f32, key.1[1] as f32, key.1[2] as f32) * QUANTUM;
+    let shift = phase as f32 * TREAD_PITCH / TREAD_PHASES as f32;
+    let (mut positions, mut normals, mut uvs) = (Vec::new(), Vec::new(), Vec::new());
+    let mut indices = Vec::<u32>::new();
+    // Each face: its normal and the axis across the band in it (`across × n` runs along +Z on
+    // the top), its width along that axis, and which way its links run.
+    for (n, across, width, run) in [
+        (Vec3::Y, Vec3::NEG_X, size.x, -1.0),
+        (Vec3::NEG_Y, Vec3::X, size.x, 1.0),
+        (Vec3::X, Vec3::Y, size.y, 1.0),
+        (Vec3::NEG_X, Vec3::NEG_Y, size.y, 1.0),
+    ] {
+        let along = n.cross(across);
+        let i = positions.len() as u32;
+        for (s, a) in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
+            positions.push((n * 0.5 + across * s + along * a).to_array());
+            normals.push(n.to_array());
+            uvs.push([(s + 0.5) * width / TILE, ((a + 0.5) * size.z + run * shift) / TILE]);
+        }
+        indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+    }
+    // The ends: plain, the links seen edge on.
+    for n in [Vec3::Z, Vec3::NEG_Z] {
+        let (across, up) = (Vec3::Y.cross(n), Vec3::Y);
+        let i = positions.len() as u32;
+        for (s, y) in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
+            positions.push((n * 0.5 + across * s + up * y).to_array());
+            normals.push(n.to_array());
+            uvs.push([(s + 0.5) * size.x / TILE, (0.5 - y) * size.y / TILE]);
+        }
+        indices.extend_from_slice(&[i, i + 1, i + 2, i, i + 2, i + 3]);
+    }
+    let colors = vec![[1.0f32; 4]; positions.len()];
+    let mut mesh = Mesh::new(bevy::mesh::PrimitiveTopology::TriangleList, RenderAssetUsages::default());
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    mesh.insert_indices(bevy::mesh::Indices::U32(indices));
+    mesh.generate_tangents().expect("a triangle list with normals and UVs");
+    mesh
 }
 
 /// The unit mesh of `key`'s primitive, with UVs in `TILE`s for its size and tangents for the

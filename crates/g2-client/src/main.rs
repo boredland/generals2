@@ -56,6 +56,7 @@ mod mission_hud;
 mod models;
 mod movie;
 mod net;
+mod procanim;
 mod profile;
 mod rig;
 mod select;
