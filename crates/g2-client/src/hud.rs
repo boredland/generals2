@@ -8,9 +8,9 @@
 //! - Bottom left: a header strip with power (figures and a load meter) and credits over the
 //!   minimap, which sits in a recessed bezel, with team and resource dots.
 //! - Bottom centre: the support powers as framed tiles with a cooldown sweep.
-//! - Bottom right: the selection card (a class silhouette in a portrait bezel, name, health,
-//!   status, training queue with progress) and the 3×3 build/production tray, each button with
-//!   its class icon, name, price and the progress of what it is training.
+//! - Bottom right: the selection card (a picture of the selected model in a portrait bezel,
+//!   name, health, status, training queue with progress) and the 3×3 build/production tray,
+//!   each button with its picture, name, price and the progress of what it is training.
 //! - World overlays: collector count over own supply centers (red at the faction cap), health bars
 //!   over the selection and damaged entities.
 //!
@@ -535,7 +535,7 @@ fn spawn(
                     )),
                 ))
                 .with_child((
-                    Node { width: pen.px(56.0), height: pen.px(56.0), ..default() },
+                    Node { width: percent(PORTRAIT_GLYPH), height: percent(PORTRAIT_GLYPH), ..default() },
                     ImageNode::new(art.icon(Icon::Building)),
                     Visibility::Hidden,
                     Portrait,
@@ -599,14 +599,14 @@ fn spawn(
     });
 }
 
-/// One build-tray button: the slot's class icon, name and price on a framed face, the progress
-/// of what the selection is training from it along the bottom edge, and the count queued.
+/// One build-tray button: the slot's picture (its class icon until the picture is taken), name
+/// and price on a framed face, the progress of what the selection is training from it along
+/// the bottom edge, and the count queued.
 fn grid_button(g: &mut ChildSpawnerCommands, pen: &Pen, art: &art::HudArt, kit: &art::Kit, trim: Color, i: usize) {
     g.spawn((
         Node {
             height: pen.px(48.0),
             padding: UiRect::new(pen.px(5.0), pen.px(4.0), pen.px(3.0), pen.px(5.0)),
-            column_gap: pen.px(4.0),
             align_items: AlignItems::Center,
             overflow: Overflow::clip(),
             ..default()
@@ -616,16 +616,15 @@ fn grid_button(g: &mut ChildSpawnerCommands, pen: &Pen, art: &art::HudArt, kit: 
         GridButton(i),
     ))
     .with_children(|b| {
-        b.spawn((
-            Node { width: pen.px(26.0), height: pen.px(26.0), flex_shrink: 0.0, ..default() },
-            ImageNode::new(art.icon(Icon::Vehicle)),
-            Visibility::Hidden,
-            GridGlyph(i),
-        ));
+        // The picture sits to the right, under the name and price where a long name runs
+        // over it; a square as tall as the face inside its bevel.
+        let mut picture = abs(auto(), pen.px(3.0), pen.px(3.0), auto());
+        (picture.width, picture.height) = (pen.px(GLYPH), pen.px(GLYPH));
+        b.spawn((picture, ImageNode::new(art.icon(Icon::Vehicle)), Visibility::Hidden, GridGlyph(i)));
         b.spawn(Node { flex_direction: FlexDirection::Column, flex_grow: 1.0, flex_shrink: 1.0, ..default() })
             .with_children(|t| {
-                t.spawn((pen.text("", 10.5, TEXT, true), Field::GridCell(i)));
-                t.spawn((pen.text("", 11.0, MONEY, false), Field::GridCost(i)));
+                t.spawn((pen.text("", 10.5, TEXT, true), shadow(), Field::GridCell(i)));
+                t.spawn((pen.text("", 11.0, MONEY, false), shadow(), Field::GridCost(i)));
             });
         let mut track = abs(pen.px(4.0), pen.px(4.0), auto(), pen.px(3.0));
         track.height = pen.px(3.0);
@@ -865,16 +864,19 @@ fn health_color(frac: f32) -> Color {
     }
 }
 
-/// Sets each build-tray button's face and icon from its slot: off when empty or unaffordable,
-/// pressed while held or while its building is being placed, lit under the cursor; and the
-/// count of its item in the selection's queue.
+/// Sets each build-tray button's face and picture from its slot: off when empty or
+/// unaffordable, pressed while held or while its building is being placed, lit under the
+/// cursor; and the count of its item in the selection's queue. A def's picture is its model
+/// (`thumbs.rs`), its class icon until that is taken; an upgrade's is the upgrade icon.
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn grid_faces(
     sim: Res<Sim>,
     sel: Res<Selection>,
     placing: Res<Placement>,
     art: Option<Res<art::HudArt>>,
+    mut thumbs: Option<ResMut<crate::thumbs::Thumbs>>,
     mouse: Option<Res<ButtonInput<MouseButton>>>,
+    forced: Option<Res<crate::tooltip::HoverSlot>>,
     mut faces: Query<(&GridButton, &RelativeCursorPosition, &mut ImageNode), (Without<GridIcon>, Without<GridGlyph>)>,
     mut glyphs: Query<(&GridGlyph, &mut ImageNode, &mut Visibility), Without<GridButton>>,
     mut counts: Query<(&GridCount, &mut Text)>,
@@ -887,15 +889,21 @@ fn grid_faces(
     let held = mouse.is_some_and(|m| m.pressed(MouseButton::Left));
     let queue = sel.0.first().and_then(|&id| world.entity(id)).map_or(&[][..], |e| &e.queue[..]);
     let usable = |i: usize| menu.get(i).is_some_and(|&slot| slot_cost(&sim, slot) <= credits);
+    let mut states = [Face::Off; 9];
     for (button, cursor, mut img) in &mut faces {
         let slot = menu.get(button.0).copied();
+        // A headless shot's `--hover-slot` lights its button as the cursor would.
+        let over = cursor.cursor_over() || forced.as_ref().is_some_and(|f| f.0 == button.0);
         let face = match slot {
             Some(Slot::Def(d)) if placing.0 == Some(d) => Face::Pressed,
             _ if !usable(button.0) => Face::Off,
-            _ if cursor.cursor_over() && held => Face::Pressed,
-            _ if cursor.cursor_over() => Face::Hover,
+            _ if over && held => Face::Pressed,
+            _ if over => Face::Hover,
             _ => Face::Idle,
         };
+        if let Some(s) = states.get_mut(button.0) {
+            *s = face;
+        }
         let want = kit.face(face);
         if img.image != want {
             img.image = want;
@@ -906,15 +914,25 @@ fn grid_faces(
             vis.set_if_neq(Visibility::Hidden);
             continue;
         };
-        let icon = art.icon(match slot {
-            Slot::Def(d) => Icon::of_def(world.rules.def(d)),
-            Slot::Upgrade(_) => Icon::Upgrade,
+        let picture = match (slot, thumbs.as_deref_mut()) {
+            (Slot::Def(d), Some(t)) => t.get(crate::thumbs::Key::of(&sim, d, Some(sim.local))),
+            _ => None,
+        };
+        let tint = match picture {
+            Some(_) => picture_tint(states.get(glyph.0).copied().unwrap_or(Face::Off)),
+            // An unaffordable button's icon fades with its face.
+            None if usable(glyph.0) => Color::WHITE,
+            None => Color::srgba(1.0, 1.0, 1.0, 0.35),
+        };
+        let want = picture.unwrap_or_else(|| {
+            art.icon(match slot {
+                Slot::Def(d) => Icon::of_def(world.rules.def(d)),
+                Slot::Upgrade(_) => Icon::Upgrade,
+            })
         });
-        if img.image != icon {
-            img.image = icon;
+        if img.image != want {
+            img.image = want;
         }
-        // An unaffordable button's icon fades with its face.
-        let tint = if usable(glyph.0) { Color::WHITE } else { Color::srgba(1.0, 1.0, 1.0, 0.35) };
         if img.color != tint {
             img.color = tint;
         }
@@ -1007,14 +1025,16 @@ fn power_tiles(
     }
 }
 
-/// The selection card's silhouette of the selected def's class, tinted toward the faction
-/// trim, and its health bar; both hidden without a selection.
+/// The selection card's picture of the selected entity's model in its owner's colours
+/// (`thumbs.rs`), filling the bezel; until that is taken, the silhouette of its class, tinted
+/// toward the faction trim. Its health bar too; both hidden without a selection.
 #[allow(clippy::type_complexity)]
 fn portrait(
     sim: Res<Sim>,
     sel: Res<Selection>,
     art: Option<Res<art::HudArt>>,
-    mut icon: Query<(&mut ImageNode, &mut Visibility), With<Portrait>>,
+    mut thumbs: Option<ResMut<crate::thumbs::Thumbs>>,
+    mut icon: Query<(&mut ImageNode, &mut Node, &mut Visibility), With<Portrait>>,
     mut track: Query<&mut Visibility, (With<HealthTrack>, Without<Portrait>)>,
 ) {
     let Some(art) = art else { return };
@@ -1024,17 +1044,46 @@ fn portrait(
     for mut v in &mut track {
         v.set_if_neq(shown);
     }
-    let Ok((mut img, mut vis)) = icon.single_mut() else { return };
+    let Ok((mut img, mut node, mut vis)) = icon.single_mut() else { return };
     vis.set_if_neq(shown);
     if let Some(e) = focus {
-        let want = art.icon(Icon::of_def(world.rules.def(e.def)));
+        let picture = thumbs.as_deref_mut().and_then(|t| t.get(crate::thumbs::Key::of(&sim, e.def, e.owner)));
+        let (want, tint, side) = match picture {
+            Some(p) => (p, Color::WHITE, percent(100)),
+            None => (
+                art.icon(Icon::of_def(world.rules.def(e.def))),
+                Color::WHITE.mix(&art::trim(world.player(sim.local).faction), 0.3),
+                percent(PORTRAIT_GLYPH),
+            ),
+        };
         if img.image != want {
             img.image = want;
         }
-        let tint = Color::WHITE.mix(&art::trim(world.player(sim.local).faction), 0.3);
         if img.color != tint {
             img.color = tint;
         }
+        if node.width != side {
+            (node.width, node.height) = (side, side);
+        }
+    }
+}
+
+/// The build tray's picture side (layout pixels at 720p): as tall as a button face inside its
+/// bevel.
+const GLYPH: f32 = 42.0;
+/// The portrait silhouette's share of the bezel's inside (56 of 68 px), as before pictures.
+const PORTRAIT_GLYPH: f32 = 82.0;
+
+/// A build-tray picture's tint by its button's face: as it is when idle, a little lifted under
+/// the cursor, darker while held, and dim and faded when off, so the face's state still reads
+/// over a colourful picture (the UI tint multiplies, so "off" can only dim, not desaturate).
+/// The tint multiplies in linear light: sRGB 0.7 lets through under half of it.
+fn picture_tint(face: Face) -> Color {
+    match face {
+        Face::Idle => Color::WHITE,
+        Face::Hover => Color::srgb(1.12, 1.12, 1.12),
+        Face::Pressed => Color::srgb(0.82, 0.82, 0.82),
+        Face::Off => Color::srgba(0.7, 0.7, 0.7, 0.7),
     }
 }
 

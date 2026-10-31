@@ -67,6 +67,7 @@ mod settings;
 mod sim;
 mod surface;
 mod terrain;
+mod thumbs;
 mod tooltip;
 mod utfwin;
 mod view;
@@ -524,7 +525,7 @@ fn windowed(
         view::ViewPlugin,
         camera::CameraPlugin,
         input::InputPlugin,
-        hud::HudPlugin,
+        (hud::HudPlugin, thumbs::ThumbsPlugin),
         (tooltip::TooltipPlugin, alerts::AlertsPlugin, mission_hud::MissionHudPlugin),
         audio::SoundPlugin,
         movie::MoviePlugin,
@@ -677,7 +678,7 @@ mod headless {
             crate::menu::MenuPlugin { blocking: true },
             crate::terrain::TerrainPlugin,
             crate::view::ViewPlugin,
-            crate::hud::HudPlugin,
+            (crate::hud::HudPlugin, crate::thumbs::ThumbsPlugin),
             crate::tooltip::TooltipPlugin,
             crate::alerts::AlertsPlugin,
             crate::mission_hud::MissionHudPlugin,
@@ -784,15 +785,16 @@ mod headless {
                 .poll(PollType::Wait { submission_index: None, timeout: None })
                 .expect("GPU poll failed");
         };
-        // Spawn mirrors and compile pipelines before capturing; with an imported alpha, also
-        // wait (up to ~10 s of frames) until every model's scene and clip has loaded, or the
-        // frame would show bare team rings or soldiers in their bind pose.
+        // Spawn mirrors and compile pipelines before capturing; wait (up to ~10 s of frames)
+        // until the HUD's unit pictures are taken, and with an imported alpha until every
+        // model's scene and clip has loaded, or the frame would show class silhouettes, bare
+        // team rings or soldiers in their bind pose.
         for _ in 0..3 {
             wait(&mut apps);
         }
         let loaded = |apps: &SubApps| {
             let w = apps.main.world();
-            crate::view::alpha_models_loaded(w) && crate::rig::clips_loaded(w)
+            crate::view::alpha_models_loaded(w) && crate::rig::clips_loaded(w) && crate::thumbs::ready(w)
         };
         for _ in 0..600 {
             if loaded(&apps) && crate::movie::held_frame_loaded(apps.main.world()) {
@@ -801,7 +803,7 @@ mod headless {
             wait(&mut apps);
         }
         if !loaded(&apps) {
-            eprintln!("imported alpha models or clips did not finish loading");
+            eprintln!("imported alpha models or clips, or the HUD's unit pictures, did not finish loading");
             return AppExit::error();
         }
         if !crate::movie::held_frame_loaded(apps.main.world()) {

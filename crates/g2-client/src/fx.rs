@@ -1143,7 +1143,7 @@ pub struct Billboard(pub f32);
 pub fn face_camera(
     time: Res<Time>,
     frozen: Option<Res<crate::view::FreezeEffects>>,
-    camera: Query<&GlobalTransform, With<Camera3d>>,
+    camera: Query<&GlobalTransform, With<crate::camera::RtsCamera>>,
     mut cards: Query<(&mut Billboard, &mut Transform, Option<&Particle>)>,
 ) {
     let Some(cam) = camera.iter().next() else { return };

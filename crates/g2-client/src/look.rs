@@ -23,14 +23,7 @@ pub fn camera_bundle() -> impl Bundle {
         // Physical units: daylight exposure with a daylight-strength sun (see `spawn_lights`).
         Exposure::SUNLIGHT,
         Tonemapping::AgX,
-        // The 2013 footage is contrasty and warm: deep brown shadows, bright dusty highlights.
-        // Its lit centre measures about 140-150 sRGB luminance; exposure is set to match.
-        ColorGrading {
-            global: ColorGradingGlobal { exposure: 1.15, temperature: 0.3, post_saturation: 1.22, ..default() },
-            shadows: ColorGradingSection { contrast: 1.3, saturation: 1.15, gamma: 0.9, ..default() },
-            midtones: ColorGradingSection { contrast: 1.18, saturation: 1.15, ..default() },
-            highlights: ColorGradingSection { contrast: 1.1, ..default() },
-        },
+        grading(),
         DistanceFog {
             color: Color::srgb(0.32, 0.27, 0.18),
             directional_light_color: Color::srgba(1.0, 0.85, 0.6, 0.25),
@@ -50,6 +43,17 @@ pub fn camera_bundle() -> impl Bundle {
         // Bevy can't pick this camera for their shadow LOD by itself.
         ShadowLodOrigin,
     )
+}
+
+/// The 2013 footage is contrasty and warm: deep brown shadows, bright dusty highlights. Its lit
+/// centre measures about 140-150 sRGB luminance; exposure is set to match.
+pub fn grading() -> ColorGrading {
+    ColorGrading {
+        global: ColorGradingGlobal { exposure: 1.15, temperature: 0.3, post_saturation: 1.22, ..default() },
+        shadows: ColorGradingSection { contrast: 1.3, saturation: 1.15, gamma: 0.9, ..default() },
+        midtones: ColorGradingSection { contrast: 1.18, saturation: 1.15, ..default() },
+        highlights: ColorGradingSection { contrast: 1.1, ..default() },
+    }
 }
 
 pub fn spawn_lights(commands: &mut Commands) {
