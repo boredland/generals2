@@ -51,6 +51,14 @@ impl crate::map::MapDef {
                 h.i64(r.0);
             }
         }
+        // Hashed only when present, so flat maps (Crater Ridge) keep their fingerprint.
+        if !self.heights.z.is_empty() {
+            h.i64(self.heights.step.0);
+            h.u64(((self.heights.w as u64) << 32) | self.heights.h as u64);
+            for z in &self.heights.z {
+                h.i64(z.0);
+            }
+        }
         // Hashed only when present, so maps without bridges keep their fingerprint.
         for b in &self.bridges {
             for v in [b.a.x.0, b.a.y.0, b.b.x.0, b.b.y.0, b.width.0, b.hp.map_or(-1, i64::from)] {

@@ -2356,6 +2356,13 @@ impl World {
             // Close to a point just inside range, so separation can't push it back out.
             return self.approach(id, tpos, tr + range - SLACK, speed).0;
         }
+        // Terrain between them: a mobile unit closes in until it sees the target (Zero Hour's
+        // `outOfWeaponRangeObject` with the view blocked); one that can't move holds fire.
+        let sd = self.rules.def(self.entities.get(id).unwrap().def);
+        let inside = self.entities.get(id).unwrap().inside.is_some();
+        if !inside && self.terrain_blocks(sd, pos, tdef, tpos, w.shell.is_some()) {
+            return if deployed { pos } else { self.approach(id, tpos, tr, speed).0 };
+        }
         self.entities.get_mut(id).unwrap().route = Route::default();
         if !ready || !in_band(w, gap, flying) {
             return pos;
