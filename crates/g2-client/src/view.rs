@@ -103,7 +103,7 @@ struct PartMeshes {
 }
 
 #[derive(Resource)]
-struct Assets3d {
+pub(crate) struct Assets3d {
     cube: Handle<Mesh>,
     cylinder: Handle<Mesh>,
     sphere: Handle<Mesh>,
@@ -323,9 +323,25 @@ fn with_maps(m: StandardMaterial, maps: &SurfaceMaps) -> StandardMaterial {
     }
 }
 
-/// Spawns `parts` in `faction`'s materials, with team-coloured parts in palette entry `team`;
-/// a `vehicle`'s metal in its own finer finish. Parts that move (`procanim.rs`) follow the
-/// pose of `owner`, the sim entity's root; without one they stand still.
+/// One part of a model in `faction`'s materials, team-coloured in palette entry `team`; a
+/// `vehicle`'s metal in its own finer finish.
+fn part_bundle(
+    assets: &Assets3d,
+    faction: Option<Faction>,
+    team: usize,
+    vehicle: bool,
+    p: &Part,
+) -> (Mesh3d, MeshMaterial3d<StandardMaterial>, Transform) {
+    let key = if vehicle { SlotKey::vehicle(p.slot) } else { SlotKey::from(p.slot) };
+    let material = match p.slot {
+        Slot::Team => assets.team[team].clone(),
+        _ => assets.materials[&(faction, key)].clone(),
+    };
+    (Mesh3d(assets.mesh(p)), MeshMaterial3d(material), p.transform())
+}
+
+/// Spawns `parts` (`part_bundle`). Parts that move (`procanim.rs`) follow the pose of `owner`,
+/// the sim entity's root; without one they stand still.
 #[allow(clippy::too_many_arguments)]
 fn spawn_parts(
     parent: &mut ChildSpawnerCommands,
@@ -337,14 +353,9 @@ fn spawn_parts(
     parts: &[Part],
 ) {
     for p in parts {
-        let mesh = assets.mesh(p);
-        let key = if vehicle { SlotKey::vehicle(p.slot) } else { SlotKey::from(p.slot) };
-        let material = match p.slot {
-            Slot::Team => assets.team[team].clone(),
-            _ => assets.materials[&(faction, key)].clone(),
-        };
-        let rest = p.transform();
-        let mut e = parent.spawn((Mesh3d(mesh), MeshMaterial3d(material), rest));
+        let bundle = part_bundle(assets, faction, team, vehicle, p);
+        let rest = bundle.2;
+        let mut e = parent.spawn(bundle);
         if let Some(owner) = owner.filter(|_| p.motion != models::Motion::Still) {
             e.insert(crate::procanim::Moving { owner, rest, motion: p.motion });
         }
@@ -352,6 +363,18 @@ fn spawn_parts(
             e.insert(crate::procanim::Tread(run.clone()));
         }
     }
+}
+
+/// `def`'s finished model at rest, as the battlefield draws it for `faction` and palette entry
+/// `team`: the HUD's thumbnails (`thumbs.rs`) stand it in a studio of their own.
+pub(crate) fn still_model(
+    assets: &Assets3d,
+    def: &g2_sim::Def,
+    faction: Option<Faction>,
+    team: usize,
+) -> Vec<(Mesh3d, MeshMaterial3d<StandardMaterial>, Transform)> {
+    let vehicle = def.is_unit() && def.armour != g2_sim::Armour::Infantry;
+    models::parts_for(def, faction).iter().map(|p| part_bundle(assets, faction, team, vehicle, p)).collect()
 }
 
 fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_sim::Entity) -> Entity {
