@@ -261,9 +261,11 @@ fn jets_fly_edge_to_edge() {
     }
 }
 
-/// A Normal AI flies its faction's airstrikes, never the recon; an Easy one uses none. Against
-/// the Onslaught, whose waves keep coming at the base for about 14 minutes: the strikes charge
-/// for 6-7 minutes, and a mirror skirmish on Crater Ridge is often over by then.
+/// A Normal AI flies its faction's airstrikes, never the recon; an Easy one never the recon
+/// either. Against the Onslaught, whose waves keep coming at the base for about 14 minutes:
+/// the strikes charge for 6-7 minutes, and a mirror skirmish on Crater Ridge is often over by
+/// then. (Easy aims only at three or more enemies it sees together, which it may not meet
+/// here; `easy_fires_a_ready_strike_at_a_visible_group` in `ai_tactics.rs` pins that it fires.)
 #[test]
 fn the_normal_ai_uses_airstrikes() {
     for f in [Faction::Eu, Faction::Apa] {
@@ -285,11 +287,9 @@ fn the_normal_ai_uses_airstrikes() {
                 .position(|p| matches!(p.kind, g2_sim::defs::PowerKind::Recon { .. }))
                 .map(|r| r as u8 + 1);
             let strikes = used.iter().filter(|&&k| k >= 1 && Some(k) != recon).count();
-            if level == g2_sim::AiLevel::Easy {
-                assert!(used.is_empty(), "{f:?} Easy used {used:?}");
-            } else {
+            assert!(recon.is_none_or(|r| !used.contains(&r)), "{f:?} {level:?} flew the recon");
+            if level == g2_sim::AiLevel::Normal {
                 assert!(strikes >= 1, "{f:?} Normal flew no airstrike: {used:?}");
-                assert!(recon.is_none_or(|r| !used.contains(&r)), "{f:?} Normal flew the recon");
             }
         }
     }
