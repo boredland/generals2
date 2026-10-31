@@ -4,8 +4,10 @@ use g2_rules::rules;
 use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World, record, verify_replay};
 
 /// `Normal` against `Easy`, every faction pairing from both starts on three maps: `Normal`
-/// wins clearly overall (measured 47 of 54: Crater Ridge 12, Tournament Desert 18, Alpine
-/// Assault 17; across all 86 skirmish maps 1,387 to 152, 9 undecided). Before Easy fired
+/// wins clearly overall (measured 49 of 54: Crater Ridge 13, Tournament Desert 18, Alpine
+/// Assault 18; across all 86 skirmish maps 1,391 to 151, 6 undecided). Before units steered
+/// around each other 47 of 54 (Crater Ridge 12, Alpine Assault 17) and 1,387 to 152, 9
+/// undecided. Before Easy fired
 /// its powers and pulled hit constructors home, and Normal placed its guns and routed its
 /// constructors around threats: 48 of 54 (Alpine Assault 18) and 1,401 to 143, 4 undecided;
 /// 36 of 54 and 1,254 to 272 before the balance pass, when war factories could wall in

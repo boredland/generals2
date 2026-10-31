@@ -20,6 +20,26 @@ const ACQUIRE: Fx = Fx::from_int(15);
 /// A unit keeps its planned route while its target moves less than this from where the route
 /// was planned: replanning a chase every tick would run an A* per attacker per tick.
 const REPLAN: Fx = Fx::from_int(8);
+/// Ticks ahead a ground unit looks for one it would walk into (1.5 s).
+const STEER_HORIZON: i64 = 45;
+/// Cost of a contact due now, in whole wanted steps strayed from (measured against 1 and 3:
+/// 2 leaves the fewest units held up in play).
+const STEER_WEIGHT: i64 = 2;
+/// Steering's candidate steps: the wanted step turned by (cos, sin) in thousandths, halved
+/// or not, and how far that strays from the wanted step in thousandths of its length. Each
+/// angle is tried clockwise first, so two units meeting exactly head-on turn the same way
+/// relative to themselves and pass. No turn beyond 45° and no stopping: with those, units
+/// in a crowd at a choke dithered sideways or halted for good.
+const STEER_STEPS: [(i64, i64, bool, i64); 8] = [
+    (1000, 0, false, 0),
+    (966, 259, false, 261),
+    (966, -259, false, 261),
+    (1000, 0, true, 500),
+    (866, 500, false, 518),
+    (866, -500, false, 518),
+    (707, 707, false, 765),
+    (707, -707, false, 765),
+];
 /// The `shooter` of shells from a general's power: no entity fired them. Never a live id
 /// (generation `u32::MAX` is never reached), so `World::entity` finds nothing for it.
 pub const POWER_SOURCE: EntityId = EntityId { index: u32::MAX, generation: u32::MAX };
@@ -245,6 +265,20 @@ pub struct World {
     pub(crate) stats: Vec<Stats>,
     /// The mission in play (`crate::mission`); `None` in a skirmish.
     pub(crate) mission: Option<crate::mission::Run>,
+    /// Ground units that steer around each other, as the tick's unit updates began, sorted by
+    /// `x` then id (`steer`), and the widest radius plus the farthest any walks in the
+    /// horizon. Rebuilt every tick from hashed state, so they need no hash.
+    bodies: Vec<Body>,
+    body_reach: Fx,
+}
+
+/// A ground unit others steer around: where it stood and walked as the tick began.
+#[derive(Clone, Copy, Debug)]
+struct Body {
+    id: EntityId,
+    pos: Vec2,
+    vel: Vec2,
+    radius: Fx,
 }
 
 impl World {
@@ -318,6 +352,8 @@ impl World {
             stats: vec![Stats::default(); setup.players.len()],
             checkpoints: Vec::new(),
             mission: None,
+            bodies: Vec::new(),
+            body_reach: Fx::ZERO,
         };
         for &(pos, amount) in &setup.map.supply_piles {
             world.spawn_neutral(rules.supply_pile(), pos, amount);
@@ -399,6 +435,7 @@ impl World {
             special_at: 0,
             rally: None,
             route: Route::default(),
+            vel: Vec2::ZERO,
         }
     }
 
@@ -774,11 +811,18 @@ impl World {
         self.update_power();
         self.refresh_nav();
         self.spawn_onslaught_waves();
+        // Everyone steers around where the others stood as the tick began, so the order units
+        // update in doesn't decide who gives way.
+        self.snapshot_bodies();
         for id in self.entities.ids() {
             let Some(e) = self.entities.get(id) else { continue };
             let d = self.rules.def(e.def);
             if d.is_unit() {
+                let (from, steers) = (e.pos, steers(d));
                 self.update_unit(id);
+                if steers && let Some(e) = self.entities.get_mut(id) {
+                    e.vel = if e.inside.is_none() { e.pos - from } else { Vec2::ZERO };
+                }
             } else if d.role() == Some(BuildingRole::Defense) {
                 self.update_defense(id);
             }
@@ -1596,7 +1640,97 @@ impl World {
                 }
             }
         }
+        let straight = u.route.waypoints.is_empty();
+        let p = self.steer(id, pos, p, stop, straight);
         (p, p.distance(target) <= contact + SLACK)
+    }
+
+    /// Turns or slows a ground unit's step from `pos` to `p` so it doesn't walk into another
+    /// ground unit within `STEER_HORIZON` ticks (velocity obstacles, sampled). Each candidate
+    /// step (`STEER_STEPS`: turned or halved) costs how far it strays from the wanted one plus
+    /// `STEER_WEIGHT` times how soon its first contact comes; the cheapest wins, the earlier on
+    /// a tie. Another unit that walked last tick is taken to steer as well, so each does half
+    /// of the avoiding (reciprocal velocity obstacles). One standing still is avoided alone,
+    /// and only by turning: slowing down never gets past it, so against it a halved step
+    /// counts as the full-speed step in its direction (without that, units halted for good in
+    /// front of idle ones). Contacts past the point where a unit walking straight at `stop`
+    /// arrives don't count, nor do units standing on `stop` (arriving pushes them, as before)
+    /// or units already inside this one and not getting deeper (separation sorts those out).
+    /// Collectors and aircraft neither steer nor are steered around: collectors pass through
+    /// each other and everything else, aircraft fly over.
+    fn steer(&self, id: EntityId, pos: Vec2, p: Vec2, stop: Vec2, straight: bool) -> Vec2 {
+        let e = self.entities.get(id).unwrap();
+        let d = self.rules.def(e.def);
+        let (want, radius, last) = (p - pos, d.radius, e.vel);
+        // A step too short to measure (the last hair of an arrival) has nothing to steer.
+        let speed = want.length();
+        if !steers(d) || speed == Fx::ZERO {
+            return p;
+        }
+        // Nothing farther than both walking straight at each other for the horizon matters.
+        let reach = radius + self.body_reach + speed * Fx::from_int(STEER_HORIZON);
+        let lo = self.bodies.partition_point(|b| b.pos.x < pos.x - reach);
+        let hi = self.bodies.partition_point(|b| b.pos.x <= pos.x + reach);
+        let near = || {
+            self.bodies[lo..hi].iter().filter(move |b| {
+                b.id != id && (b.pos.y - pos.y).abs() <= reach && b.pos.distance(stop) >= b.radius + radius
+            })
+        };
+        let horizon = Fx::from_int(STEER_HORIZON);
+        let limit = if straight { horizon.min(pos.distance(stop) / speed + Fx::ONE) } else { horizon };
+        // The first contact for step `v` (heading `dir` at full speed), in ticks.
+        let contact = |v: Vec2, dir: Vec2| {
+            near()
+                .filter_map(|b| {
+                    let w = if b.vel == Vec2::ZERO { dir } else { v.scale(Fx::from_int(2)) - last - b.vel };
+                    first_contact(b.pos - pos, w, radius + b.radius, limit)
+                })
+                .min()
+        };
+        let Some(soonest) = contact(want, want) else { return p };
+        let cost = |stray: i64, hit: Option<Fx>| {
+            let danger = hit.map_or(Fx::ZERO, |t| (horizon - t) / horizon);
+            Fx::from_ratio(stray, 1000) + Fx::from_int(STEER_WEIGHT) * danger
+        };
+        let mut best = (cost(0, Some(soonest)), want);
+        for &(cos, sin, half, stray) in &STEER_STEPS[1..] {
+            let (c, s) = (Fx::from_ratio(cos, 1000), Fx::from_ratio(sin, 1000));
+            let turned = Vec2::new(want.x * c + want.y * s, want.y * c - want.x * s);
+            let v = if half { turned.scale(Fx::from_ratio(1, 2)) } else { turned };
+            let to = pos + v;
+            if !self.map.contains(to) || self.nav_blocked_at(to) {
+                continue;
+            }
+            let c = cost(stray, contact(v, turned));
+            if c < best.0 {
+                best = (c, v);
+            }
+        }
+        pos + best.1
+    }
+
+    /// Whether `p` lies in a blocked cell, one a unit may not walk into.
+    fn nav_blocked_at(&self, p: Vec2) -> bool {
+        let (cx, cy) = self.nav.cell(p);
+        self.nav.blocked(cx, cy)
+    }
+
+    /// Rebuilds `bodies` from the ground units as they stand before the tick's updates, and
+    /// `body_reach`: the widest radius plus the farthest any of them walks in the horizon.
+    fn snapshot_bodies(&mut self) {
+        let mut bodies = core::mem::take(&mut self.bodies);
+        bodies.clear();
+        let mut reach = Fx::ZERO;
+        for e in self.entities.iter() {
+            let d = self.rules.def(e.def);
+            if steers(d) && e.inside.is_none() {
+                bodies.push(Body { id: e.id, pos: e.pos, vel: e.vel, radius: d.radius });
+                reach = reach.max(d.radius + d.speed() * Fx::from_int(STEER_HORIZON));
+            }
+        }
+        bodies.sort_unstable_by_key(|b| (b.pos.x, b.id));
+        self.bodies = bodies;
+        self.body_reach = reach;
     }
 
     /// Whether unit `id`, now at `p`, is within three of its radii of the spot it walks to and
@@ -1821,7 +1955,8 @@ impl World {
                                 return;
                             }
                             let (p, arrived) = self.approach(id, dest, Fx::ZERO, pace.min(speed));
-                            (p, if arrived { Order::Idle } else { Order::AttackMove { dest, pace, engaged: None } })
+                            let done = arrived || self.slot_taken(id, p, dest);
+                            (p, if done { Order::Idle } else { Order::AttackMove { dest, pace, engaged: None } })
                         }
                     }
                 }
@@ -2749,6 +2884,32 @@ fn edge_point(map: &crate::map::MapDef, from: Vec2, dir: Vec2, far: Fx) -> Vec2 
     } else {
         Vec2::new(p.x, ey)
     }
+}
+
+/// Whether units of `d` steer around each other (`World::steer`): ground units other than
+/// collectors, which pass through everything.
+fn steers(d: &crate::defs::Def) -> bool {
+    d.is_unit() && !d.flies() && d.collector().is_none()
+}
+
+/// Ticks until a disc moving by `w` per tick, relative to another disc `rel` away, first
+/// comes within `reach` of it; `None` if not within `limit` ticks. Two already closer count
+/// as touching now while they close in further, and not at all while they part.
+fn first_contact(rel: Vec2, w: Vec2, reach: Fx, limit: Fx) -> Option<Fx> {
+    let dot = |a: Vec2, b: Vec2| a.x * b.x + a.y * b.y;
+    let (a, b, c) = (dot(w, w), dot(rel, w), dot(rel, rel) - reach * reach);
+    if b <= Fx::ZERO {
+        return None;
+    }
+    if c < Fx::ZERO {
+        return Some(Fx::ZERO);
+    }
+    let disc = b * b - a * c;
+    if a == Fx::ZERO || disc < Fx::ZERO {
+        return None;
+    }
+    let t = (b - disc.sqrt()) / a;
+    (t <= limit).then_some(t)
 }
 
 /// `v` turned a quarter left and scaled to length `len`; zero for a zero `v`.
