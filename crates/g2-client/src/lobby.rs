@@ -10,7 +10,7 @@
 //! Nothing blocks the frame: sockets are non-blocking and polled once a frame, the connect runs
 //! on its own thread, and the TCP link is `net::Link`'s, whose threads read and write.
 
-use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
@@ -22,6 +22,7 @@ use g2_sim::{Faction, GeneralId, MapDef, PlayerId, PlayerSetup, Replay};
 
 use crate::menu::{Act, Screen, Ui};
 use crate::net::{COOP_TEAM, Link, Online};
+use crate::portmap::{Addresses, Forward, PortMap, Router};
 use crate::profile::Profile;
 use crate::sim::Sim;
 
@@ -160,7 +161,7 @@ pub fn apply(world: &mut World, act: Act, maps: &[String]) {
                 Offer { map: form.map.clone(), coop: form.coop, seed, own: pick(world, form.faction, form.general) };
             let opened = port
                 .map_err(|_| format!("{:?} is no port", form.port))
-                .and_then(|p| Host::open(p, Some(BEACON_PORT), form.name_or_default(), offer));
+                .and_then(|p| Host::open(p, Some(BEACON_PORT), form.name_or_default(), offer, Router::lan()));
             match opened {
                 Ok(h) => {
                     net = Net::Hosting(Box::new(h));
@@ -363,13 +364,61 @@ const ASK_EVERY: Duration = Duration::from_secs(2);
 /// ...and forgets one unheard for three questions. Generals forgets a game after twice its
 /// 10-second announcement interval; asking is quicker, so the list follows sooner.
 const FORGET_AFTER: Duration = Duration::from_secs(6);
-/// How long a join may take to reach the host.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The player name to start with: the account's, as Generals takes the login name.
 pub fn default_name() -> String {
     let name = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).unwrap_or_else(|_| "Player".into());
     name.chars().take(NAME_LENGTH).collect()
+}
+
+/// Where a game hosted on `port` can be joined from, for the host to send the other player:
+/// the router's public address once it forwards the port, the LAN address, and a public IPv6
+/// address. Each line is marked when it is a warning (no forward, or one no one can reach).
+pub fn address_lines(port: u16, forward: Option<&Forward>, own: &Addresses) -> Vec<(String, bool)> {
+    let lan = own.lan.map(|ip| format!("{ip}"));
+    let manual = format!(
+        "To play over the internet, forward TCP port {port} to {} in the router's settings.",
+        lan.as_deref().unwrap_or("this machine")
+    );
+    let mut lines = Vec::new();
+    match forward {
+        None => {}
+        Some(Forward::Asking) => lines.push((format!("Asking the router to forward port {port}..."), false)),
+        Some(Forward::Open { via, external: Some(ip), port: outside }) if crate::portmap::behind_another_nat(*ip) => {
+            lines.push((
+                format!(
+                    "The router forwards port {outside} ({via}), but its own address {ip} is behind another \
+                     router or the provider's NAT: players on the internet can't reach it."
+                ),
+                true,
+            ))
+        }
+        Some(Forward::Open { via, external: Some(ip), port: outside }) => lines.push((
+            format!(
+                "Internet: {} (the router forwards it, {via}): send this to the other player.",
+                sock(*ip, *outside)
+            ),
+            false,
+        )),
+        Some(Forward::Open { via, external: None, port: outside }) => lines
+            .push((format!("The router forwards port {outside} ({via}) but didn't say its public address."), false)),
+        Some(Forward::Closed(why)) => lines.push((format!("No port forward from the router: {why}. {manual}"), true)),
+    }
+    if let Some(ip) = own.lan {
+        lines.push((format!("Local network: {}", sock(ip.into(), port)), false));
+    }
+    if let Some(ip) = own.ipv6 {
+        lines.push((
+            format!("IPv6: {} (needs no forward, if the firewalls let port {port} in)", sock(ip.into(), port)),
+            false,
+        ));
+    }
+    lines
+}
+
+/// `ip:port`, an IPv6 address in brackets, as DIRECT CONNECT takes it.
+fn sock(ip: std::net::IpAddr, port: u16) -> String {
+    SocketAddr::new(ip, port).to_string()
 }
 
 /// What the lobby is doing: nothing (another page), looking for games, hosting one, or seated
@@ -542,7 +591,8 @@ struct Seated {
 
 /// A hosted game, open for one joiner.
 pub struct Host {
-    listener: TcpListener,
+    /// IPv6 and IPv4, on one port (`net::listen`).
+    listeners: Vec<TcpListener>,
     pub port: u16,
     /// Answers lobby questions; `None` when the beacon port is taken (another host on this
     /// machine): the game is then joined by address.
@@ -555,16 +605,29 @@ pub struct Host {
     guest: Option<Seated>,
     /// `Hello` sent; waiting for the joiner's `Join`.
     starting: bool,
+    /// The router's forward of the port, for players on the internet; it goes with the match
+    /// once it starts, and is removed when the game closes.
+    forward: Option<PortMap>,
+    /// This machine's own addresses, for the page.
+    addresses: Addresses,
     /// System lines for the page, newest last, as Generals' chat window shows who came and went.
     pub log: Vec<String>,
 }
 
 impl Host {
-    /// Listens on `port` (0: any free one) and answers lobby questions on `beacon`.
-    pub fn open(port: u16, beacon: Option<u16>, name: String, offer: Offer) -> Result<Host, String> {
-        let listener = TcpListener::bind(("0.0.0.0", port)).map_err(|e| format!("can't host on port {port}: {e}"))?;
-        listener.set_nonblocking(true).map_err(|e| e.to_string())?;
-        let port = listener.local_addr().map_err(|e| e.to_string())?.port();
+    /// Listens on `port` (0: any free one) and answers lobby questions on `beacon`; with a
+    /// `router`, asks it to forward the port.
+    pub fn open(
+        port: u16,
+        beacon: Option<u16>,
+        name: String,
+        offer: Offer,
+        router: Option<Router>,
+    ) -> Result<Host, String> {
+        let (listeners, port) = crate::net::listen(port).map_err(|e| e.replace("listen", "host"))?;
+        for l in &listeners {
+            l.set_nonblocking(true).map_err(|e| e.to_string())?;
+        }
         let listed = beacon.and_then(|b| UdpSocket::bind(("0.0.0.0", b)).ok());
         let unlisted = beacon.is_some() && listed.is_none();
         let beacon = listed;
@@ -576,7 +639,39 @@ impl Host {
         if unlisted {
             log.push("Not listed on the local network (its port is taken): join by address.".into());
         }
-        Ok(Host { listener, port, beacon, name, offer, map, revision: 0, guest: None, starting: false, log })
+        let forward = router.map(|r| PortMap::request(port, r));
+        let addresses = Addresses::of_this_machine();
+        Ok(Host {
+            listeners,
+            port,
+            beacon,
+            name,
+            offer,
+            map,
+            revision: 0,
+            guest: None,
+            starting: false,
+            forward,
+            addresses,
+            log,
+        })
+    }
+
+    /// Waits up to `d` for the router's answer (a headless render has no frames to poll in).
+    pub fn wait_for_router(&mut self, d: Duration) {
+        if let Some(f) = &mut self.forward {
+            f.wait(d);
+        }
+    }
+
+    /// The app is quitting: the forward goes now, waiting for the router.
+    pub fn drop_forward(&mut self) {
+        self.forward = None;
+    }
+
+    /// The page's lines on where the game can be reached, each marked when it is a warning.
+    pub fn addresses(&self) -> Vec<(String, bool)> {
+        address_lines(self.port, self.forward.as_ref().map(PortMap::state), &self.addresses)
     }
 
     /// The beacon's port, if listed (tests listen on any free one).
@@ -674,7 +769,7 @@ impl Host {
     }
 
     fn poll(&mut self) -> Polled {
-        let mut changed = false;
+        let mut changed = self.forward.as_mut().is_some_and(PortMap::poll);
         if let Some(b) = &self.beacon {
             let mut buf = [0u8; 1500];
             while let Ok((n, from)) = b.recv_from(&mut buf) {
@@ -692,11 +787,12 @@ impl Host {
                 }
             }
         }
-        while let Ok((stream, peer)) = self.listener.accept() {
+        while let Some((stream, peer)) = self.listeners.iter().find_map(|l| l.accept().ok()) {
             // One joiner: a second connection is closed at once, which its lobby reports.
             if self.guest.is_some() || stream.set_nonblocking(false).is_err() {
                 continue;
             }
+            let peer = crate::net::shown(peer);
             match Link::new(stream) {
                 Ok(link) => {
                     self.guest = Some(Seated { link, seat: None });
@@ -733,7 +829,8 @@ impl Host {
                     let g = self.guest.take().unwrap();
                     return match crate::net::match_sim(&setup, PlayerId(0)) {
                         Ok(mut sim) => {
-                            sim.online = Some(Online::new(g.link, PlayerId(0), PlayerId(1)));
+                            let online = Online::new(g.link, PlayerId(0), PlayerId(1));
+                            sim.online = Some(online.with_forward(self.forward.take()));
                             Polled::Started(Box::new(sim))
                         }
                         Err(e) => Polled::Failed(e),
@@ -752,6 +849,16 @@ impl Host {
         self.starting = false;
         self.log.push(format!("{why}."));
         Polled::Changed
+    }
+}
+
+impl Drop for Host {
+    /// The game closed (BACK, or the lobby left): the router's forward goes on a thread, so the
+    /// frame doesn't wait for the router. A match that started took the forward with it.
+    fn drop(&mut self) {
+        if let Some(f) = self.forward.take() {
+            f.release();
+        }
     }
 }
 
@@ -774,19 +881,14 @@ pub struct Guest {
 }
 
 impl Guest {
-    /// Connects to `addr` (`host:port`; the port defaults to Generals' 8088) on a thread.
+    /// Connects to `addr` on a thread: a name or an IPv4 or IPv6 address, with a port or
+    /// Generals' 8088 (`net::with_port`).
     pub fn connect(addr: &str, name: String, pick: Pick) -> Guest {
-        let addr = if addr.contains(':') { addr.to_owned() } else { format!("{addr}:{}", g2_sim::net::GAME_PORT) };
+        let addr = crate::net::with_port(addr);
         let (tx, rx) = channel();
         let target = addr.clone();
         std::thread::spawn(move || {
-            let r = target
-                .to_socket_addrs()
-                .map_err(|e| e.to_string())
-                .and_then(|mut a| a.next().ok_or_else(|| "no such address".to_owned()))
-                .and_then(|a| TcpStream::connect_timeout(&a, CONNECT_TIMEOUT).map_err(|e| e.to_string()))
-                .map_err(|e| format!("can't reach {target}: {e}"));
-            let _ = tx.send(r);
+            let _ = tx.send(crate::net::connect(&target));
         });
         let seat = Seat {
             name,
@@ -916,7 +1018,7 @@ mod tests {
     /// and whether its seat is free.
     #[test]
     fn a_lobby_finds_a_hosted_game() {
-        let host = Host::open(0, Some(0), "Hoster".into(), offer(true)).unwrap();
+        let host = Host::open(0, Some(0), "Hoster".into(), offer(true), None).unwrap();
         let beacon = host.beacon_port().unwrap();
         let mut net = Net::Hosting(Box::new(host));
         let mut d = Discovery::asking(vec![SocketAddr::from(([127, 0, 0, 1], beacon))]);
@@ -940,7 +1042,7 @@ mod tests {
     /// match; only an accepted game starts, and then both sides hold the same co-op match.
     #[test]
     fn accepting_and_starting_a_coop_game() {
-        let mut host = Host::open(0, None, "Hoster".into(), offer(false)).unwrap();
+        let mut host = Host::open(0, None, "Hoster".into(), offer(false), None).unwrap();
         let mut guest = Guest::connect(&format!("127.0.0.1:{}", host.port), "Joiner".into(), Pick::plain(Faction::Apa));
         until(&mut host, &mut guest, "seated", |h, g| h.guest().is_some() && g.offered.is_some());
         assert_eq!(host.setup().players[1].faction, Faction::Apa);

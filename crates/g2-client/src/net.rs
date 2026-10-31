@@ -5,26 +5,48 @@
 //! match up; `--host`/`--join` skip it.
 //!
 //! Frames are a little-endian `u32` length, then the message. One thread reads and one writes,
-//! so neither a slow peer nor a full socket buffer ever blocks a frame.
+//! so neither a slow peer nor a full socket buffer ever blocks a frame. The writer also sends a
+//! `Ping` twice a second, which the other side's frame loop answers: the round trip it times
+//! sets the delay orders run after (`Online::wish`), and a link silent for `DEAD_AFTER` (the
+//! other machine gone without closing it: a pulled cable, a crash, a router dropping the
+//! connection) ends the match with a message instead of a hang.
+//!
+//! Two machines on the internet need nothing between them but the host's port reachable: the
+//! host's router forwards it (`portmap.rs` asks it to) or the host has a public IPv6 address.
+//! No server of anyone's is involved.
 
+use std::collections::VecDeque;
 use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::Mutex;
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, TryRecvError, channel};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use g2_sim::net::{Lockstep, Message, NetError, PROTOCOL, build_id};
+use g2_sim::net::{DELAY_TURNS, Lockstep, MAX_DELAY_TURNS, Message, NetError, PROTOCOL, TURN_TICKS, build_id};
 use g2_sim::{CommandKind, Faction, PlayerId, PlayerSetup, Replay, World};
+
+use crate::portmap::{Addresses, PortMap, Router};
 
 /// Larger than any message this protocol sends (a `Hello` is well under a kilobyte).
 const MAX_FRAME: usize = 1 << 20;
 /// How long the joiner waits for the host's `Hello`, and the host for the joiner's `Join`.
 const HANDSHAKE: Duration = Duration::from_secs(30);
+/// How long a connect may take: a round trip across the world is under half a second, so a
+/// host that hasn't answered by then isn't there (or its port isn't forwarded).
+pub const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Fixed steps without the peer's orders before the HUD says so: half a second.
 const WAIT_SHOWN: u32 = 15;
 /// How long one write may block on a peer that stopped reading before the link gives up.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often each side's writer pings.
+const PING_EVERY: Duration = Duration::from_millis(500);
+/// A link with nothing heard for this long is dead. Pings come from the writer thread, so a
+/// machine busy loading the battlefield still sends them; twenty pings missed is no hiccup.
+pub const DEAD_AFTER: Duration = Duration::from_secs(10);
+/// The round trips the delay is chosen from: the slowest of these, so one quick ping after a
+/// slow spell doesn't lower it.
+const RTT_WINDOW: Duration = Duration::from_secs(10);
 
 pub struct Link {
     out: Option<Sender<Vec<u8>>>,
@@ -32,6 +54,13 @@ pub struct Link {
     writer: Option<JoinHandle<()>>,
     /// Kept to shut the socket down on drop, so the reader thread's blocking read returns.
     socket: TcpStream,
+    /// What a `Ping`'s stamp counts from: microseconds since this.
+    started: Instant,
+    /// When the reader thread last got a frame.
+    heard: Arc<Mutex<Instant>>,
+    /// Round trips timed, newest last, as long as `RTT_WINDOW` keeps them.
+    rtts: Mutex<VecDeque<(Instant, Duration)>>,
+    pub(crate) dead_after: Duration,
 }
 
 impl Link {
@@ -44,6 +73,9 @@ impl Link {
         let (mut reader, mut writer) = (stream.try_clone()?, stream);
         let (in_tx, in_rx) = channel::<Vec<u8>>();
         let (out_tx, out_rx) = channel::<Vec<u8>>();
+        let started = Instant::now();
+        let heard = Arc::new(Mutex::new(started));
+        let heard_by_reader = heard.clone();
         std::thread::spawn(move || {
             let mut len = [0u8; 4];
             while reader.read_exact(&mut len).is_ok() {
@@ -52,10 +84,24 @@ impl Link {
                 if n > MAX_FRAME || reader.read_exact(&mut buf).is_err() || in_tx.send(buf).is_err() {
                     break;
                 }
+                *heard_by_reader.lock().unwrap() = Instant::now();
             }
         });
         let writer = std::thread::spawn(move || {
-            for buf in out_rx {
+            let mut pinged: Option<Instant> = None;
+            loop {
+                // Due pings go first, so a steady stream of turns can't hold them back.
+                let due = pinged.map_or(Duration::ZERO, |p| PING_EVERY.saturating_sub(p.elapsed()));
+                let buf = if due.is_zero() {
+                    pinged = Some(Instant::now());
+                    Message::Ping { stamp: started.elapsed().as_micros() as u64 }.encode()
+                } else {
+                    match out_rx.recv_timeout(due) {
+                        Ok(buf) => buf,
+                        Err(RecvTimeoutError::Timeout) => continue,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                };
                 let frame = [&(buf.len() as u32).to_le_bytes()[..], &buf].concat();
                 if writer.write_all(&frame).is_err() {
                     break;
@@ -63,7 +109,16 @@ impl Link {
             }
             let _ = writer.shutdown(Shutdown::Both);
         });
-        Ok(Link { out: Some(out_tx), inbox: Mutex::new(in_rx), writer: Some(writer), socket })
+        Ok(Link {
+            out: Some(out_tx),
+            inbox: Mutex::new(in_rx),
+            writer: Some(writer),
+            socket,
+            started,
+            heard,
+            rtts: Mutex::new(VecDeque::new()),
+            dead_after: DEAD_AFTER,
+        })
     }
 
     pub fn send(&self, m: &Message) {
@@ -73,20 +128,67 @@ impl Link {
         }
     }
 
-    /// The next message, if one has arrived.
+    /// The next message, if one has arrived. Pings are answered and pongs timed here, on the
+    /// frame loop, so a round trip includes the frames each side takes to look at a message,
+    /// as every `Turn` does.
     pub fn try_recv(&self) -> Result<Option<Message>, String> {
-        match self.inbox.lock().unwrap().try_recv() {
-            Ok(b) => Message::decode(&b).map(Some).map_err(|e| format!("bad message from the other player: {e:?}")),
-            Err(TryRecvError::Empty) => Ok(None),
-            Err(TryRecvError::Disconnected) => Err("the other player left".into()),
+        loop {
+            let next = self.inbox.lock().unwrap().try_recv();
+            match next {
+                Ok(b) => match self.take(&b)? {
+                    Some(m) => return Ok(Some(m)),
+                    None => continue,
+                },
+                Err(TryRecvError::Empty) => {
+                    let silent = self.heard.lock().unwrap().elapsed();
+                    return if silent > self.dead_after {
+                        Err(format!("no word from the other player for {} seconds", silent.as_secs()))
+                    } else {
+                        Ok(None)
+                    };
+                }
+                Err(TryRecvError::Disconnected) => return Err("the other player left".into()),
+            }
         }
     }
 
+    /// A frame as a message for the caller, or `None` for a ping or pong, dealt with here.
+    fn take(&self, b: &[u8]) -> Result<Option<Message>, String> {
+        match Message::decode(b).map_err(|e| format!("bad message from the other player: {e:?}"))? {
+            Message::Ping { stamp } => self.send(&Message::Pong { stamp }),
+            Message::Pong { stamp } => {
+                let now = Instant::now();
+                let rtt = now.duration_since(self.started + Duration::from_micros(stamp));
+                let mut rtts = self.rtts.lock().unwrap();
+                rtts.push_back((now, rtt));
+                while rtts.front().is_some_and(|&(at, _)| now - at > RTT_WINDOW) {
+                    rtts.pop_front();
+                }
+            }
+            m => return Ok(Some(m)),
+        }
+        Ok(None)
+    }
+
+    /// The slowest round trip of the last `RTT_WINDOW`, once one has been timed.
+    pub fn rtt(&self) -> Option<Duration> {
+        self.rtts.lock().unwrap().iter().map(|&(_, d)| d).max()
+    }
+
     fn recv_timeout(&self, d: Duration) -> Result<Message, String> {
-        match self.inbox.lock().unwrap().recv_timeout(d) {
-            Ok(b) => Message::decode(&b).map_err(|e| format!("bad message from the other player: {e:?}")),
-            Err(RecvTimeoutError::Timeout) => Err("no answer from the other player".into()),
-            Err(RecvTimeoutError::Disconnected) => Err("the other player left".into()),
+        let until = Instant::now() + d;
+        loop {
+            let left = until.saturating_duration_since(Instant::now());
+            let next = self.inbox.lock().unwrap().recv_timeout(left);
+            match next {
+                Ok(b) => {
+                    if let Some(m) = self.take(&b)? {
+                        return Ok(m);
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => return Err("no answer from the other player".into()),
+                Err(RecvTimeoutError::Disconnected) => return Err("the other player left".into()),
+            }
         }
     }
 }
@@ -103,19 +205,114 @@ impl Drop for Link {
     }
 }
 
+/// Where a typed address points: `host`, `host:port`, `[v6]`, `[v6]:port` or a bare IPv6
+/// address, the port Generals' 8088 when left out. `host` may be a name, looked up in DNS.
+pub fn with_port(addr: &str) -> String {
+    let addr = addr.trim();
+    let bare_v6 = addr.matches(':').count() > 1 && !addr.starts_with('[');
+    match addr.rsplit_once(':') {
+        _ if bare_v6 => format!("[{addr}]:{}", g2_sim::net::GAME_PORT),
+        Some((_, port)) if !port.contains(']') => addr.to_owned(),
+        _ => format!("{addr}:{}", g2_sim::net::GAME_PORT),
+    }
+}
+
+/// Connects to `addr` (see `with_port`), trying each address its name has in turn, within
+/// `CONNECT_TIMEOUT` each; the error says what went wrong in words a player can act on.
+pub fn connect(addr: &str) -> Result<TcpStream, String> {
+    let target = with_port(addr);
+    let mut found: Vec<SocketAddr> =
+        target.to_socket_addrs().map_err(|e| format!("can't find {target}: {e}"))?.collect();
+    // IPv4 first: a home host behind a router is reachable on its forwarded IPv4 port, while
+    // its name's IPv6 address may sit behind a firewall that drops the connect.
+    found.sort_by_key(|a| a.is_ipv6());
+    let mut last = format!("{target} has no address");
+    for a in found {
+        match TcpStream::connect_timeout(&a, CONNECT_TIMEOUT) {
+            Ok(s) => return Ok(s),
+            Err(e) => {
+                last = match e.kind() {
+                    std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => format!(
+                        "no answer from {a} within {} seconds: no game is hosted there, or the host's \
+                         router doesn't forward the port",
+                        CONNECT_TIMEOUT.as_secs()
+                    ),
+                    std::io::ErrorKind::ConnectionRefused => format!("nothing is hosted at {a}"),
+                    _ => format!("can't reach {a}: {e}"),
+                }
+            }
+        }
+    }
+    Err(last)
+}
+
+/// Listens on `port` for both IPv4 and IPv6: one socket on systems whose IPv6 socket takes
+/// IPv4 too (Linux, macOS), two on those whose doesn't (Windows). Port 0: any free one, the
+/// same for both.
+pub fn listen(port: u16) -> Result<(Vec<TcpListener>, u16), String> {
+    let v6 = TcpListener::bind(("::", port)).ok();
+    let port = match &v6 {
+        Some(l) => l.local_addr().map_err(|e| e.to_string())?.port(),
+        None => port,
+    };
+    let v4 = TcpListener::bind(("0.0.0.0", port));
+    let listeners: Vec<TcpListener> = match (v6, v4) {
+        (Some(a), Ok(b)) => vec![a, b],
+        (None, Ok(b)) => vec![b],
+        // Taken by the IPv6 socket itself, which takes IPv4 as well.
+        (Some(a), Err(e)) if e.kind() == std::io::ErrorKind::AddrInUse => vec![a],
+        (_, Err(e)) => return Err(format!("can't listen on port {port}: {e}")),
+    };
+    let port = listeners[0].local_addr().map_err(|e| e.to_string())?.port();
+    Ok((listeners, port))
+}
+
+/// An address as a player reads it: an IPv4 peer on a dual-stack socket as plain IPv4.
+pub fn shown(addr: SocketAddr) -> String {
+    match addr {
+        SocketAddr::V6(v6) => match v6.ip().to_ipv4_mapped() {
+            Some(v4) => SocketAddr::new(v4.into(), v6.port()).to_string(),
+            None => addr.to_string(),
+        },
+        SocketAddr::V4(_) => addr.to_string(),
+    }
+}
+
 /// Host: waits for one player on `port`, then offers it `setup` (a replay with no commands)
 /// for player 1. Anyone who can reach the port can join: for a LAN or trusted players.
-pub fn host(port: u16, setup: Replay) -> Result<Link, String> {
-    let listener = TcpListener::bind(("0.0.0.0", port)).map_err(|e| format!("can't listen on port {port}: {e}"))?;
+/// With a `router`, asks it to forward the port first; the forward comes back with the link,
+/// to be kept for the match (`Online::with_forward`).
+pub fn host(port: u16, setup: Replay, router: Option<Router>) -> Result<(Link, Option<PortMap>), String> {
+    let (listeners, port) = listen(port)?;
+    let forward = router.map(|r| {
+        let mut f = PortMap::request(port, r);
+        f.wait(Duration::from_secs(3));
+        f
+    });
     eprintln!("waiting for a player to join on port {port}");
-    let (stream, peer) = listener.accept().map_err(|e| format!("accept failed: {e}"))?;
+    for (line, _) in
+        crate::lobby::address_lines(port, forward.as_ref().map(PortMap::state), &Addresses::of_this_machine())
+    {
+        eprintln!("{line}");
+    }
+    for l in &listeners {
+        l.set_nonblocking(true).map_err(|e| e.to_string())?;
+    }
+    let (stream, peer) = loop {
+        if let Some(got) = listeners.iter().find_map(|l| l.accept().ok()) {
+            break got;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    stream.set_nonblocking(false).map_err(|e| e.to_string())?;
+    let peer = shown(peer);
     let link = Link::new(stream).map_err(|e| e.to_string())?;
     let build = build_id(g2_rules::rules());
     link.send(&Message::Hello { protocol: PROTOCOL, build, setup });
     match link.recv_timeout(HANDSHAKE) {
         Ok(Message::Join { protocol, build: theirs }) if protocol == PROTOCOL && theirs == build => {
             eprintln!("{peer} joined");
-            Ok(link)
+            Ok((link, forward))
         }
         Ok(Message::Join { protocol, .. }) if protocol != PROTOCOL => {
             Err(format!("{peer} speaks protocol {protocol}, this build {PROTOCOL}: a different game version"))
@@ -130,7 +327,7 @@ pub fn host(port: u16, setup: Replay) -> Result<Link, String> {
 /// Joiner: connects to `addr` and receives the match, refusing a host that runs a different
 /// game version. The caller checks the match against its own maps, then calls `accept`.
 pub fn join(addr: &str) -> Result<(Link, Replay), String> {
-    let stream = TcpStream::connect(addr).map_err(|e| format!("can't reach {addr}: {e}"))?;
+    let stream = connect(addr)?;
     let link = Link::new(stream).map_err(|e| e.to_string())?;
     match link.recv_timeout(HANDSHAKE)? {
         Message::Hello { protocol, build, setup } if protocol == PROTOCOL && build == build_id(g2_rules::rules()) => {
@@ -219,6 +416,22 @@ pub fn match_sim(setup: &Replay, me: PlayerId) -> Result<crate::sim::Sim, String
     Ok(sim)
 }
 
+/// How long a turn lasts, against which round trips are measured.
+const TURN: Duration = Duration::from_millis(1000 * TURN_TICKS as u64 / g2_sim::TICKS_PER_SECOND as u64);
+/// Added to half the round trip when choosing a delay. A round trip as timed already holds the
+/// frame each side takes to look at a message and the jitter of the last ten seconds; this is
+/// one more fixed step (a thirtieth of a second) and a little for jitter not seen yet.
+const MARGIN: Duration = Duration::from_millis(40);
+/// First steps looked back over for stalls: two seconds.
+const STALL_WINDOW: usize = 60;
+/// Stalls in that window that ask for another turn of delay: a tenth.
+const STALLS_TOO_MANY: usize = STALL_WINDOW / 10;
+/// How long a delay raised for stalls is asked for after the last raise.
+const STALL_HOLD: Duration = Duration::from_secs(15);
+/// The most turns stalls may add to what the round trip asks for: stalls from a slow machine
+/// rather than a slow link aren't cured by any delay.
+const STALL_EXTRA: u32 = 2;
+
 /// This client's side of a network match.
 pub struct Online {
     link: Link,
@@ -227,11 +440,34 @@ pub struct Online {
     failed: Option<String>,
     /// Fixed steps in a row spent waiting for the peer.
     stalls: u32,
+    /// Whether each of the last `STALL_WINDOW` first steps waited.
+    recent: VecDeque<bool>,
+    /// The delay asked for after stalls, and when.
+    raised: Option<(Instant, u32)>,
+    /// The router's forward of the host's port, removed with the match.
+    forward: Option<PortMap>,
+    /// Off in tests that measure the fixed delay the protocol had before.
+    pub(crate) adaptive: bool,
 }
 
 impl Online {
     pub fn new(link: Link, me: PlayerId, peer: PlayerId) -> Online {
-        Online { link, lockstep: Lockstep::new(me, peer), failed: None, stalls: 0 }
+        Online {
+            link,
+            lockstep: Lockstep::new(me, peer),
+            failed: None,
+            stalls: 0,
+            recent: VecDeque::with_capacity(STALL_WINDOW),
+            raised: None,
+            forward: None,
+            adaptive: true,
+        }
+    }
+
+    /// Keeps the router's forward open for as long as the match lasts.
+    pub fn with_forward(mut self, forward: Option<PortMap>) -> Online {
+        self.forward = forward;
+        self
     }
 
     pub fn order(&mut self, kind: CommandKind) {
@@ -248,14 +484,33 @@ impl Online {
             Ok(go) => {
                 if first {
                     self.stalls = if go { 0 } else { self.stalls + 1 };
+                    if self.recent.len() == STALL_WINDOW {
+                        self.recent.pop_front();
+                    }
+                    self.recent.push_back(!go);
                 }
                 go
             }
             Err(e) => {
                 self.failed = Some(e);
+                self.end_forward();
                 false
             }
         }
+    }
+
+    /// The match is over (a winner, or the link lost): the router's forward goes, on a thread,
+    /// so the frame doesn't wait for the router.
+    pub fn end_forward(&mut self) {
+        if let Some(f) = self.forward.take() {
+            f.release();
+        }
+    }
+
+    /// The app is quitting: the forward goes now, waiting for the router (a second or two at
+    /// most), since a thread left behind would die with the process.
+    pub fn drop_forward(&mut self) {
+        self.forward = None;
     }
 
     fn exchange(&mut self, world: &mut World, first: bool) -> Result<bool, String> {
@@ -268,12 +523,35 @@ impl Online {
         if !first && !self.lockstep.behind(world) {
             return Ok(false);
         }
+        if first && self.adaptive {
+            let turn = world.tick() / TURN_TICKS;
+            let wish = self.wish(self.lockstep.delay_at(turn));
+            self.lockstep.set_wish(wish);
+        }
         let mut out = Vec::new();
         let go = self.lockstep.before_step(world, &mut out).map_err(describe)?;
         for t in out {
             self.link.send(&Message::Turn(t));
         }
         Ok(go)
+    }
+
+    /// The delay this side asks for: enough turns for a turn to cross half the slowest recent
+    /// round trip, and a turn more (up to `STALL_EXTRA`) for a while after frequent stalls,
+    /// which jitter causes without the round trip showing it.
+    fn wish(&mut self, current: u32) -> u32 {
+        let from_rtt = self.link.rtt().map_or(DELAY_TURNS, |rtt| {
+            let need = rtt / 2 + MARGIN;
+            need.as_micros().div_ceil(TURN.as_micros()) as u32
+        });
+        let now = Instant::now();
+        let stalled = self.recent.iter().filter(|&&s| s).count() >= STALLS_TOO_MANY;
+        if stalled && self.raised.is_none_or(|(at, _)| now - at > STALL_WINDOW as u32 * TURN / TURN_TICKS) {
+            self.raised = Some((now, (current + 1).min(from_rtt + STALL_EXTRA)));
+            self.recent.clear();
+        }
+        let raised = self.raised.filter(|&(at, _)| now - at < STALL_HOLD).map_or(0, |(_, d)| d);
+        from_rtt.max(raised).clamp(DELAY_TURNS, MAX_DELAY_TURNS)
     }
 
     /// What the HUD should say about the link, if anything.
@@ -322,7 +600,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let host_link = std::thread::spawn(move || host(port, setup));
+        let host_link = std::thread::spawn(move || host(port, setup, None));
         let (link, hello) = loop {
             match join(&format!("127.0.0.1:{port}")) {
                 Ok(j) => break j,
@@ -333,7 +611,7 @@ mod tests {
         let mut joiner = Sim::new(g2_rules::crater_ridge(), None, hello.seed, hello.players.clone());
         joiner.local = PlayerId(1);
         joiner.online = Some(Online::new(link, PlayerId(1), PlayerId(0)));
-        host_sim.online = Some(Online::new(host_link.join().unwrap().unwrap(), PlayerId(0), PlayerId(1)));
+        host_sim.online = Some(Online::new(host_link.join().unwrap().unwrap().0, PlayerId(0), PlayerId(1)));
 
         let first_unit = |s: &Sim| {
             s.world.entities().find(|e| e.owner == Some(s.local) && s.world.rules.def(e.def).is_unit()).unwrap().id
@@ -390,7 +668,7 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let host_link = std::thread::spawn(move || host(port, setup));
+        let host_link = std::thread::spawn(move || host(port, setup, None));
         let (link, hello) = loop {
             match join(&format!("127.0.0.1:{port}")) {
                 Ok(j) => break j,
@@ -400,7 +678,7 @@ mod tests {
         let mut joiner = match_sim(&hello, PlayerId(1)).expect("a co-op match the joiner can play");
         accept(&link);
         joiner.online = Some(Online::new(link, PlayerId(1), PlayerId(0)));
-        host_sim.online = Some(Online::new(host_link.join().unwrap().unwrap(), PlayerId(0), PlayerId(1)));
+        host_sim.online = Some(Online::new(host_link.join().unwrap().unwrap().0, PlayerId(0), PlayerId(1)));
 
         let mut sims = [host_sim, joiner];
         let end = g2_sim::onslaught::wave_tick(g2_sim::onslaught::WAVES) + 30 * 300;
@@ -476,7 +754,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let setup = host_sim.world.replay(&host_sim.setup);
-        let hosting = std::thread::spawn(move || host(port, setup));
+        let hosting = std::thread::spawn(move || host(port, setup, None));
         let (link, hello) = loop {
             if let Ok(j) = join(&format!("127.0.0.1:{port}")) {
                 break j;
@@ -487,7 +765,7 @@ mod tests {
         let mut joiner = Sim::new(g2_rules::crater_ridge(), None, hello.seed, hello.players);
         joiner.local = PlayerId(1);
         joiner.online = Some(Online::new(link, PlayerId(1), PlayerId(0)));
-        host_sim.online = Some(Online::new(hosting.join().unwrap().unwrap(), PlayerId(0), PlayerId(1)));
+        host_sim.online = Some(Online::new(hosting.join().unwrap().unwrap().0, PlayerId(0), PlayerId(1)));
         let app = |sim: Sim| {
             let mut app = App::new();
             app.add_plugins(MinimalPlugins)
@@ -562,7 +840,7 @@ mod tests {
         let port = listener.local_addr().unwrap().port();
         drop(listener);
         let setup = host_sim.world.replay(&host_sim.setup);
-        let hosting = std::thread::spawn(move || host(port, setup));
+        let hosting = std::thread::spawn(move || host(port, setup, None));
         let (link, hello) = loop {
             if let Ok(j) = join(&format!("127.0.0.1:{port}")) {
                 break j;
@@ -573,7 +851,7 @@ mod tests {
         let mut joiner = Sim::new(g2_rules::crater_ridge(), None, hello.seed, hello.players);
         joiner.local = PlayerId(1);
         joiner.online = Some(Online::new(link, PlayerId(1), PlayerId(0)));
-        host_sim.online = Some(Online::new(hosting.join().unwrap().unwrap(), PlayerId(0), PlayerId(1)));
+        host_sim.online = Some(Online::new(hosting.join().unwrap().unwrap().0, PlayerId(0), PlayerId(1)));
         let dir = std::env::temp_dir().join(format!("g2-quit-{}-{port}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let paths = [dir.join("host.g2rp"), dir.join("join.g2rp")];
@@ -665,5 +943,276 @@ mod tests {
         }
         assert!(stopped);
         assert_eq!(sim.online.as_ref().unwrap().status().as_deref(), Some("the other player left"));
+    }
+
+    /// A link with nothing on it, though still open (the other machine frozen, or its network
+    /// gone without a word), ends the match once `dead_after` passes, with a message saying so.
+    #[test]
+    fn a_silent_peer_ends_the_match() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let started = std::time::Instant::now();
+        let near = std::thread::spawn(move || Link::new(listener.accept().unwrap().0).unwrap());
+        // A peer that connects and never sends a byte, nor reads one.
+        let _silent = TcpStream::connect(addr).unwrap();
+        let mut near = near.join().unwrap();
+        near.dead_after = Duration::from_millis(700);
+        let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: None, ..p });
+        let mut sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
+        sim.online = Some(Online::new(near, PlayerId(0), PlayerId(1)));
+        let watching = std::time::Instant::now();
+        while sim.online.as_ref().unwrap().failed.is_none() {
+            assert!(watching.elapsed() < Duration::from_secs(5), "never noticed");
+            if sim.may_step(true) {
+                sim.world.step();
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(started.elapsed() >= Duration::from_millis(700));
+        let status = sim.online.as_ref().unwrap().status().unwrap();
+        assert!(status.starts_with("no word from the other player"), "{status}");
+    }
+
+    /// A live peer keeps the link alive by its pings alone, however long neither side has
+    /// anything else to say, and the pings time the round trip.
+    #[test]
+    fn pings_keep_a_quiet_link_alive_and_time_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let near = std::thread::spawn(move || Link::new(listener.accept().unwrap().0).unwrap());
+        let far = Link::new(TcpStream::connect(addr).unwrap()).unwrap();
+        let mut near = near.join().unwrap();
+        near.dead_after = Duration::from_millis(1200);
+        for _ in 0..250 {
+            assert_eq!(near.try_recv(), Ok(None));
+            assert_eq!(far.try_recv(), Ok(None));
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let rtt = near.rtt().expect("a round trip timed");
+        assert!(rtt < Duration::from_millis(100), "{rtt:?} on loopback");
+    }
+
+    /// Addresses as players type them: a name, IPv4 or IPv6, with or without a port.
+    #[test]
+    fn typed_addresses_get_a_port() {
+        for (typed, full) in [
+            ("192.168.1.20", "192.168.1.20:8088"),
+            ("192.168.1.20:47000", "192.168.1.20:47000"),
+            ("example.org", "example.org:8088"),
+            ("example.org:9", "example.org:9"),
+            ("[::1]:47000", "[::1]:47000"),
+            ("[2001:db8::7]", "[2001:db8::7]:8088"),
+            ("2001:db8::7", "[2001:db8::7]:8088"),
+            (" ::1 ", "[::1]:8088"),
+        ] {
+            assert_eq!(with_port(typed), full, "{typed}");
+        }
+        // Nothing listens on a port just freed: a refusal, said as such, at once.
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let e = connect(&format!("127.0.0.1:{port}")).unwrap_err();
+        assert!(e.starts_with("nothing is hosted at"), "{e}");
+        // A name looked up in DNS (the hosts file's, so no network is asked).
+        let named = TcpListener::bind("127.0.0.1:0").unwrap();
+        let s = connect(&format!("localhost:{}", named.local_addr().unwrap().port()));
+        assert!(s.is_ok(), "{s:?}");
+    }
+
+    /// A joiner reaches a host by its IPv6 address, the host listening on both families; and an
+    /// IPv4 joiner reaches the same host.
+    #[test]
+    fn joining_over_ipv6_loopback() {
+        if TcpListener::bind("[::1]:0").is_err() {
+            eprintln!("no IPv6 on this machine: skipped");
+            return;
+        }
+        for addr in ["[::1]", "127.0.0.1"] {
+            let players = Sim::players([Faction::Eu, Faction::Gla], false).map(|p| PlayerSetup { ai: None, ..p });
+            let sim = Sim::new(g2_rules::crater_ridge(), None, 3, players);
+            let setup = sim.world.replay(&sim.setup);
+            let port = TcpListener::bind("[::]:0").unwrap().local_addr().unwrap().port();
+            let hosting = std::thread::spawn(move || host(port, setup, None));
+            let started = std::time::Instant::now();
+            let (link, hello) = loop {
+                match join(&format!("{addr}:{port}")) {
+                    Ok(j) => break j,
+                    Err(e) => assert!(started.elapsed() < Duration::from_secs(10), "{addr}: {e}"),
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            accept(&link);
+            assert!(hosting.join().unwrap().is_ok(), "{addr}");
+            assert_eq!(hello.seed, 3);
+        }
+    }
+
+    /// A link that delays every byte by `one_way` plus up to `jitter`, in order, as a long
+    /// internet path does; bytes go through in chunks as they come.
+    fn latency_proxy(target: SocketAddr, one_way: Duration, jitter: Duration, seed: u64) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (a, _) = listener.accept().unwrap();
+            let b = TcpStream::connect(target).unwrap();
+            for (from, to, seed) in [(a.try_clone().unwrap(), b.try_clone().unwrap(), seed), (b, a, seed ^ 0x9e37)] {
+                let (tx, rx) = channel::<(Instant, Vec<u8>)>();
+                let mut from = from;
+                std::thread::spawn(move || {
+                    let (mut last, mut rng) = (Instant::now(), seed | 1);
+                    let mut buf = [0u8; 4096];
+                    while let Ok(n @ 1..) = from.read(&mut buf) {
+                        rng ^= rng << 13;
+                        rng ^= rng >> 7;
+                        rng ^= rng << 17;
+                        let extra = jitter.mul_f64((rng % 1000) as f64 / 1000.0);
+                        // Never before the bytes ahead of it: TCP keeps order.
+                        last = last.max(Instant::now() + one_way + extra);
+                        if tx.send((last, buf[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                });
+                let mut to = to;
+                std::thread::spawn(move || {
+                    for (at, bytes) in rx {
+                        std::thread::sleep(at.saturating_duration_since(Instant::now()));
+                        if to.write_all(&bytes).is_err() {
+                            break;
+                        }
+                    }
+                    let _ = to.shutdown(Shutdown::Both);
+                });
+            }
+        });
+        addr
+    }
+
+    /// What a match over a long link came to: the first steps that had to wait, of all
+    /// taken after the first `settle` seconds, and the delay changes each side agreed.
+    struct Played {
+        stalled: f64,
+        schedules: [Vec<(u32, u32)>; 2],
+        delays: Vec<u32>,
+    }
+
+    /// Two machines over a latency proxy of `rtt` with `jitter` each way, each on its own
+    /// thread and clock at 30 fixed steps a second as `SimPlugin` steps them (a second step
+    /// only to catch up), for `secs` seconds of wall time, each moving a unit now and then.
+    /// Then the one behind catches up to the other, and both must hold the same state.
+    fn play_over(rtt: Duration, jitter: Duration, adaptive: bool, secs: u32, settle: u32) -> Played {
+        let players: Vec<PlayerSetup> = [Faction::Apa, Faction::Gla]
+            .map(|faction| PlayerSetup {
+                faction,
+                starting_credits: 5_000,
+                ai: None,
+                general: None,
+                perks: Vec::new(),
+                rank: 1,
+                team: 0,
+            })
+            .to_vec();
+        let host_sim = Sim::new(g2_rules::crater_ridge(), None, 11, players);
+        let setup = host_sim.world.replay(&host_sim.setup);
+        let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let hosting = std::thread::spawn(move || host(port, setup, None));
+        std::thread::sleep(Duration::from_millis(50));
+        let target = SocketAddr::from(([127, 0, 0, 1], port));
+        let proxy = latency_proxy(target, rtt / 2, jitter, rtt.as_millis() as u64 + adaptive as u64);
+        let (link, hello) = join(&proxy.to_string()).unwrap();
+        accept(&link);
+        let mut joiner = match_sim(&hello, PlayerId(1)).unwrap();
+        joiner.online = Some(Online::new(link, PlayerId(1), PlayerId(0)));
+        let mut host_sim = host_sim;
+        host_sim.online = Some(Online::new(hosting.join().unwrap().unwrap().0, PlayerId(0), PlayerId(1)));
+        let frame = Duration::from_secs(1) / g2_sim::TICKS_PER_SECOND;
+        let run = move |mut sim: Sim, phase: Duration| {
+            sim.online.as_mut().unwrap().adaptive = adaptive;
+            std::thread::sleep(phase);
+            let start = Instant::now();
+            let (mut waits, mut steps) = (0u32, 0u32);
+            let mut delays = Vec::new();
+            for n in 0..secs * g2_sim::TICKS_PER_SECOND {
+                std::thread::sleep((start + frame * n).saturating_duration_since(Instant::now()));
+                if sim.world.tick() % 150 == 60 + 30 * sim.local.0 as u32 {
+                    let me = sim.local;
+                    let u = sim.world.entities().find(|e| e.owner == Some(me) && sim.world.rules.def(e.def).is_unit());
+                    let target = g2_sim::Vec2::from_int(100 + (n % 7) as i64 * 10, 120);
+                    sim.order(CommandKind::Move { units: vec![u.unwrap().id], target });
+                }
+                for first in [true, false] {
+                    let go = sim.may_step(first);
+                    if first && n >= settle * g2_sim::TICKS_PER_SECOND {
+                        steps += 1;
+                        waits += !go as u32;
+                    }
+                    if !go {
+                        break;
+                    }
+                    sim.world.step();
+                }
+                let online = sim.online.as_ref().unwrap();
+                assert_eq!(online.failed, None, "{rtt:?}");
+                delays.push(online.lockstep.delay_at(sim.world.tick() / TURN_TICKS));
+            }
+            (sim, waits, steps, delays)
+        };
+        let a = std::thread::spawn(move || run(host_sim, Duration::ZERO));
+        let b = std::thread::spawn(move || run(joiner, Duration::from_millis(13)));
+        let ((mut a, wa, sa, delays), (mut b, wb, sb, _)) = (a.join().unwrap(), b.join().unwrap());
+        // The one behind has every turn it needs from the one ahead, or will once the proxy
+        // delivers them.
+        let started = Instant::now();
+        while a.world.tick() != b.world.tick() {
+            assert!(started.elapsed() < Duration::from_secs(10), "ticks {} / {}", a.world.tick(), b.world.tick());
+            let behind = if a.world.tick() < b.world.tick() { &mut a } else { &mut b };
+            if behind.may_step(true) {
+                behind.world.step();
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        assert_eq!(a.world.state_hash(), b.world.state_hash(), "{rtt:?}: the same state on both");
+        let (la, lb) = (a.world.replay(&a.setup).commands, b.world.replay(&b.setup).commands);
+        assert_eq!(la, lb, "{rtt:?}");
+        assert!(la.iter().any(|c| c.player == PlayerId(0)) && la.iter().any(|c| c.player == PlayerId(1)));
+        let schedule = |s: &Sim| s.online.as_ref().unwrap().lockstep.schedule().to_vec();
+        Played { stalled: (wa + wb) as f64 / (sa + sb) as f64, schedules: [schedule(&a), schedule(&b)], delays }
+    }
+
+    /// Over a 150 ms and a 300 ms round trip with jitter, through a proxy delaying the real
+    /// sockets, two machines stay in step with the delay adapting (the same state at the end,
+    /// every hash check passed, every delay change on the same turn on both), and stall no more
+    /// than with the fixed two turns orders waited before. A turn waits for half the round trip,
+    /// not all of it, so the fixed delay held up to about 400 ms; at 600 ms it stalls often and
+    /// the adapted one hardly at all.
+    #[test]
+    fn a_long_link_stays_in_step_and_the_delay_adapts() {
+        let cases = [(150, 30), (300, 60), (600, 60)];
+        let runs: Vec<_> = cases
+            .iter()
+            .flat_map(|&(rtt, jitter)| [false, true].map(move |adaptive| (rtt, jitter, adaptive)))
+            .map(|(rtt, jitter, adaptive)| {
+                let (rtt, jitter) = (Duration::from_millis(rtt), Duration::from_millis(jitter));
+                std::thread::spawn(move || play_over(rtt, jitter, adaptive, 14, 4))
+            })
+            .collect();
+        let played: Vec<Played> = runs.into_iter().map(|r| r.join().unwrap()).collect();
+        for (k, &(rtt, jitter)) in cases.iter().enumerate() {
+            let (fixed, adapted) = (&played[2 * k], &played[2 * k + 1]);
+            let [sa, sb] = &adapted.schedules;
+            let common = sa.len().min(sb.len());
+            assert_eq!(sa[..common], sb[..common], "{rtt} ms: delay changes on the same turns");
+            assert_eq!(fixed.schedules[0], vec![(0, DELAY_TURNS)], "not adaptive: no change");
+            let settled = adapted.delays.last().copied().unwrap();
+            println!(
+                "{rtt} ms round trip, jitter up to {jitter} ms each way: stalled {:.1}% of steps at 2 turns, \
+                 {:.1}% adapting (delay settled at {settled} turns; changes {sa:?})",
+                100.0 * fixed.stalled,
+                100.0 * adapted.stalled,
+            );
+            assert!(adapted.stalled < 0.05, "{rtt} ms: stalled {:.3} adapting", adapted.stalled);
+            assert!(adapted.stalled <= fixed.stalled, "{rtt} ms");
+            assert!(settled <= MAX_DELAY_TURNS);
+        }
+        assert!(played[4].stalled > 0.2, "600 ms with the fixed delay stalls often: {:.3}", played[4].stalled);
     }
 }

@@ -28,6 +28,8 @@
 //! each other, or with `--coop` side by side against the Onslaught's waves (a third player of
 //! the first faction neither of them plays, in the order EU, APA, GLA).
 //! Both run the same build. The game runs at one shared speed: no pause and no fast-forward.
+//! The host's router is asked to forward PORT (`portmap.rs`) and the addresses to join at are
+//! printed; `--join` takes a name or an IPv4 or IPv6 address (`[::1]:8088`), 8088 if no port.
 //! The main menu's NETWORK page (`--menu lobby`) sets the same matches up without flags.
 //!
 //! With an imported 2013 alpha (the main menu's 2013 Alpha page or `g2-tools alpha DIR import`, found in `$G2_ALPHA_CACHE` or the
@@ -56,6 +58,7 @@ mod mission_hud;
 mod models;
 mod movie;
 mod net;
+mod portmap;
 mod procanim;
 mod profile;
 mod rig;
@@ -358,7 +361,8 @@ fn main() -> AppExit {
                     .collect();
             }
             // The lobby pages show a live session: the lobby looking on this network, the game
-            // options a game hosted here (on any free port, unlisted) with its seat open.
+            // options a game hosted here (on any free port, unlisted) with its seat open, and
+            // the router's answer to forwarding that port.
             let net = match ui.screen {
                 menu::Screen::Lobby => lobby::Net::Browsing(lobby::Discovery::lan()),
                 menu::Screen::NetGame => {
@@ -368,8 +372,11 @@ fn main() -> AppExit {
                         seed: args.seed,
                         own: lobby::Pick::plain(args.factions[0]),
                     };
-                    match lobby::Host::open(0, None, ui.lobby.name.clone(), offer) {
-                        Ok(h) => lobby::Net::Hosting(Box::new(h)),
+                    match lobby::Host::open(0, None, ui.lobby.name.clone(), offer, portmap::Router::lan()) {
+                        Ok(mut h) => {
+                            h.wait_for_router(std::time::Duration::from_secs(4));
+                            lobby::Net::Hosting(Box::new(h))
+                        }
                         Err(e) => {
                             eprintln!("{e}");
                             return AppExit::error();
@@ -467,10 +474,11 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
     Ok(sim)
 }
 
-/// Waits for a player to join, then plays the loaded match as player 0 with them.
+/// Waits for a player to join, then plays the loaded match as player 0 with them. The router
+/// is asked to forward the port first, and the forward kept until the match ends.
 fn host_sim(mut sim: Sim, port: u16) -> Result<Sim, String> {
-    let link = net::host(port, sim.world.replay(&sim.setup))?;
-    sim.online = Some(net::Online::new(link, PlayerId(0), PlayerId(1)));
+    let (link, forward) = net::host(port, sim.world.replay(&sim.setup), portmap::Router::lan())?;
+    sim.online = Some(net::Online::new(link, PlayerId(0), PlayerId(1)).with_forward(forward));
     Ok(sim)
 }
 
@@ -821,6 +829,13 @@ mod headless {
         if !std::path::Path::new(&path).exists() {
             eprintln!("screenshot was not written to {path}");
             return AppExit::error();
+        }
+        // A game options shot hosted a game and asked the router to forward its port: the
+        // forward goes now, before the process exits (a thread would die with it).
+        if let Some(crate::lobby::Net::Hosting(h)) =
+            apps.main.world_mut().get_resource_mut::<crate::lobby::Net>().as_deref_mut()
+        {
+            h.drop_forward();
         }
         // What the frame costs: every mesh drawn, and the average of 30 more full frames
         // (render, then wait for the GPU), so scenery and model detail can be budgeted.

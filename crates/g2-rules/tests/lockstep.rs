@@ -2,7 +2,7 @@
 //! public `net` API: messages go through their byte encoding, arrive late and in bursts.
 
 use g2_rules::{crater_ridge, rules};
-use g2_sim::net::{DELAY_TURNS, Lockstep, Message, NetError, TURN_TICKS, Turn};
+use g2_sim::net::{DELAY_TURNS, Lockstep, MAX_DELAY_TURNS, Message, NetError, TURN_TICKS, Turn};
 use g2_sim::{CommandKind, Faction, MatchSetup, PlayerId, PlayerSetup, Vec2, World, verify_replay};
 
 const HOST: PlayerId = PlayerId(0);
@@ -61,7 +61,18 @@ fn play(
     frames: u32,
     delay: u32,
     jitter: u32,
+    orders: impl FnMut(&World, PlayerId) -> Vec<CommandKind>,
+) -> Result<[Machine; 2], NetError> {
+    play_wishing(frames, delay, jitter, orders, |_, _| DELAY_TURNS)
+}
+
+/// `play`, each machine wishing for `wish(frame, player)` turns of delay before every frame.
+fn play_wishing(
+    frames: u32,
+    delay: u32,
+    jitter: u32,
     mut orders: impl FnMut(&World, PlayerId) -> Vec<CommandKind>,
+    mut wish: impl FnMut(u32, PlayerId) -> u32,
 ) -> Result<[Machine; 2], NetError> {
     let mut m = [Machine::new(HOST, JOINER), Machine::new(JOINER, HOST)];
     let mut sent = 0u32;
@@ -71,6 +82,7 @@ fn play(
             for kind in orders(&m[i].world, me) {
                 m[i].net.order(kind);
             }
+            m[i].net.set_wish(wish(now, me));
             for t in m[i].frame(now)? {
                 sent += 1;
                 // Late in bursts, never reordered: TCP keeps order, so each message arrives no
@@ -101,6 +113,27 @@ fn some_orders(world: &World, me: PlayerId) -> Vec<CommandKind> {
     out
 }
 
+/// Both machines played the same match up to where the one behind stands: the same commands
+/// on the same ticks, and the same state when replayed to there; each replay re-simulates.
+fn same_match(a: &Machine, b: &Machine, what: &str) {
+    let n = a.world.tick().min(b.world.tick());
+    let cut = |m: &Machine| {
+        let mut r = m.world.replay(&setup());
+        r.length_ticks = n;
+        r.hashes.retain(|&(t, _)| t <= n);
+        r.commands.retain(|c| c.tick < n);
+        r
+    };
+    let (ra, rb) = (cut(a), cut(b));
+    assert_eq!(verify_replay(&ra, crater_ridge(), rules()), verify_replay(&rb, crater_ridge(), rules()), "{what}");
+    assert!(verify_replay(&ra, crater_ridge(), rules()).is_ok(), "{what}");
+    assert_eq!(ra.commands, rb.commands, "{what}");
+    assert!(ra.commands.iter().any(|c| c.player == HOST) && ra.commands.iter().any(|c| c.player == JOINER), "{what}");
+    for m in [a, b] {
+        assert!(verify_replay(&m.world.replay(&setup()), crater_ridge(), rules()).is_ok(), "{what}");
+    }
+}
+
 /// The two machines step the same match: same state at every turn, same final state, and the
 /// match replays from either one's log. They wait for each other when the link is slow.
 #[test]
@@ -109,27 +142,7 @@ fn two_machines_stay_in_step_over_a_slow_link() {
         let [a, b] = play(30 * 60, delay, jitter, some_orders).unwrap();
         let (ta, tb) = (a.world.tick(), b.world.tick());
         assert!(ta.abs_diff(tb) <= TURN_TICKS * (DELAY_TURNS + 1), "{delay}/{jitter}: ticks {ta} vs {tb}");
-        // Bring the one ahead back to the other's tick by replaying, then compare.
-        let n = ta.min(tb);
-        let replay_a = a.world.replay(&setup());
-        let mut short = replay_a.clone();
-        short.length_ticks = n;
-        short.hashes.retain(|&(t, _)| t <= n);
-        let rb = b.world.replay(&setup());
-        let mut short_b = rb.clone();
-        short_b.length_ticks = n;
-        short_b.hashes.retain(|&(t, _)| t <= n);
-        assert_eq!(
-            verify_replay(&short, crater_ridge(), rules()),
-            verify_replay(&short_b, crater_ridge(), rules()),
-            "{delay}/{jitter}"
-        );
-        // The applied commands agree, both players' orders ran, and each replay re-simulates.
-        let ran = |r: &g2_sim::Replay| r.commands.iter().filter(|c| c.tick < n).cloned().collect::<Vec<_>>();
-        assert_eq!(ran(&replay_a), ran(&rb), "{delay}/{jitter}");
-        assert!(ran(&replay_a).iter().any(|c| c.player == HOST) && ran(&rb).iter().any(|c| c.player == JOINER));
-        assert!(verify_replay(&replay_a, crater_ridge(), rules()).is_ok());
-        assert!(verify_replay(&rb, crater_ridge(), rules()).is_ok());
+        same_match(&a, &b, &format!("{delay}/{jitter}"));
         // A slow link makes the machines wait; a fast one never does.
         if delay == 0 {
             assert_eq!(a.stalls + b.stalls, 0);
@@ -138,6 +151,45 @@ fn two_machines_stay_in_step_over_a_slow_link() {
             assert!(a.stalls > 0 && b.stalls > 0, "a slow link is waited for");
         }
     }
+}
+
+/// The delay follows the wishes: up at once to the larger of both, down a turn at a time,
+/// each change taking effect on the same turn on both machines, which stay in step throughout
+/// (any difference would fail a hash check). Over a link of 9 frames each way (a 600 ms round
+/// trip at 30 frames a second) with jitter, a delay raised to fit it ends nearly every stall.
+#[test]
+fn the_delay_changes_on_the_same_turn_on_both_machines() {
+    // The joiner asks for 7 turns from frame 300, both ask for 4 from 900, and from 1500
+    // nobody asks for more than the least.
+    let wish = |now: u32, me: PlayerId| match now {
+        300..900 if me == JOINER => 7,
+        900..1500 => 4,
+        _ => DELAY_TURNS,
+    };
+    for (link, jitter) in [(0, 0), (4, 3), (9, 4)] {
+        let [a, b] = play_wishing(30 * 70, link, jitter, some_orders, wish).unwrap();
+        let what = format!("{link}/{jitter}");
+        same_match(&a, &b, &what);
+        let (sa, sb) = (a.net.schedule(), b.net.schedule());
+        let common = sa.len().min(sb.len());
+        assert!(common >= 7, "{what}: changes {sa:?}");
+        assert_eq!(sa[..common], sb[..common], "{what}: both switch on the same turns");
+        let delays: Vec<u32> = sa.iter().map(|&(_, d)| d).collect();
+        assert_eq!(delays[..7], [2, 7, 6, 5, 4, 3, 2], "{what}: up at once, down a turn at a time");
+        assert!(sa.windows(2).all(|w| w[0].0 < w[1].0), "{what}: turns in order");
+        // Up at once: in force within a round trip and a few turns of the joiner's wish.
+        assert!(sa[1].0 * TURN_TICKS <= 300 + 2 * link + 2 * jitter + 6 * TURN_TICKS, "{what}: {sa:?}");
+    }
+    // The stalls a long link causes, with the delay the protocol had before and with one wished
+    // for it: 9 frames each way need 7 turns of delay.
+    let stalls = |turns: u32| {
+        let [a, b] = play_wishing(30 * 60, 9, 4, some_orders, |_, _| turns).unwrap();
+        same_match(&a, &b, &format!("{turns} turns"));
+        (a.stalls + b.stalls) as f32 / (2.0 * 30.0 * 60.0)
+    };
+    let (before, after) = (stalls(DELAY_TURNS), stalls(7));
+    println!("600 ms round trip: {:.0}% of frames stalled at 2 turns, {:.1}% at 7", 100.0 * before, 100.0 * after);
+    assert!(before > 0.3 && after < 0.02, "stalled {before} before, {after} after");
 }
 
 /// A machine whose state differs is caught at the next hash check.
@@ -184,20 +236,28 @@ fn a_machine_waits_for_the_peer_and_refuses_gaps() {
     assert_eq!(a.world.tick(), DELAY_TURNS * TURN_TICKS);
     let turns: Vec<u32> = sent.iter().map(|t| t.turn).collect();
     assert_eq!(turns, (DELAY_TURNS..=2 * DELAY_TURNS).collect::<Vec<_>>());
-    let skip = Turn { turn: DELAY_TURNS + 1, commands: vec![], check: None };
+    let turn = |turn: u32, check: Option<(u32, u64)>| Turn { turn, commands: vec![], check, wish: 2, delay: None };
+    let skip = turn(DELAY_TURNS + 1, None);
     assert!(matches!(a.net.receive(&mut a.world, skip), Err(NetError::Protocol(_))));
     // The first turn is sent on tick 0, a hash tick: it must carry the check for tick 0.
     for check in [None, Some((3, 1)), Some((30, 1))] {
         let mut b = Machine::new(HOST, JOINER);
-        let t = Turn { turn: DELAY_TURNS, commands: vec![], check };
+        let t = turn(DELAY_TURNS, check);
         assert!(matches!(b.net.receive(&mut b.world, t), Err(NetError::Protocol(_))), "{check:?}");
     }
     // A non-hash tick must carry none.
     let mut c = Machine::new(HOST, JOINER);
-    let ok = Turn { turn: DELAY_TURNS, commands: vec![], check: Some((0, c.world.state_hash())) };
+    let ok = turn(DELAY_TURNS, Some((0, c.world.state_hash())));
     c.net.receive(&mut c.world, ok).unwrap();
-    let extra = Turn { turn: DELAY_TURNS + 1, commands: vec![], check: Some((TURN_TICKS, 1)) };
+    let extra = turn(DELAY_TURNS + 1, Some((TURN_TICKS, 1)));
     assert!(matches!(c.net.receive(&mut c.world, extra), Err(NetError::Protocol(_))));
+    // Only the host sets the delay, and only within its bounds.
+    let mut host = Machine::new(HOST, JOINER);
+    let from_joiner = Turn { delay: Some(4), ..turn(DELAY_TURNS, Some((0, host.world.state_hash()))) };
+    assert!(matches!(host.net.receive(&mut host.world, from_joiner), Err(NetError::Protocol(_))));
+    let mut joiner = Machine::new(JOINER, HOST);
+    let too_long = Turn { delay: Some(MAX_DELAY_TURNS as u8 + 1), ..turn(DELAY_TURNS, Some((0, 0))) };
+    assert!(matches!(joiner.net.receive(&mut joiner.world, too_long), Err(NetError::Protocol(_))));
 }
 
 /// Every message survives its byte encoding, and garbage is refused, never a panic.
@@ -207,12 +267,16 @@ fn messages_round_trip_and_garbage_is_refused() {
     let msgs = [
         Message::Hello { protocol: 1, build: 7, setup: setup.clone() },
         Message::Join { protocol: 1, build: u64::MAX },
-        Message::Turn(Turn { turn: 9, commands: vec![], check: None }),
+        Message::Turn(Turn { turn: 9, commands: vec![], check: None, wish: 2, delay: None }),
         Message::Turn(Turn {
             turn: 12,
             commands: vec![CommandKind::Surrender, CommandKind::Power { slot: 0, at: Vec2::from_int(3, 4) }],
             check: Some((30, 0xdead_beef)),
+            wish: 7,
+            delay: Some(5),
         }),
+        Message::Ping { stamp: 1 },
+        Message::Pong { stamp: u64::MAX },
         Message::Lobby { protocol: 3, build: 7, setup, revision: 4, name: "Hôte".into() },
         Message::Seat(g2_sim::net::Seat {
             name: "Joiner".into(),

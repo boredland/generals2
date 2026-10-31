@@ -2,11 +2,19 @@
 //! No IO here: the driver moves `Message` bytes; this module decides when the sim may step.
 //!
 //! Time is cut into turns of `TURN_TICKS` ticks. The orders a player gives during turn `k` run
-//! at the start of turn `k + DELAY_TURNS`, on both machines. Each player sends one `Turn` per
+//! at the start of turn `k + delay`, on both machines. Each player sends one `Turn` per
 //! turn, empty or not, so the other knows it has everything for that turn, and a machine steps
 //! into a turn only once it holds the other player's `Turn` for it: both apply the same commands
-//! on the same tick. Every `HASH_INTERVAL` ticks a `Turn` also carries the sender's state hash,
-//! and a mismatch is a desync.
+//! on the same tick. Every `HASH_INTERVAL` ticks the next `Turn` sent also carries the sender's
+//! state hash, and a mismatch is a desync.
+//!
+//! The delay starts at `DELAY_TURNS`, room for a round trip on a LAN. Over the internet a round
+//! trip can take longer than that, and every turn would wait for the other player's orders, so
+//! the delay follows the link: each machine says how many turns it would like (`Lockstep::want`),
+//! the joiner tells the host its wish in a `Turn`, and the host announces the change in one of
+//! its own `Turn`s, for a turn neither machine has reached. Both switch at that turn's start.
+//! Which turn a machine sends when only decides how early the other gets it: the turn number in
+//! every `Turn` says when its orders run, so the delay can't desync the sims, only stall them.
 //!
 //! Commands from the peer are scheduled as the peer's player, so the sim's own ownership checks
 //! refuse anything aimed at the other player's units. AI players (co-op Onslaught's waves) need
@@ -15,7 +23,8 @@
 //! Before the match, the lobby: the host offers the match as it stands (`Lobby`), the joiner
 //! answers with the seat it picked (`Seat`), and once the joiner is ready the host starts it
 //! with `Hello`, which the joiner accepts with `Join`. On a local network hosts are found by a
-//! `Beacon` query, as Generals' LAN lobby finds games.
+//! `Beacon` query, as Generals' LAN lobby finds games. Throughout, `Ping` and `Pong` measure the
+//! round trip and show the link is alive.
 
 use std::collections::BTreeMap;
 
@@ -26,7 +35,7 @@ use crate::replay::{DecodeError, HASH_INTERVAL, Reader, Replay, Writer};
 use crate::world::World;
 
 /// Bumped on any change to `Message`, `Beacon` or to how turns are scheduled.
-pub const PROTOCOL: u16 = 3;
+pub const PROTOCOL: u16 = 4;
 /// Bumped on any change to simulation logic that the rules tables don't show (AI, combat,
 /// movement): two machines must run the same sim, or they drift apart within a second.
 pub const SIM_VERSION: u32 = 13;
@@ -41,12 +50,19 @@ pub fn build_id(rules: &crate::defs::Rules) -> u64 {
 }
 /// Ticks per turn: a tenth of a second.
 pub const TURN_TICKS: u32 = 3;
-/// Turns between giving an order and its running: 0.2-0.3 s at `TURN_TICKS`, room for one
-/// round trip on most links before a machine has to wait.
+/// The delay a match starts with, and the least it goes down to: 0.2-0.3 s at `TURN_TICKS`,
+/// room for one round trip on a LAN before a machine has to wait.
 pub const DELAY_TURNS: u32 = 2;
+/// The most turns orders wait: a second, enough for a round trip of about 1.8 s. A link slower
+/// than that is not one a match can be played over.
+pub const MAX_DELAY_TURNS: u32 = 10;
 
 // Hash checks sit on turn boundaries, where both machines are at the same point.
 const _: () = assert!(HASH_INTERVAL.is_multiple_of(TURN_TICKS));
+// A delay going down by one leaves one turn boundary with nothing to send, and the next change
+// waits until this one is in force, so two never come in a row: a hash check taken on a silent
+// boundary goes out with the next `Turn`, well before the next check is taken.
+const _: () = assert!(2 * TURN_TICKS <= HASH_INTERVAL);
 
 /// The UDP port of LAN discovery, Generals' own `lobbyPort` (`LANAPI.cpp`); the game itself
 /// listens on Generals' `NETWORK_BASE_PORT_NUMBER`, 8088, unless the host picks another.
@@ -145,6 +161,15 @@ pub enum Message {
     },
     /// Joiner to host, in the lobby: the seat the joiner picked, and whether they are ready.
     Seat(Seat),
+    /// Either way, at any time: answered at once with a `Pong` of the same `stamp` (the asker's
+    /// clock, which times the round trip). A link that stays silent for long is a dead one, so
+    /// both keep asking even when there is nothing else to say.
+    Ping {
+        stamp: u64,
+    },
+    Pong {
+        stamp: u64,
+    },
 }
 
 /// The joiner's choices in the lobby. The host checks them against the rules before taking
@@ -166,8 +191,13 @@ pub struct Seat {
 pub struct Turn {
     pub turn: u32,
     pub commands: Vec<CommandKind>,
-    /// `(tick, state hash before stepping it)`, on every `HASH_INTERVAL`th tick.
+    /// `(tick, state hash before stepping it)` of the sender's latest `HASH_INTERVAL`th tick, on
+    /// the first turn it sent from that tick on.
     pub check: Option<(u32, u64)>,
+    /// The delay the sender would like, in turns (`Lockstep::set_wish`).
+    pub wish: u8,
+    /// From the host only: the delay from the start of turn `turn + 1` on.
+    pub delay: Option<u8>,
 }
 
 impl Message {
@@ -200,6 +230,8 @@ impl Message {
                     }
                     None => w.u8(0),
                 }
+                w.u8(t.wish);
+                w.u8(t.delay.unwrap_or(0));
             }
             Message::Lobby { protocol, build, setup, revision, name } => {
                 w.u8(3);
@@ -227,6 +259,14 @@ impl Message {
                     None => w.u8(0),
                 }
             }
+            Message::Ping { stamp } => {
+                w.u8(5);
+                w.u64(*stamp);
+            }
+            Message::Pong { stamp } => {
+                w.u8(6);
+                w.u64(*stamp);
+            }
         }
         w.0
     }
@@ -250,7 +290,9 @@ impl Message {
                     1 => Some((r.u32()?, r.u64()?)),
                     t => return Err(DecodeError::BadTag(t)),
                 };
-                Message::Turn(Turn { turn, commands, check })
+                let wish = r.u8()?;
+                let delay = Some(r.u8()?).filter(|&d| d != 0);
+                Message::Turn(Turn { turn, commands, check, wish, delay })
             }
             3 => Message::Lobby {
                 protocol: r.u16()?,
@@ -276,6 +318,8 @@ impl Message {
                 };
                 Message::Seat(Seat { name, faction, general, perks, rank, ready })
             }
+            5 => Message::Ping { stamp: r.u64()? },
+            6 => Message::Pong { stamp: r.u64()? },
             t => return Err(DecodeError::BadTag(t)),
         };
         if r.at != bytes.len() {
@@ -302,23 +346,43 @@ pub struct Lockstep {
     queued: Vec<CommandKind>,
     /// The turn the next `Turn` sent carries orders for.
     next_send: u32,
+    /// The next turn boundary `before_step` has to deal with; it is called again and again on
+    /// one tick while the peer's orders are missing.
+    next_boundary: u32,
     /// The next turn expected from the peer; every earlier one has arrived.
     next_recv: u32,
+    /// The hash check taken on a turn boundary that sent nothing (after the delay went down),
+    /// for the next `Turn` sent.
+    unsent: Option<(u32, u64)>,
     /// Hash checks taken here and received, by tick, until both are in.
     mine: BTreeMap<u32, u64>,
     theirs: BTreeMap<u32, u64>,
+    /// The delay in turns from each turn boundary on, the first at turn 0, as both machines
+    /// agreed it. Kept whole: the turn a peer's `Turn` was sent at, which says which hash
+    /// check it must carry, follows from it.
+    schedule: Vec<(u32, u32)>,
+    /// The delay this machine would like, and the peer's latest wish (the host's concern).
+    wish: u32,
+    peer_wish: u32,
 }
 
 impl Lockstep {
+    /// `me` and `peer`, the two human players; the host is the lower-numbered one (player 0),
+    /// which decides the delay.
     pub fn new(me: PlayerId, peer: PlayerId) -> Lockstep {
         Lockstep {
             me,
             peer,
             queued: Vec::new(),
             next_send: DELAY_TURNS,
+            next_boundary: 0,
             next_recv: DELAY_TURNS,
+            unsent: None,
             mine: BTreeMap::new(),
             theirs: BTreeMap::new(),
+            schedule: vec![(0, DELAY_TURNS)],
+            wish: DELAY_TURNS,
+            peer_wish: DELAY_TURNS,
         }
     }
 
@@ -326,33 +390,95 @@ impl Lockstep {
         self.me
     }
 
+    fn hosts(&self) -> bool {
+        self.me.0 < self.peer.0
+    }
+
     /// Queues an order of the local player; it goes out with the next `Turn`.
     pub fn order(&mut self, kind: CommandKind) {
         self.queued.push(kind);
     }
 
-    /// Call before every `world.step()`. On a turn boundary this sends (into `out`) the local
-    /// orders for the turn `DELAY_TURNS` ahead, scheduling them in `world` as well, and takes
-    /// the hash check. Returns whether `world` may step now: not while the peer's orders for
-    /// the current turn are still missing.
+    /// The delay this machine would like, from what it measures of the link; kept within
+    /// `DELAY_TURNS..=MAX_DELAY_TURNS`. It goes to the peer with every `Turn`, and the host
+    /// takes the larger of both wishes: up at once, down a turn at a time.
+    pub fn set_wish(&mut self, turns: u32) {
+        self.wish = turns.clamp(DELAY_TURNS, MAX_DELAY_TURNS);
+    }
+
+    /// The delay in force on `turn`'s boundary, as far as it is agreed yet.
+    pub fn delay_at(&self, turn: u32) -> u32 {
+        self.schedule.iter().rev().find(|&&(from, _)| from <= turn).map_or(DELAY_TURNS, |&(_, d)| d)
+    }
+
+    /// Every agreed delay with the turn it starts on, the first `(0, DELAY_TURNS)`. Both machines
+    /// hold the same list, up to the changes one of them hasn't heard of yet.
+    pub fn schedule(&self) -> &[(u32, u32)] {
+        &self.schedule
+    }
+
+    /// The boundary the sender of turn `t` sent it on: the first whose delay reaches `t`.
+    fn sent_at(&self, t: u32) -> u32 {
+        for (i, &(from, d)) in self.schedule.iter().enumerate() {
+            let until = self.schedule.get(i + 1).map_or(u32::MAX, |s| s.0);
+            let at = from.max(t.saturating_sub(d));
+            if at < until {
+                return at;
+            }
+        }
+        unreachable!("the last delay reaches every turn")
+    }
+
+    /// Call before every `world.step()`. On a turn boundary this takes the hash check and sends
+    /// (into `out`) the local orders for the turn the delay reaches, scheduling them in `world`
+    /// as well: none after the delay went down, several after it went up. Returns whether
+    /// `world` may step now: not while the peer's orders for the current turn are missing.
     pub fn before_step(&mut self, world: &mut World, out: &mut Vec<Turn>) -> Result<bool, NetError> {
         let tick = world.tick();
         let turn = tick / TURN_TICKS;
-        if tick.is_multiple_of(TURN_TICKS) && self.next_send == turn + DELAY_TURNS {
-            let check = tick.is_multiple_of(HASH_INTERVAL).then(|| (tick, world.state_hash()));
-            if let Some((t, h)) = check {
-                self.mine.insert(t, h);
+        if tick.is_multiple_of(TURN_TICKS) && self.next_boundary == turn {
+            self.next_boundary += 1;
+            if tick.is_multiple_of(HASH_INTERVAL) {
+                let hash = world.state_hash();
+                self.mine.insert(tick, hash);
+                self.unsent = Some((tick, hash));
             }
-            let commands = std::mem::take(&mut self.queued);
-            let at = self.next_send * TURN_TICKS;
-            for kind in &commands {
-                world.schedule(Command { tick: at, player: self.me, kind: kind.clone() });
+            let reach = turn + self.delay_at(turn);
+            let mut first = true;
+            while self.next_send <= reach {
+                let n = self.next_send;
+                let (commands, check, delay) = if first {
+                    (std::mem::take(&mut self.queued), self.unsent.take(), self.announce(turn, n))
+                } else {
+                    (Vec::new(), None, None)
+                };
+                first = false;
+                for kind in &commands {
+                    world.schedule(Command { tick: n * TURN_TICKS, player: self.me, kind: kind.clone() });
+                }
+                out.push(Turn { turn: n, commands, check, wish: self.wish as u8, delay: delay.map(|d| d as u8) });
+                self.next_send += 1;
             }
-            out.push(Turn { turn: self.next_send, commands, check });
-            self.next_send += 1;
             self.compare()?;
         }
         Ok(turn < self.next_recv)
+    }
+
+    /// The host's change of delay to go out with turn `n`, sent on boundary `now`, if both
+    /// wishes call for one and the last change is in force already. It starts on turn `n + 1`,
+    /// a boundary neither machine has reached: the joiner can't step into turn `n` without it.
+    fn announce(&mut self, now: u32, n: u32) -> Option<u32> {
+        if !self.hosts() || self.schedule.last().is_some_and(|&(from, _)| from > now) {
+            return None;
+        }
+        let (current, target) = (self.delay_at(now), self.wish.max(self.peer_wish));
+        let next = match target.cmp(&current) {
+            std::cmp::Ordering::Greater => target,
+            std::cmp::Ordering::Less => current - 1,
+            std::cmp::Ordering::Equal => return None,
+        };
+        self.schedule.push((n + 1, next));
+        Some(next)
     }
 
     /// Takes in the peer's `Turn`: its orders are scheduled for that turn's first tick, which
@@ -361,13 +487,22 @@ impl Lockstep {
         if t.turn != self.next_recv {
             return Err(NetError::Protocol(format!("turn {} arrived, expected {}", t.turn, self.next_recv)));
         }
-        // The check a turn must carry: the sender's hash at the tick it sent the turn on, when
-        // that tick is a hash tick, and none otherwise. Anything else would leave a check that
-        // never pairs up and silently stops every later comparison.
-        let sent_at = (t.turn - DELAY_TURNS) * TURN_TICKS;
-        if t.check.map(|c| c.0) != sent_at.is_multiple_of(HASH_INTERVAL).then_some(sent_at) {
+        // The check a turn must carry: the sender's hash at the latest hash tick since the turn
+        // it sent before, when there was one, and none otherwise. Anything else would leave a
+        // check that never pairs up and silently stops every later comparison.
+        let sent = self.sent_at(t.turn) * TURN_TICKS;
+        let after = (t.turn > DELAY_TURNS).then(|| self.sent_at(t.turn - 1) * TURN_TICKS);
+        let due = after.map_or(0, |a| (a / HASH_INTERVAL + 1) * HASH_INTERVAL);
+        if t.check.map(|c| c.0) != (due <= sent).then_some(due) {
             return Err(NetError::Protocol(format!("turn {} carries check {:?}", t.turn, t.check)));
         }
+        if let Some(d) = t.delay.map(u32::from) {
+            if self.hosts() || !(DELAY_TURNS..=MAX_DELAY_TURNS).contains(&d) {
+                return Err(NetError::Protocol(format!("turn {} sets a delay of {d}", t.turn)));
+            }
+            self.schedule.push((t.turn + 1, d));
+        }
+        self.peer_wish = u32::from(t.wish).clamp(DELAY_TURNS, MAX_DELAY_TURNS);
         let at = t.turn * TURN_TICKS;
         for kind in t.commands {
             world.schedule(Command { tick: at, player: self.peer, kind });
@@ -382,7 +517,8 @@ impl Lockstep {
     /// Whether the peer is more than a turn ahead of `world`: the driver may step twice in one
     /// frame to catch up, so a machine that once stalled doesn't keep the other waiting.
     pub fn behind(&self, world: &World) -> bool {
-        self.next_recv > world.tick() / TURN_TICKS + DELAY_TURNS + 1
+        let turn = world.tick() / TURN_TICKS;
+        self.next_recv > turn + self.delay_at(turn) + 1
     }
 
     fn compare(&mut self) -> Result<(), NetError> {
