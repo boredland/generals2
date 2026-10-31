@@ -355,7 +355,27 @@ impl MapFile {
             decks,
             civilians,
             bridges,
+            heights: self.sim_heights(width, height),
         }
+    }
+
+    /// The height map for the sim (`g2_sim::map::Heights`): one sample per height cell corner of
+    /// the playable area, in world units above `base_height`, quantised to 1/1024 SAGE unit.
+    /// World y runs the other way from SAGE y (`to_world`), so rows are flipped.
+    fn sim_heights(&self, width: Fx, height: Fx) -> g2_sim::map::Heights {
+        let (w, h) = (self.grid_w - 2 * self.border + 1, self.grid_h - 2 * self.border + 1);
+        let world_h = height.to_f32();
+        let step = Fx::from_ratio(SAGE_PER_CELL, SAGE_PER_WORLD);
+        let per = SAGE_PER_WORLD as f32;
+        let z = (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 * step.to_f32(), (i / w) as f32 * step.to_f32());
+                let sage = self.height_at(x * per, (world_h - y) * per) - self.base_height;
+                Fx::from_ratio((sage * 1024.0).round() as i64, 1024 * SAGE_PER_WORLD)
+            })
+            .collect();
+        debug_assert!(Fx::from_int((w - 1) as i64) * step >= width - Fx::ONE);
+        g2_sim::map::Heights { step, w, h, z }
     }
 
     /// The sim's view of each bridge (`g2_sim::map::BridgeDef`): ends and width in world units,

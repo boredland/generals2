@@ -23,6 +23,7 @@ pub mod net;
 pub mod onslaught;
 pub mod replay;
 pub mod rng;
+pub mod sight;
 pub mod world;
 
 pub use command::{Command, CommandKind, Reject};

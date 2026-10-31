@@ -4244,6 +4244,7 @@ pub fn crater_ridge() -> MapDef {
         decks: Vec::new(),
         civilians: Vec::new(),
         bridges: Vec::new(),
+        heights: Default::default(),
     }
 }
 

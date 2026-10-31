@@ -20,6 +20,19 @@ pub struct MapDef {
     pub civilians: Vec<(Vec2, Fx)>,
     /// The bridges whose decks `decks` marks, in map order (`World::bridges` follows it).
     pub bridges: Vec<BridgeDef>,
+    /// Ground heights (`crate::sight`); empty on flat maps.
+    pub heights: Heights,
+}
+
+/// Ground height samples on a square grid with `step` world units between samples, sample
+/// `(0, 0)` at the map's origin, `w` across and `h` down, row-major. Heights are in world
+/// units. Empty means flat ground.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Heights {
+    pub step: Fx,
+    pub w: u32,
+    pub h: u32,
+    pub z: Vec<Fx>,
 }
 
 /// One bridge: its deck runs straight from `a` to `b` and is `width` wide.
