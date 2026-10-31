@@ -204,6 +204,25 @@ pub enum Event {
         def: DefId,
         at: Vec2,
     },
+    /// `by` fired directly at bridge `bridge` from `from`, hitting it at `at` for `damage`.
+    /// Output only.
+    BridgeHit {
+        bridge: u16,
+        from: Vec2,
+        at: Vec2,
+        damage: i32,
+        by: PlayerId,
+    },
+    /// Bridge `bridge`'s deck fell, centred at `at`, to `by`'s fire. Output only.
+    BridgeDown {
+        bridge: u16,
+        at: Vec2,
+        by: PlayerId,
+    },
+    /// Bridge `bridge`'s deck is open again after a repair. Output only.
+    BridgeUp {
+        bridge: u16,
+    },
 }
 
 /// What sent a shell, for drawing it: the weapon of a unit def (which outlives the shooter,
@@ -311,6 +330,8 @@ pub struct World {
     pub(crate) stats: Vec<Stats>,
     /// The mission in play (`crate::mission`); `None` in a skirmish.
     pub(crate) mission: Option<crate::mission::Run>,
+    /// Hit points and fallen decks of the map's bridges (`crate::bridge`).
+    pub(crate) bridges: crate::bridge::Bridges,
     /// Ground units that steer around each other, as the tick's unit updates began, sorted by
     /// `x` then id (`steer`), and the widest radius plus the farthest any walks in the
     /// horizon. Rebuilt every tick from hashed state, so they need no hash.
@@ -384,6 +405,7 @@ impl World {
             tick: 0,
             rng: Pcg32::new(setup.seed, 0),
             players: Vec::new(),
+            bridges: crate::bridge::Bridges::new(&setup.map.bridges),
             entities: Entities::default(),
             pending: Vec::new(),
             events: Vec::new(),
@@ -893,13 +915,16 @@ impl World {
         }
         // Shells fired on earlier ticks land before this tick's shots are applied, so their
         // damage joins the same simultaneous resolution.
+        self.land_bridge_shells();
         self.land_shells();
         self.land_blasts();
         self.land_fields();
         self.poison_clouds();
         self.resolve_shots();
+        self.resolve_bridge_hits();
         // After the shots, so a unit hit this tick has its quiet spell restart before it heals.
         self.update_repairs();
+        self.update_bridge_repairs();
         self.separate_units();
         // After separation, so a transport pushed aside carries its passengers along.
         self.carry_occupants();
@@ -1243,6 +1268,31 @@ impl World {
                 for u in units {
                     let e = self.entities.get_mut(u).unwrap();
                     e.order = Order::Attack { target: *target };
+                    e.home = None;
+                }
+                Ok(())
+            }
+            CommandKind::AttackBridge { units, bridge } => {
+                if !self.bridge_attackable(*bridge) {
+                    return Err(Reject::CannotAttack);
+                }
+                let units = self
+                    .own_units(player, units, |d| d.weapon().is_some_and(|w| w.targets.hits(false)))
+                    .map_err(|_| Reject::CannotAttack)?;
+                for u in units {
+                    let e = self.entities.get_mut(u).unwrap();
+                    e.order = Order::AttackBridge { bridge: *bridge };
+                    e.home = None;
+                }
+                Ok(())
+            }
+            CommandKind::RepairBridge { units, bridge } => {
+                if !self.bridge_repairable(*bridge) {
+                    return Err(Reject::NoSuchEntity);
+                }
+                for u in self.own_units(player, units, |d| d.is_constructor())? {
+                    let e = self.entities.get_mut(u).unwrap();
+                    e.order = Order::RepairBridge { bridge: *bridge };
                     e.home = None;
                 }
                 Ok(())
@@ -1639,11 +1689,11 @@ impl World {
             .filter(|e| !self.rules.def(e.def).is_unit())
             .map(|e| (e.pos, self.rules.def(e.def).radius))
             .collect();
-        let key = statics.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, &(p, r)| {
+        let key = statics.iter().fold(0xcbf2_9ce4_8422_2325_u64 ^ self.bridges_key(), |h, &(p, r)| {
             [p.x.0, p.y.0, r.0].iter().fold(h, |h, &v| (h ^ v as u64).wrapping_mul(0x0000_0100_0000_01b3))
         });
         if key != self.nav_key {
-            self.nav = crate::nav::Grid::new(self.map.width, self.map.height, &statics, &self.map.terrain);
+            self.nav = crate::nav::Grid::new(self.map.width, self.map.height, &statics, &self.nav_terrain());
             self.nav_key = key;
         }
     }
@@ -1656,7 +1706,7 @@ impl World {
     /// keeping the plan while the grid is unchanged and the target stays within `REPLAN` of
     /// where it was planned (a chased unit moves every tick). An unreachable target gets a
     /// partial plan to the closest reachable cell, kept on the same terms.
-    fn approach(&mut self, id: EntityId, target: Vec2, contact: Fx, speed: Fx) -> (Vec2, bool) {
+    pub(crate) fn approach(&mut self, id: EntityId, target: Vec2, contact: Fx, speed: Fx) -> (Vec2, bool) {
         let e = self.entities.get(id).unwrap();
         let pos = e.pos;
         let delta = pos - target;
@@ -2078,6 +2128,8 @@ impl World {
                 }
                 _ => (pos, Order::Idle),
             },
+            Order::AttackBridge { bridge } => self.attack_bridge_step(id, bridge, weapon, speed),
+            Order::RepairBridge { bridge } => self.repair_bridge_step(id, bridge, speed),
             Order::Sortie { .. } => unreachable!("flown by fly_sortie"),
         };
         // The order keeps the pace it was given, not the one a speed status made of it.

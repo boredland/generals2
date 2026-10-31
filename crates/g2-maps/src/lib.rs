@@ -116,10 +116,35 @@ pub struct Road {
 /// SAGE units per raw height step (`MAP_HEIGHT_SCALE`).
 pub const SAGE_PER_HEIGHT_STEP: f32 = 10.0 / 16.0;
 
-/// Walkable deck width of every bridge, in SAGE units. The engine takes it from each bridge
-/// model's extent (`W3DBridge::getBridgeInfo`), and those models aren't in any vendored
-/// source; 60 is the retail `FourLane`/`TwoLaneOld` road width (`Roads.ini`), so a bridge is
-/// as wide as the roads leading onto it.
+/// Walkable deck width in SAGE units of a bridge type (`Road::name`). The engine takes it from
+/// the bridge model: the `BRIDGE_LEFT` mesh's extent across the deck times the type's
+/// `BridgeScale` (`W3DBridge::load` / `getBridgeInfo`). The scales are in GeneralsGamePatch2's
+/// `Roads.ini`; the retail models aren't vendored, but the 2002 Generals alpha build
+/// (`archive/leaks/generals-alpha-98`) has three of them, measured here: `TBDoubWide` 93.4,
+/// `CBBridgeIn` 70.0, `CBBridgeSt` 86.1 across. Retail may have changed those models after the
+/// alpha. Every other type (the European, Kandahar and Tampico bridges most skirmish maps use)
+/// gets `BRIDGE_DECK_WIDTH`.
+pub fn bridge_deck_width(kind: &str) -> f32 {
+    match kind {
+        // TBDoubWide × 0.85 and × 2.0.
+        "IronSectionalDoublewide" => 79.4,
+        "IronSectionalDoublewide2" => 186.8,
+        // CBBridgeIn × 0.85.
+        "Industrial" => 59.5,
+        // CBBridgeSt × 0.85.
+        "Concrete" => 73.1,
+        _ => BRIDGE_DECK_WIDTH,
+    }
+}
+
+/// Hit points of a bridge: Zero Hour's destructible landmark bridges (`EuropeanLandmarkBridge`,
+/// `TsingMaLandmarkBridge`, `AsianFloodBridge`: `StructureBody`, `MaxHealth = 2000`). Retail's
+/// road bridges (`GenericBridge`) use an `ImmortalBody` and can't fall; the 2002 alpha's had
+/// 1000. A map's `objectMaxHPs` on the bridge overrides it.
+pub const BRIDGE_HP: i32 = 2000;
+
+/// Deck width of a bridge type whose model isn't available: 60, the retail `FourLane` /
+/// `TwoLaneOld` road width (`Roads.ini`), so the bridge is as wide as the roads leading onto it.
 pub const BRIDGE_DECK_WIDTH: f32 = 60.0;
 
 #[derive(Debug)]
@@ -316,6 +341,9 @@ impl MapFile {
             }
         }
         starts.sort_by_key(|&(n, _)| n);
+        let raw = self.impassable_nav_cells(width, height);
+        let decks = self.deck_nav_cells(width, height);
+        let bridges = self.bridge_defs(width, height, &raw);
         MapDef {
             name: name.to_owned(),
             width,
@@ -323,10 +351,54 @@ impl MapFile {
             spawns: starts.iter().map(|&(_, o)| at(o.x, o.y)).collect(),
             supply_piles,
             oil_wells,
-            terrain: self.impassable_nav_cells(width, height),
-            decks: self.deck_nav_cells(width, height),
+            terrain: raw.iter().enumerate().map(|(i, &r)| r && !decks.get(i).copied().unwrap_or(false)).collect(),
+            decks,
             civilians,
+            bridges,
         }
+    }
+
+    /// The sim's view of each bridge (`g2_sim::map::BridgeDef`): ends and width in world units,
+    /// hit points, and the nav cells on its deck and over the gap it spans (`raw`, the cells
+    /// impassable without decks). Hit points are `BRIDGE_HP` unless the bridge's map object
+    /// sets `objectMaxHPs`, and none when it sets `objectIndestructible` (both read by the
+    /// engine in `Object::updateObjValuesFromMapProperties`).
+    fn bridge_defs(&self, width: Fx, height: Fx, raw: &[bool]) -> Vec<g2_sim::map::BridgeDef> {
+        let (nw, nh) = g2_sim::nav::Grid::dims(width, height);
+        let per = SAGE_PER_WORLD as f32;
+        let world_h = height.to_f32();
+        let at = |x: f32, y: f32| {
+            let f = |v: f32| Fx::from_ratio((v * 1024.0).round() as i64, 1024 * SAGE_PER_WORLD);
+            Vec2::new(f(x), height - f(y))
+        };
+        self.bridges
+            .iter()
+            .map(|b| {
+                let props = self.objects.iter().find(|o| o.flags & 0x10 != 0 && (o.x, o.y) == b.a).map(|o| &o.props);
+                let prop = |k: &str| props.and_then(|p| p.get(k));
+                let hp = match (prop("objectIndestructible"), prop("objectMaxHPs")) {
+                    (Some(Value::Bool(true)), _) => None,
+                    (_, Some(&Value::Int(n))) if n > 0 => Some(n),
+                    _ => Some(BRIDGE_HP),
+                };
+                let cells: Vec<u32> = (0..nw * nh)
+                    .filter(|&i| {
+                        let c = g2_sim::nav::Grid::centre((i % nw) as i32, (i / nw) as i32);
+                        self.deck_of(b, c.x.to_f32() * per, (world_h - c.y.to_f32()) * per).is_some()
+                    })
+                    .map(|i| i as u32)
+                    .collect();
+                let gap = cells.iter().copied().filter(|&i| raw[i as usize]).collect();
+                g2_sim::map::BridgeDef {
+                    a: at(b.a.0, b.a.1),
+                    b: at(b.b.0, b.b.1),
+                    width: Fx::from_ratio((bridge_deck_width(&b.name) * 1024.0).round() as i64, 1024 * SAGE_PER_WORLD),
+                    hp,
+                    cells,
+                    gap,
+                }
+            })
+            .collect()
     }
 
     /// Engine rule for maps saved without cliff bits (`BlendTileData` before v7): a cell is a
@@ -353,8 +425,9 @@ impl MapFile {
     /// (`Pathfinder::classifyMapCell`). The engine's pathfind cell is one height cell and reads
     /// the cliff bit at a single point; ours is 12 SAGE units wide, so it reads one point too
     /// (the centre) rather than every height cell it overlaps, which would widen cliff lines.
-    /// A cell whose centre is on a bridge deck is open: the engine paths bridges on their own
-    /// layer above the water, and the sim has one layer, so the deck replaces what is below.
+    /// Bridge decks are ignored here; `to_map_def` opens the cells under them (the engine paths
+    /// bridges on their own layer above the water, and the sim has one layer, so the deck
+    /// replaces what is below while it stands).
     fn impassable_nav_cells(&self, width: Fx, height: Fx) -> Vec<bool> {
         let (nw, nh) = g2_sim::nav::Grid::dims(width, height);
         let per = SAGE_PER_WORLD as f32;
@@ -372,9 +445,6 @@ impl MapFile {
                 let (cx, cy) = (c.x.to_f32() * per, (world_h - c.y.to_f32()) * per);
                 let (x0, x1) = (cx - half * per, cx + half * per);
                 let (y0, y1) = (cy - half * per, cy + half * per);
-                if self.bridge_deck_at(cx, cy).is_some() {
-                    return false;
-                }
                 let cliff = self.cliffs[hcell(cy, self.grid_h) * w + hcell(cx, self.grid_w)];
                 cliff || [(x0, y0), (x1, y0), (x0, y1), (x1, y1)].iter().any(|&(x, y)| underwater(x, y))
             })
@@ -573,20 +643,23 @@ impl MapFile {
     /// the ground at the other, raised by `BRIDGE_FLOAT_AMT`, and reaches one pathfind cell
     /// past each end so it meets the banks.
     pub fn bridge_deck_at(&self, x: f32, y: f32) -> Option<f32> {
+        self.bridges.iter().find_map(|b| self.deck_of(b, x, y))
+    }
+
+    /// `bridge_deck_at` for bridge `b` alone.
+    pub fn deck_of(&self, b: &Road, x: f32, y: f32) -> Option<f32> {
         const FLOAT: f32 = 0.25;
         let reach = SAGE_PER_CELL as f32;
-        self.bridges.iter().find_map(|b| {
-            let (dx, dy) = (b.b.0 - b.a.0, b.b.1 - b.a.1);
-            let len = (dx * dx + dy * dy).sqrt().max(1.0);
-            let along = ((x - b.a.0) * dx + (y - b.a.1) * dy) / len;
-            let across = ((x - b.a.0) * dy - (y - b.a.1) * dx).abs() / len;
-            if across > BRIDGE_DECK_WIDTH / 2.0 || along < -reach || along > len + reach {
-                return None;
-            }
-            let t = (along / len).clamp(0.0, 1.0);
-            let (ha, hb) = (self.height_at(b.a.0, b.a.1), self.height_at(b.b.0, b.b.1));
-            Some(ha + (hb - ha) * t + FLOAT)
-        })
+        let (dx, dy) = (b.b.0 - b.a.0, b.b.1 - b.a.1);
+        let len = (dx * dx + dy * dy).sqrt().max(1.0);
+        let along = ((x - b.a.0) * dx + (y - b.a.1) * dy) / len;
+        let across = ((x - b.a.0) * dy - (y - b.a.1) * dx).abs() / len;
+        if across > bridge_deck_width(&b.name) / 2.0 || along < -reach || along > len + reach {
+            return None;
+        }
+        let t = (along / len).clamp(0.0, 1.0);
+        let (ha, hb) = (self.height_at(b.a.0, b.a.1), self.height_at(b.b.0, b.b.1));
+        Some(ha + (hb - ha) * t + FLOAT)
     }
 
     fn read_objects(&mut self, c: &mut Cursor, toc: &BTreeMap<u32, String>) -> Result<(), Error> {
@@ -1067,6 +1140,26 @@ mod tests {
             let (cx, cy) = ((x / g2_sim::nav::CELL as f32) as usize, (z / g2_sim::nav::CELL as f32) as usize);
             assert!(!def.terrain[cy * nw + cx], "nav cell on the deck at {:?} is blocked", (x, z));
         }
+    }
+
+    /// Deck widths come per bridge type: Bear Town Beatdown's `IronSectionalDoublewide2` (the
+    /// alpha's `TBDoubWide` model scaled 2.0) is about three times as wide as Winding River's
+    /// `KandaharBridge`, whose model isn't available and so gets the road width.
+    #[test]
+    fn bridge_widths_follow_the_bridge_type() {
+        assert_eq!(bridge_deck_width("KandaharBridge"), BRIDGE_DECK_WIDTH);
+        assert!((bridge_deck_width("IronSectionalDoublewide2") - 93.4 * 2.0).abs() < 0.1);
+        assert!((bridge_deck_width("Concrete") - 86.05 * 0.85).abs() < 0.1);
+        let map = load_official("Zero Hour", "Bear Town Beatdown", "Bear Town Beatdown.map");
+        let b = map.bridges.iter().find(|b| b.name == "IronSectionalDoublewide2").expect("the iron bridge");
+        let (dx, dy) = (b.b.0 - b.a.0, b.b.1 - b.a.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        let (ux, uy) = (dx / len, dy / len);
+        let mid = ((b.a.0 + b.b.0) / 2.0, (b.a.1 + b.b.1) / 2.0);
+        let side = |d: f32| map.bridge_deck_at(mid.0 - uy * d, mid.1 + ux * d);
+        let half = bridge_deck_width(&b.name) / 2.0;
+        assert!(side(half - 1.0).is_some() && side(-(half - 1.0)).is_some());
+        assert!(side(half + 1.0).is_none());
     }
 
     /// Nothing may be built on a bridge deck: a building at a deck's end, on the bank, would

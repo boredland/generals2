@@ -16,9 +16,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// perks, v10 the power slot (`Power` is tag 15; tag 11 still decodes, as slot 0), v11 each
 /// player's general rank (1 before), v12 the `Transform` and `Special` commands (tags 16, 17),
 /// v13 each player's team (0, alone, before), v14 the mission played (`MISSION_VERSION`), v15
-/// its difficulty (`DIFFICULTY_VERSION`; `Normal` before), v16 the `Ability` command (tag 19).
-/// Older replays still decode.
-pub const VERSION: u16 = 16;
+/// its difficulty (`DIFFICULTY_VERSION`; `Normal` before), v16 the `Ability` command (tag 19),
+/// v17 the `AttackBridge` and `RepairBridge` commands (tags 20, 21). Older replays still decode.
+pub const VERSION: u16 = 17;
 /// The first version with the mission field: a u16 after the players, `NO_MISSION` for none.
 /// Read only from this version on, so it composes with fields earlier versions add.
 const MISSION_VERSION: u16 = 14;
@@ -358,6 +358,16 @@ impl Writer {
                 self.u8(19);
                 self.ids(units);
             }
+            CommandKind::AttackBridge { units, bridge } => {
+                self.u8(20);
+                self.ids(units);
+                self.u16(*bridge);
+            }
+            CommandKind::RepairBridge { units, bridge } => {
+                self.u8(21);
+                self.ids(units);
+                self.u16(*bridge);
+            }
         }
     }
 }
@@ -440,6 +450,8 @@ impl Reader<'_> {
             17 => CommandKind::Special { units: self.ids()?, target: self.id()? },
             18 => CommandKind::SetRally { producer: self.id()?, at: self.pos()? },
             19 => CommandKind::Ability { units: self.ids()? },
+            20 => CommandKind::AttackBridge { units: self.ids()?, bridge: self.u16()? },
+            21 => CommandKind::RepairBridge { units: self.ids()?, bridge: self.u16()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

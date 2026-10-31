@@ -59,6 +59,14 @@ pub enum Order {
         slot: u8,
         dropped: bool,
     },
+    /// Close on bridge `bridge` (`MapDef::bridges` index) and fire at it until it falls.
+    AttackBridge {
+        bridge: u16,
+    },
+    /// A constructor walking to an end of bridge `bridge` and repairing it there.
+    RepairBridge {
+        bridge: u16,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -18,6 +18,50 @@ pub struct MapDef {
     pub decks: Vec<bool>,
     /// Neutral buildings infantry can garrison: centre and footprint radius.
     pub civilians: Vec<(Vec2, Fx)>,
+    /// The bridges whose decks `decks` marks, in map order (`World::bridges` follows it).
+    pub bridges: Vec<BridgeDef>,
+}
+
+/// One bridge: its deck runs straight from `a` to `b` and is `width` wide.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BridgeDef {
+    pub a: Vec2,
+    pub b: Vec2,
+    pub width: Fx,
+    /// Hit points; `None` for a bridge the map makes indestructible.
+    pub hp: Option<i32>,
+    /// Nav cells (`nav::Grid` layout) on this deck, where ground units die when it falls.
+    pub cells: Vec<u32>,
+    /// The subset of `cells` that is water or cliff below the deck: closed while it is down.
+    pub gap: Vec<u32>,
+}
+
+impl BridgeDef {
+    /// The two points weapons aim at, as Zero Hour's `getBridgeAttackPoints`: each end moved
+    /// half the deck's width in along it.
+    pub fn attack_points(&self) -> [Vec2; 2] {
+        let d = self.b - self.a;
+        let len = d.length();
+        if len <= self.width {
+            let mid = self.a + d.scale(Fx::from_ratio(1, 2));
+            return [mid, mid];
+        }
+        let step = d.scale(self.width / Fx::from_int(2) / len);
+        [self.a + step, self.b - step]
+    }
+
+    /// Distance from `p` to the line between the attack points.
+    pub fn distance(&self, p: Vec2) -> Fx {
+        let [s, e] = self.attack_points();
+        let d = e - s;
+        let len_sq = d.length_sq();
+        if len_sq == Fx::ZERO {
+            return p.distance(s);
+        }
+        let t = ((p.x - s.x) * d.x + (p.y - s.y) * d.y) / len_sq;
+        let t = t.max(Fx::ZERO).min(Fx::ONE);
+        p.distance(s + d.scale(t))
+    }
 }
 
 impl MapDef {

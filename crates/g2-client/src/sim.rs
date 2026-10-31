@@ -439,6 +439,28 @@ pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
             g2_sim::world::Event::FieldLanded { at, radius, hostile, .. } => {
                 hits.0.push(Shot::Field { at, radius, hostile })
             }
+            g2_sim::world::Event::BridgeHit { from, at, damage, .. } => {
+                let look = crate::fx::Look::Cannon { heavy: damage >= 80 };
+                hits.0.push(Shot::Hit {
+                    from,
+                    at,
+                    killed: false,
+                    tracer: true,
+                    target: None,
+                    look: Some(look),
+                    air: (false, false),
+                })
+            }
+            // The deck goes down in a string of blasts along its length.
+            g2_sim::world::Event::BridgeDown { bridge, .. } => {
+                if let Some(b) = world.map.bridges.get(bridge as usize) {
+                    for k in 0..5 {
+                        let at = b.a + (b.b - b.a).scale(g2_sim::Fx::from_ratio(1 + 2 * k, 10));
+                        let look = crate::fx::Look::Strike { toxic: false, nuke: false, missile: false };
+                        hits.0.push(Shot::Blast { at, radius: b.width, look });
+                    }
+                }
+            }
             _ => {}
         }
     }

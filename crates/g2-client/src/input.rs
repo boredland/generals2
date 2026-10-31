@@ -490,8 +490,9 @@ fn selected_producers(sim: &Sim, sel: &Selection) -> Vec<EntityId> {
 
 /// The selected units' context order at `here`: attack an enemy, gather from a pile, help
 /// build our foundation, get into a building with room, else move (attack-move with Ctrl).
-/// Selected production buildings set their rally point at a click on open ground, as OpenRA's
-/// rally targets terrain only. Each order leaves its mark (`feedback`).
+/// On a bridge deck, Ctrl fires at the bridge (Zero Hour's force-attack) and constructors
+/// repair a damaged one. Selected production buildings set their rally point at a click on
+/// open ground, as OpenRA's rally targets terrain only. Each order leaves its mark (`feedback`).
 fn give_orders(
     sim: &mut Sim,
     sel: &Selection,
@@ -544,6 +545,26 @@ fn give_orders(
                 .partition(|id| sim.world.entity(*id).is_some_and(|e| rules.def(e.def).can_garrison()));
             [
                 (!infantry.is_empty()).then_some(CommandKind::Garrison { units: infantry, container: t.id }),
+                (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+            ]
+        }
+        None if let Some(bridge) = sim.world.bridge_at(here).filter(|_| attack_move) => {
+            let (fighters, others): (Vec<_>, Vec<_>) = units.into_iter().partition(armed);
+            [
+                (!fighters.is_empty()).then_some(CommandKind::AttackBridge { units: fighters, bridge }),
+                (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
+            ]
+        }
+        None if let Some(bridge) = sim.world.bridge_at(here).filter(|&b| {
+            sim.world.bridge(b).is_some_and(|b| b.hp < b.max)
+                && units.iter().any(|&u| sim.world.entity(u).is_some_and(|e| rules.def(e.def).is_constructor()))
+        }) =>
+        {
+            let (builders, others): (Vec<_>, Vec<_>) = units
+                .into_iter()
+                .partition(|&u| sim.world.entity(u).is_some_and(|e| rules.def(e.def).is_constructor()));
+            [
+                Some(CommandKind::RepairBridge { units: builders, bridge }),
                 (!others.is_empty()).then_some(CommandKind::Move { units: others, target: here }),
             ]
         }
