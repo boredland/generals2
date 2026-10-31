@@ -353,6 +353,16 @@ impl Writer {
                 self.id(*producer);
                 self.pos(*at);
             }
+            CommandKind::AttackBridge { units, bridge } => {
+                self.u8(19);
+                self.ids(units);
+                self.u16(*bridge);
+            }
+            CommandKind::RepairBridge { units, bridge } => {
+                self.u8(20);
+                self.ids(units);
+                self.u16(*bridge);
+            }
         }
     }
 }
@@ -434,6 +444,8 @@ impl Reader<'_> {
             16 => CommandKind::Transform { units: self.ids()? },
             17 => CommandKind::Special { units: self.ids()?, target: self.id()? },
             18 => CommandKind::SetRally { producer: self.id()?, at: self.pos()? },
+            19 => CommandKind::AttackBridge { units: self.ids()?, bridge: self.u16()? },
+            20 => CommandKind::RepairBridge { units: self.ids()?, bridge: self.u16()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

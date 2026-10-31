@@ -41,7 +41,7 @@ impl Plugin for TerrainPlugin {
         bevy::asset::embedded_asset!(app, "terrain/ground.wesl");
         app.add_plugins(MaterialPlugin::<GroundMaterial>::default())
             .add_systems(Update, spawn_terrain.run_if(crate::menu::scene_start).after(crate::menu::MenuSet))
-            .add_systems(Update, (clear_under_buildings, hide_clutter, update_fog).after(spawn_terrain));
+            .add_systems(Update, (clear_under_buildings, hide_clutter, update_fog, show_bridges).after(spawn_terrain));
     }
 }
 
@@ -1017,8 +1017,13 @@ fn spawn_bridges(
         ..default()
     });
     let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+    let scaffolding = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.62, 0.48, 0.26),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
     let per = g2_maps::SAGE_PER_WORLD as f32;
-    for b in &file.bridges {
+    for (k, b) in file.bridges.iter().enumerate() {
         let width = g2_maps::bridge_deck_width(&b.name) / per;
         let a = Vec2::from(file.to_world(b.a.0, b.a.1));
         let z = Vec2::from(file.to_world(b.b.0, b.b.1));
@@ -1038,6 +1043,7 @@ fn spawn_bridges(
         commands
             .spawn((
                 crate::menu::MatchEntity,
+                BridgePart { index: k as u16, shown: Shown::Standing },
                 Transform::from_translation(centre).with_rotation(rot),
                 Visibility::default(),
             ))
@@ -1078,6 +1084,121 @@ fn spawn_bridges(
                     .with_rotation(Quat::from_rotation_y(-dir.y.atan2(dir.x)))
                     .with_scale(Vec3::new(1.6, h, width * 0.8)),
             ));
+        }
+        // The fallen deck: a broken stub at each end, hinged at the bank and sagging over the
+        // gap, and slabs of deck and rail jutting out of the water (or lying on the dry bed)
+        // below. Hidden until the sim says the deck is down.
+        let yaw = Quat::from_rotation_y(-dir.y.atan2(dir.x));
+        let stub = (len * 0.3).max(4.0);
+        let mut ruin = commands.spawn((
+            crate::menu::MatchEntity,
+            BridgePart { index: k as u16, shown: Shown::Down },
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+        ruin.with_children(|c| {
+            for (end, y, sign) in [(a, ya, 1.0_f32), (z, yz, -1.0)] {
+                let hinge = Vec3::new(end.x, y - thick / 2.0, end.y) - Vec3::new(dir.x, 0.0, dir.y) * sign * reach;
+                let tilt = yaw * Quat::from_rotation_z(-0.35 * sign);
+                let length = stub + reach;
+                c.spawn((
+                    Mesh3d(cube.clone()),
+                    MeshMaterial3d(deck.clone()),
+                    Transform::from_translation(hinge + tilt * Vec3::X * sign * length / 2.0)
+                        .with_rotation(tilt)
+                        .with_scale(Vec3::new(length, thick, width)),
+                ));
+            }
+            let below = |p: Vec2| {
+                let (sx, sy) = file.to_sage(p.x, p.y);
+                let water = file.water.iter().find(|w| inside(&w.outline, sx, sy));
+                let ground = file.ground_y(p.x, p.y);
+                water.map_or(ground, |w| ground.max((w.z - file.base_height) / per))
+            };
+            for j in 0..9 {
+                let r = |n: u32| hash(k as i32, j, 2100 + n);
+                let p = a.lerp(z, 0.3 + 0.4 * r(0)) + Vec2::new(-dir.y, dir.x) * (r(1) - 0.5) * width * 0.9;
+                let size = Vec3::new(2.0 + r(2) * 5.0, 0.6 + r(3) * 0.6, 1.5 + r(4) * width * 0.4);
+                c.spawn((
+                    Mesh3d(cube.clone()),
+                    MeshMaterial3d(if j % 3 == 0 { rail.clone() } else { deck.clone() }),
+                    Transform::from_translation(Vec3::new(p.x, below(p) + size.y * 0.2, p.y))
+                        .with_rotation(
+                            Quat::from_rotation_y(r(5) * std::f32::consts::TAU)
+                                * Quat::from_rotation_x((r(6) - 0.5) * 1.2)
+                                * Quat::from_rotation_z((r(7) - 0.5) * 0.9),
+                        )
+                        .with_scale(size),
+                ));
+            }
+        });
+        // Repair scaffolding: a lattice of posts and beams along the gap while a constructor
+        // works on the fallen deck (Zero Hour raises `BridgeScaffold01` pieces the same way).
+        let mut scaffold = commands.spawn((
+            crate::menu::MatchEntity,
+            BridgePart { index: k as u16, shown: Shown::Repairing },
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+        scaffold.with_children(|c| {
+            let posts = ((len / 4.0).floor() as i32).max(2);
+            for j in 0..=posts {
+                let t = j as f32 / posts as f32;
+                let p = a.lerp(z, t);
+                let top = ya + (yz - ya) * t;
+                let bottom = file.ground_y(p.x, p.y) - 0.5;
+                let h = (top - bottom).max(0.5);
+                for side in [-1.0, 1.0] {
+                    let q = p + Vec2::new(-dir.y, dir.x) * side * (width / 2.0 - 0.5);
+                    c.spawn((
+                        Mesh3d(cube.clone()),
+                        MeshMaterial3d(scaffolding.clone()),
+                        Transform::from_translation(Vec3::new(q.x, bottom + h / 2.0, q.y))
+                            .with_scale(Vec3::new(0.35, h, 0.35)),
+                    ));
+                }
+            }
+            c.spawn((
+                Mesh3d(cube.clone()),
+                MeshMaterial3d(scaffolding.clone()),
+                Transform::from_translation(centre + Vec3::Y * (thick / 2.0))
+                    .with_rotation(rot)
+                    .with_scale(Vec3::new(len, 0.3, width)),
+            ));
+        });
+    }
+}
+
+/// Which state of its bridge a `BridgePart` is drawn in.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Shown {
+    Standing,
+    Down,
+    Repairing,
+}
+
+/// Part of bridge `index`'s drawing: its standing deck, its ruin, or the repair scaffolding.
+#[derive(Component)]
+struct BridgePart {
+    index: u16,
+    shown: Shown,
+}
+
+/// Shows each bridge as the sim has it: the deck while it stands, the ruin once it fell, and the
+/// ruin with scaffolding while a constructor repairs it.
+fn show_bridges(sim: Res<Sim>, mut parts: Query<(&BridgePart, &mut Visibility)>) {
+    for (part, mut vis) in &mut parts {
+        let Some(b) = sim.world.bridge(part.index) else { continue };
+        let repairing =
+            b.down && sim.world.entities().any(|e| e.order == (g2_sim::Order::RepairBridge { bridge: part.index }));
+        let on = match part.shown {
+            Shown::Standing => !b.down,
+            Shown::Down => b.down,
+            Shown::Repairing => repairing,
+        };
+        let want = if on { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
         }
     }
 }

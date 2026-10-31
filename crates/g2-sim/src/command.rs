@@ -98,6 +98,18 @@ pub enum CommandKind {
         producer: EntityId,
         at: Vec2,
     },
+    /// Armed units fire at bridge `bridge` (`MapDef::bridges` index) until it falls: Zero
+    /// Hour's force-attack on a bridge, open to every player.
+    AttackBridge {
+        units: Vec<EntityId>,
+        bridge: u16,
+    },
+    /// Constructors walk to an end of bridge `bridge` and repair it, as Zero Hour's dozers and
+    /// workers repair a bridge at its towers.
+    RepairBridge {
+        units: Vec<EntityId>,
+        bridge: u16,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.

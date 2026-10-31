@@ -51,6 +51,12 @@ impl crate::map::MapDef {
                 h.i64(r.0);
             }
         }
+        // Hashed only when present, so maps without bridges keep their fingerprint.
+        for b in &self.bridges {
+            for v in [b.a.x.0, b.a.y.0, b.b.x.0, b.b.y.0, b.width.0, b.hp.map_or(-1, i64::from)] {
+                h.i64(v);
+            }
+        }
         h.0
     }
 }
@@ -205,6 +211,8 @@ impl World {
             h.i64(c.damage as i64);
             h.u64(((c.from as u64) << 32) | c.until as u64);
         }
+        // Only once a bridge has been hurt, so matches without that hash as before.
+        self.bridges.hash_into(|x| h.u64(x));
         // Only in a mission, so other matches hash as before. What was said is output only.
         if let Some(m) = &self.mission {
             h.u64(0x6d69_7373_0000 | m.id.0 as u64);
@@ -320,5 +328,7 @@ fn hash_order(h: &mut Fnv, o: Order) {
             h.i64(exit.y.0);
             h.u64(((slot as u64) << 1) | dropped as u64);
         }
+        Order::AttackBridge { bridge } => h.u64(0x6162_0000 | bridge as u64),
+        Order::RepairBridge { bridge } => h.u64(0x7262_0000 | bridge as u64),
     }
 }

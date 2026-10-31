@@ -9,6 +9,7 @@
 //! platform and build profile. `tests/determinism.rs` and the golden replay enforce that.
 
 pub mod ai;
+pub mod bridge;
 pub mod command;
 pub mod defs;
 pub mod entity;

@@ -22,7 +22,8 @@
 //! Generals / Zero Hour map (`g2-tools maps` lists them). `--general` picks a general of your
 //! faction (Bulldog, Taskmaster, Junkyard); without one you play the plain faction. `--spectate`
 //! lets the AI play your side too (AI vs AI). `--reveal` draws the whole map without your fog
-//! of war (the sim's fog still applies to both sides). `--record` saves the match as a replay
+//! of war (the sim's fog still applies to both sides). `--fell-bridge N` brings the map's
+//! bridge N down before the match (for screenshots). `--record` saves the match as a replay
 //! on exit; check it with `g2-tools verify FILE`. Screenshot mode needs a Vulkan adapter but no
 //! window or display server.
 //!
@@ -130,6 +131,9 @@ struct Args {
     /// One team per player (0: none), as many players as digits: a team game with the skirmish
     /// page's teams. Players past the second play the next faction in turn, at the `--ai` level.
     teams: Option<Vec<u8>>,
+    /// Bridges to bring down before the match starts (`--fell-bridge N`), for screenshots of a
+    /// fallen deck.
+    fell_bridges: Vec<u16>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -163,6 +167,7 @@ fn parse_args() -> Result<Args, String> {
         mission: None,
         difficulty: g2_sim::mission::Difficulty::Normal,
         teams: None,
+        fell_bridges: Vec::new(),
     };
     let mut it = std::env::args().skip(1);
     let faction = |v: Option<String>| match v.as_deref() {
@@ -186,6 +191,7 @@ fn parse_args() -> Result<Args, String> {
                 | "--mission"
                 | "--coop"
                 | "--teams"
+                | "--fell-bridge"
         );
         match flag.as_str() {
             "--map" => a.map = it.next().ok_or("--map needs a name")?,
@@ -256,6 +262,9 @@ fn parse_args() -> Result<Args, String> {
                     Some(it.next().and_then(|v| v.parse().ok()).ok_or("--movie-frame needs a frame number")?)
             }
             "--no-hud" => a.no_hud = true,
+            "--fell-bridge" => {
+                a.fell_bridges.push(it.next().and_then(|v| v.parse().ok()).ok_or("--fell-bridge needs a bridge index")?)
+            }
             "--camera" => {
                 a.battlefield = match it.next().as_deref() {
                     Some("close") => settings::Battlefield::Close,
@@ -495,6 +504,9 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
         }
     }
     let mut sim = Sim::new(map, source, args.seed, players);
+    for &b in &args.fell_bridges {
+        sim.world.damage_bridge(b, i32::MAX, PlayerId(0));
+    }
     sim.fog = !args.reveal;
     Ok(sim)
 }
