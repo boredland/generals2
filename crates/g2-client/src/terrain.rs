@@ -995,8 +995,8 @@ fn spawn_terrain(
 }
 
 /// Every bridge of an imported map as a concrete deck: a slab along the walkable deck
-/// (`MapFile::bridge_deck_at`, `BRIDGE_DECK_WIDTH` wide), a low parapet on each side and piers
-/// down to the ground. Our own shapes; the original bridge models aren't used.
+/// (`MapFile::bridge_deck_at`, `g2_maps::bridge_deck_width` wide), a low parapet on each side and
+/// piers down to the ground. Our own shapes; the original bridge models aren't used.
 fn spawn_bridges(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
@@ -1018,8 +1018,8 @@ fn spawn_bridges(
     });
     let cube = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
     let per = g2_maps::SAGE_PER_WORLD as f32;
-    let width = g2_maps::BRIDGE_DECK_WIDTH / per;
     for b in &file.bridges {
+        let width = g2_maps::bridge_deck_width(&b.name) / per;
         let a = Vec2::from(file.to_world(b.a.0, b.a.1));
         let z = Vec2::from(file.to_world(b.b.0, b.b.1));
         let len = a.distance(z);

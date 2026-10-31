@@ -116,10 +116,29 @@ pub struct Road {
 /// SAGE units per raw height step (`MAP_HEIGHT_SCALE`).
 pub const SAGE_PER_HEIGHT_STEP: f32 = 10.0 / 16.0;
 
-/// Walkable deck width of every bridge, in SAGE units. The engine takes it from each bridge
-/// model's extent (`W3DBridge::getBridgeInfo`), and those models aren't in any vendored
-/// source; 60 is the retail `FourLane`/`TwoLaneOld` road width (`Roads.ini`), so a bridge is
-/// as wide as the roads leading onto it.
+/// Walkable deck width in SAGE units of a bridge type (`Road::name`). The engine takes it from
+/// the bridge model: the `BRIDGE_LEFT` mesh's extent across the deck times the type's
+/// `BridgeScale` (`W3DBridge::load` / `getBridgeInfo`). The scales are in GeneralsGamePatch2's
+/// `Roads.ini`; the retail models aren't vendored, but the 2002 Generals alpha build
+/// (`archive/leaks/generals-alpha-98`) has three of them, measured here: `TBDoubWide` 93.4,
+/// `CBBridgeIn` 70.0, `CBBridgeSt` 86.1 across. Retail may have changed those models after the
+/// alpha. Every other type (the European, Kandahar and Tampico bridges most skirmish maps use)
+/// gets `BRIDGE_DECK_WIDTH`.
+pub fn bridge_deck_width(kind: &str) -> f32 {
+    match kind {
+        // TBDoubWide × 0.85 and × 2.0.
+        "IronSectionalDoublewide" => 79.4,
+        "IronSectionalDoublewide2" => 186.8,
+        // CBBridgeIn × 0.85.
+        "Industrial" => 59.5,
+        // CBBridgeSt × 0.85.
+        "Concrete" => 73.1,
+        _ => BRIDGE_DECK_WIDTH,
+    }
+}
+
+/// Deck width of a bridge type whose model isn't available: 60, the retail `FourLane` /
+/// `TwoLaneOld` road width (`Roads.ini`), so the bridge is as wide as the roads leading onto it.
 pub const BRIDGE_DECK_WIDTH: f32 = 60.0;
 
 #[derive(Debug)]
@@ -580,7 +599,7 @@ impl MapFile {
             let len = (dx * dx + dy * dy).sqrt().max(1.0);
             let along = ((x - b.a.0) * dx + (y - b.a.1) * dy) / len;
             let across = ((x - b.a.0) * dy - (y - b.a.1) * dx).abs() / len;
-            if across > BRIDGE_DECK_WIDTH / 2.0 || along < -reach || along > len + reach {
+            if across > bridge_deck_width(&b.name) / 2.0 || along < -reach || along > len + reach {
                 return None;
             }
             let t = (along / len).clamp(0.0, 1.0);
@@ -1067,6 +1086,26 @@ mod tests {
             let (cx, cy) = ((x / g2_sim::nav::CELL as f32) as usize, (z / g2_sim::nav::CELL as f32) as usize);
             assert!(!def.terrain[cy * nw + cx], "nav cell on the deck at {:?} is blocked", (x, z));
         }
+    }
+
+    /// Deck widths come per bridge type: Bear Town Beatdown's `IronSectionalDoublewide2` (the
+    /// alpha's `TBDoubWide` model scaled 2.0) is about three times as wide as Winding River's
+    /// `KandaharBridge`, whose model isn't available and so gets the road width.
+    #[test]
+    fn bridge_widths_follow_the_bridge_type() {
+        assert_eq!(bridge_deck_width("KandaharBridge"), BRIDGE_DECK_WIDTH);
+        assert!((bridge_deck_width("IronSectionalDoublewide2") - 93.4 * 2.0).abs() < 0.1);
+        assert!((bridge_deck_width("Concrete") - 86.05 * 0.85).abs() < 0.1);
+        let map = load_official("Zero Hour", "Bear Town Beatdown", "Bear Town Beatdown.map");
+        let b = map.bridges.iter().find(|b| b.name == "IronSectionalDoublewide2").expect("the iron bridge");
+        let (dx, dy) = (b.b.0 - b.a.0, b.b.1 - b.a.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        let (ux, uy) = (dx / len, dy / len);
+        let mid = ((b.a.0 + b.b.0) / 2.0, (b.a.1 + b.b.1) / 2.0);
+        let side = |d: f32| map.bridge_deck_at(mid.0 - uy * d, mid.1 + ux * d);
+        let half = bridge_deck_width(&b.name) / 2.0;
+        assert!(side(half - 1.0).is_some() && side(-(half - 1.0)).is_some());
+        assert!(side(half + 1.0).is_none());
     }
 
     /// Nothing may be built on a bridge deck: a building at a deck's end, on the bank, would
