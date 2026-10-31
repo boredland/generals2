@@ -8,13 +8,14 @@ use g2_sim::{AiLevel, DefId, Faction, MatchSetup, PlayerId, PlayerSetup, TICKS_P
 
 /// Regression guard on gun stand-off: while `Normal`'s field army is in a fight, a gun out of
 /// the base stands farther from the nearest visible enemy than the line's closest unit, by a
-/// good margin, nearly always; most guns leave the base, and most survive. Nothing positions
-/// them on purpose: range alone does it (a gun stops at its reach, 55-65, while the line closes
-/// to 25-35), and `Easy` stands as far back (median 38). Where the levels differ is losses.
-/// Measured on Crater Ridge, every pairing, both starts, against Easy: median 36 units behind,
-/// 96% of samples more than 5 behind, 21 of 24 guns out of the base, 10 lost (11 of 19 out
-/// and 10 lost before the AI stopped walling its war factory in, when the guns that never
-/// left were EU howitzers trapped at home).
+/// good margin, nearly always; most guns leave the base, and most survive. Range does most of
+/// it (a gun stops at its reach, 55-65, while the line closes to 25-35; `Easy`, which places
+/// nothing, stands as far back, median 39); `Normal` also steps a gun back from an enemy
+/// nearer than the middle of its band, out of its minimum range, and sets a Thunderfist up
+/// when one is in reach (`place_guns` in `ai.rs`). Measured on Crater Ridge, every pairing,
+/// both starts, against Easy: median 41 units behind, 94% of samples more than 5 behind, 20
+/// of 22 guns out of the base, 6 lost (median 36, 96%, 21 of 24 out and 10 lost before
+/// `place_guns`).
 #[test]
 fn normal_artillery_stands_behind_its_line() {
     let r = rules();
@@ -110,5 +111,5 @@ fn normal_artillery_stands_behind_its_line() {
     assert!(median >= 20.0, "guns stand only {median} behind the front at the median");
     assert!(held >= 0.75, "guns behind the front in only {:.0}% of samples", held * 100.0);
     assert!(left * 2 >= built, "only {left} of {built} guns ever left the base");
-    assert!(lost * 3 <= built * 2, "{lost} of {built} guns lost");
+    assert!(lost * 2 <= built, "{lost} of {built} guns lost");
 }

@@ -233,7 +233,8 @@ fn matches_with_powers_replay_exactly() {
 }
 
 /// A `Normal` AI with a general uses its power during the match (in a mirror match, so the
-/// fight lasts long enough for a target worth it), an `Easy` one never does, and those matches
+/// fight lasts long enough for a target worth it); an `Easy` one fires only a power that hits,
+/// Bulldog's barrage, never a repair (Taskmaster) or an ambush (Junkyard); and those matches
 /// replay exactly: the AI's power commands are re-derived on replay like all its other
 /// commands.
 #[test]
@@ -255,10 +256,16 @@ fn the_ai_uses_its_generals_power() {
         let mut easy = s.clone();
         easy.players[0].ai = Some(g2_sim::AiLevel::Easy);
         let mut e = World::new(&easy, rules());
+        let mut easy_used = 0;
         while e.winner().is_none() && e.tick() < 30 * 60 * 15 {
             e.step();
-            let easy_used = e.events().iter().any(|e| matches!(e, Event::PowerUsed { player: P0, slot: 0, .. }));
-            assert!(!easy_used, "{g:?}: Easy used a power");
+            easy_used +=
+                e.events().iter().filter(|e| matches!(e, Event::PowerUsed { player: P0, slot: 0, .. })).count();
+        }
+        if g == BULLDOG {
+            assert!(easy_used >= 1, "Easy never fired Bulldog's barrage");
+        } else {
+            assert_eq!(easy_used, 0, "{g:?}: Easy used a power that doesn't hit");
         }
         let (end, replay) = record(World::new(&s, rules()), &s, w.tick(), |_| {});
         assert_eq!(end.state_hash(), w.state_hash());

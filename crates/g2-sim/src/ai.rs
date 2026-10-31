@@ -2,12 +2,14 @@
 //! replay of an AI match reproduces exactly without recording AI decisions separately.
 //!
 //! Both levels run the same economy and base layout. `Easy` (the original AI) sends its army
-//! in waves of five and defends with the units at home. `Normal` judges the battle first: it
-//! keeps an estimate of the enemy army it has seen, attacks only with an army that outweighs
-//! it, pulls units out of a fight they are losing, calls the field army home when the base is
-//! attacked by more than its guards can hold, moves constructors away from enemies, builds
-//! more factories when credits pile up and opens a second supply center when the base's
-//! piles run low.
+//! in waves of five, defends with the units at home, fires a ready strike at a group of three
+//! or more enemies it sees and pulls a constructor that is being hit back home. `Normal`
+//! judges the battle first: it keeps an estimate of the enemy army it has seen, attacks only
+//! with an army that outweighs it, pulls units out of a fight they are losing, calls the
+//! field army home when the base is attacked by more than its guards can hold, keeps its
+//! guns at the far end of their band, routes constructors home around enemies, builds more
+//! factories when credits pile up and opens a second supply center when the base's piles run
+//! low.
 
 use crate::command::CommandKind;
 use crate::defs::{Armour, BuildingRole, Class, DefId, GeneralId, PerkId, Power, PowerKind, Rules, Weapon};
@@ -251,6 +253,39 @@ impl Ai {
         }
     }
 
+    /// `Easy`'s simpler use of powers: only the ones that hit (a barrage, an airstrike, a
+    /// missile strike), on the visible enemy unit or building with the most visible enemies,
+    /// by count, within the blast area, at least three. No weighing of strength and no recon,
+    /// repair, ambush or cloak (so never the GLA's GPS Scrambler). Measured, Normal against
+    /// Easy on all 86 skirmish maps: 1,392 to 151 (1,397 to 147 without); aiming only at armed
+    /// units or waiting for five changed no more than 3 matches.
+    fn easy_power_target(&self, world: &World, power: Power) -> Option<Vec2> {
+        let reach = match power.kind {
+            PowerKind::Barrage { radius, shells, .. }
+            | PowerKind::Airstrike { radius, bombs: shells, .. }
+            | PowerKind::Missiles { radius, missiles: shells, .. } => {
+                if shells > 1 {
+                    radius * Fx::from_int(3)
+                } else {
+                    radius
+                }
+            }
+            _ => return None,
+        };
+        let enemies: Vec<Vec2> = world
+            .entities()
+            .filter(|e| world.hostile(self.player, e.owner) && e.hp > 0 && world.sees(self.player, e))
+            .map(|e| e.pos)
+            .collect();
+        let count = |p: Vec2| enemies.iter().filter(|q| q.distance(p) <= reach).count();
+        enemies
+            .iter()
+            .map(|&p| (count(p), p))
+            .filter(|&(n, _)| n >= 3)
+            .max_by_key(|&(n, p)| (n, p.x, p.y))
+            .map(|(_, p)| p)
+    }
+
     pub(crate) fn think(&mut self, world: &World, out: &mut Vec<CommandKind>) {
         if world.tick() % THINK_INTERVAL != self.player.0 as u32 % THINK_INTERVAL {
             return;
@@ -262,24 +297,30 @@ impl Ai {
         let me = self.player;
         let rules = world.rules;
         let mine: Vec<_> = world.entities().filter(|e| e.owner == Some(me)).collect();
-        let idle_constructor =
-            mine.iter().find(|e| rules.def(e.def).is_constructor() && e.order == Order::Idle).map(|e| e.id);
         let cc = mine.iter().find(|e| rules.def(e.def).role() == Some(BuildingRole::CommandCenter));
+        // Endangered constructors get away first; one sent off this second builds nothing.
+        let fleeing = self.protect_constructors(world, &mine, cc.map(|c| c.pos), out);
+        let idle_constructor = mine
+            .iter()
+            .find(|e| rules.def(e.def).is_constructor() && e.order == Order::Idle && !fleeing.contains(&e.id))
+            .map(|e| e.id);
         let count =
             |role: fn(BuildingRole) -> bool| mine.iter().filter(|e| rules.def(e.def).role().is_some_and(role)).count();
 
         // Before anything that may return early: ready powers are used at once, one a think.
-        // `Easy`, the original AI, never uses one.
-        if self.level != AiLevel::Easy {
-            let ready = world.powers_of(me).into_iter().enumerate().filter_map(|(slot, p)| {
-                let p = p.filter(|_| world.power_wait(me, slot as u8) == Some(0))?;
-                Some((slot as u8, p))
-            });
-            for (slot, p) in ready {
-                if let Some(at) = self.power_target(world, &mine, slot, p) {
-                    out.push(CommandKind::Power { slot, at });
-                    break;
-                }
+        let ready = world.powers_of(me).into_iter().enumerate().filter_map(|(slot, p)| {
+            let p = p.filter(|_| world.power_wait(me, slot as u8) == Some(0))?;
+            Some((slot as u8, p))
+        });
+        for (slot, p) in ready {
+            let at = if self.level == AiLevel::Easy {
+                self.easy_power_target(world, p)
+            } else {
+                self.power_target(world, &mine, slot, p)
+            };
+            if let Some(at) = at {
+                out.push(CommandKind::Power { slot, at });
+                break;
             }
         }
         // 0. Never be left without a constructor: one lost (or never built) is retrained, and
@@ -526,10 +567,10 @@ impl Ai {
             }
         }
 
-        // 4. Put idle collectors back to work.
+        // 4. Put idle collectors back to work (not a GLA worker just sent away from danger).
         let idle: Vec<EntityId> = mine
             .iter()
-            .filter(|e| rules.def(e.def).collector().is_some() && e.order == Order::Idle)
+            .filter(|e| rules.def(e.def).collector().is_some() && e.order == Order::Idle && !fleeing.contains(&e.id))
             .map(|e| e.id)
             .collect();
         if let (Some(&first), false) = (idle.first(), idle.is_empty())
@@ -546,11 +587,139 @@ impl Ai {
             .filter(|e| rules.def(e.def).is_unit() && rules.def(e.def).weapon().is_some() && e.inside.is_none())
             .collect();
         let home = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos));
+        let placed = self.place_guns(world, &army, home, out);
+        let army: Vec<_> = army.into_iter().filter(|e| !placed.contains(&e.id)).collect();
         if self.level == AiLevel::Easy {
             self.waves(world, &mine, &army, home, out);
         } else {
             self.command_army(world, &mine, &army, home, out);
         }
+    }
+
+    /// `Normal`'s artillery (a unit whose main gun fires shells), placed on purpose from its
+    /// band, the main gun's minimum range to its range; returns the guns given an order this
+    /// second, which the army leaves alone until the next. Against the nearest armed ground
+    /// enemy it sees: inside the minimum range plus 5, a gun that fires on the move steps back
+    /// (as far as the middle of its band) along a way clear of the enemies in its reach
+    /// (`escape`), and a deployed one packs up to its direct-fire gun; nearer than the middle
+    /// of its band, a packed gun steps back to 5 inside its range, behind its line; standing
+    /// idle with the enemy in its band, a deployable gun sets up. Measured on its own, Normal
+    /// against Easy on all 86 skirmish maps (Easy firing its powers): Normal lost 1,016 of
+    /// 8,162 guns (1,425 of 8,429 without) and won 1,396 to 151, 1 undecided (1,392 to 151,
+    /// 5). Also tried: re-aiming a ready gun at the enemy with the most units around it (lost
+    /// 1,073 and left 7 matches undecided), and stepping a deployed gun back instead of
+    /// packing it up (no change).
+    fn place_guns(
+        &self,
+        world: &World,
+        army: &[&Entity],
+        home: Option<Vec2>,
+        out: &mut Vec<CommandKind>,
+    ) -> Vec<EntityId> {
+        let (me, rules) = (self.player, world.rules);
+        let mut sent = Vec::new();
+        let Some(home) = home.filter(|_| self.level == AiLevel::Normal) else { return sent };
+        let armed: Vec<&Entity> = world
+            .entities()
+            .filter(|e| {
+                world.hostile(me, e.owner)
+                    && e.inside.is_none()
+                    && !rules.def(e.def).flies()
+                    && strength(world, e) > 0
+                    && world.sees(me, e)
+            })
+            .collect();
+        for g in army {
+            let d = rules.def(g.def);
+            let Some(w) = d.weapon_for(d.deploy.is_some()) else { continue };
+            let Some(shell) = w.shell else { continue };
+            let gap = |e: &Entity| e.pos.distance(g.pos) - rules.def(e.def).radius;
+            let Some(near) = armed.iter().map(|e| gap(e)).min() else { continue };
+            let nearest = armed.iter().filter(|e| gap(e) == near).min_by_key(|e| e.id).unwrap();
+            let moving = matches!(g.order, Order::Move { .. });
+            let middle = (shell.min_range + w.range) / Fx::from_int(2);
+            let order = if near < shell.min_range + Fx::from_int(5) {
+                if d.deploy.is_some() {
+                    (g.deploy == DeployState::Deployed)
+                        .then(|| CommandKind::Deploy { units: vec![g.id], deployed: false })
+                } else {
+                    let threats: Vec<Vec2> = armed.iter().filter(|e| gap(e) <= w.range).map(|e| e.pos).collect();
+                    (!moving).then(|| CommandKind::Move {
+                        units: vec![g.id],
+                        target: escape(world, g.pos, home, &threats, middle),
+                    })
+                }
+            } else if near < middle && g.deploy == DeployState::Packed && !moving {
+                let away = g.pos - nearest.pos;
+                let hold = w.range - Fx::from_int(5);
+                let target = world.map.clamp(g.pos + away.scale((hold - near) / away.length().max(Fx::ONE)));
+                Some(CommandKind::Move { units: vec![g.id], target })
+            } else if d.deploy.is_some() && g.deploy == DeployState::Packed && g.order == Order::Idle && near <= w.range
+            {
+                Some(CommandKind::Deploy { units: vec![g.id], deployed: true })
+            } else {
+                None
+            };
+            if let Some(order) = order {
+                out.push(order);
+                sent.push(g.id);
+            }
+        }
+        sent
+    }
+
+    /// Constructors in danger get away; returns the ones sent off. `Normal` moves one away as
+    /// soon as an armed enemy it sees comes within `DANGER_RADIUS`, home along a way that
+    /// keeps clear of every armed enemy it sees nearby (`escape`), and changes course when one
+    /// of them comes within 20 of the way it is taking. `Easy` only pulls one that was hit in
+    /// the last 2 s straight back home. Measured on their own, Normal against Easy on all 86
+    /// skirmish maps: Normal lost 264 constructors (281 going straight home), Easy 3,550
+    /// (4,665 left alone); Easy against Easy lost 2,348 (3,318), and Normal won 1,390 to 153
+    /// (1,397 to 147).
+    fn protect_constructors(
+        &self,
+        world: &World,
+        mine: &[&Entity],
+        home: Option<Vec2>,
+        out: &mut Vec<CommandKind>,
+    ) -> Vec<EntityId> {
+        let (me, rules) = (self.player, world.rules);
+        let mut sent = Vec::new();
+        let Some(home) = home.or_else(|| mine.first().map(|e| e.pos)) else { return sent };
+        let armed: Vec<&Entity> = world
+            .entities()
+            .filter(|e| world.hostile(me, e.owner) && strength(world, e) > 0 && world.sees(me, e))
+            .collect();
+        for c in mine.iter().filter(|e| rules.def(e.def).is_constructor() && e.inside.is_none()) {
+            if c.pos.distance(home) <= Fx::from_int(20) {
+                continue;
+            }
+            let target = if self.level == AiLevel::Easy {
+                let hit = c.last_hit.is_some_and(|h| world.tick() < h + 2 * THINK_INTERVAL);
+                (hit && !matches!(c.order, Order::Move { .. })).then_some(home)
+            } else {
+                let threats: Vec<Vec2> = armed
+                    .iter()
+                    .filter(|e| e.pos.distance(c.pos) <= DANGER_RADIUS * Fx::from_int(2))
+                    .map(|e| e.pos)
+                    .collect();
+                let close = threats.iter().any(|t| t.distance(c.pos) <= DANGER_RADIUS);
+                let blocked = match c.order {
+                    Order::Move { target, .. } => {
+                        threats.iter().any(|&t| clearance(c.pos, target, t) < Fx::from_int(20))
+                    }
+                    _ => true,
+                };
+                (close && blocked).then(|| escape(world, c.pos, home, &threats, DANGER_RADIUS))
+            };
+            if let Some(target) = target
+                && !matches!(c.order, Order::Move { target: t, .. } if t == target)
+            {
+                out.push(CommandKind::Move { units: vec![c.id], target });
+                sent.push(c.id);
+            }
+        }
+        sent
     }
 
     /// `Easy`: defend with the units at home, attack in waves of five. Only visible, armed
@@ -680,14 +849,6 @@ impl Ai {
         self.enemy_seen = (self.enemy_seen - self.enemy_seen / 64).max(seen_now);
         let near_base = |p: Vec2| near_base(world, mine, p);
         let at_home = |e: &&Entity| near_base(e.pos);
-
-        // Constructors: away from armed enemies, back to the command center.
-        for c in mine.iter().filter(|e| rules.def(e.def).is_constructor()) {
-            let threatened = enemies.iter().any(|e| strength(world, e) > 0 && e.pos.distance(c.pos) <= DANGER_RADIUS);
-            if threatened && c.pos.distance(home) > Fx::from_int(20) && !matches!(c.order, Order::Move { .. }) {
-                out.push(CommandKind::Move { units: vec![c.id], target: home });
-            }
-        }
 
         // Special shots (the Shadow Tank's Particle Accelerator): every unit with one ready
         // fires it at the strongest enemy it sees within reach (units first, as a gun picks;
@@ -889,6 +1050,41 @@ fn stand_off(pos: Vec2, radius: Fx, from: Vec2) -> Vec2 {
     }
     let gap = radius + Fx::from_int(8);
     pos + delta.scale(gap.min(dist) / dist)
+}
+
+/// How close the straight way from `from` to `to` comes to `threat`.
+fn clearance(from: Vec2, to: Vec2, threat: Vec2) -> Fx {
+    let (way, rel) = (to - from, threat - from);
+    let len_sq = way.length_sq();
+    if len_sq == Fx::ZERO {
+        return rel.length();
+    }
+    let s = ((way.x * rel.x + way.y * rel.y) / len_sq).max(Fx::ZERO).min(Fx::ONE);
+    threat.distance(from + way.scale(s))
+}
+
+/// Where a unit at `from` gets away from `threats` (enemy positions) to: of `toward` itself and
+/// 16 walkable points `step` away around it, the one whose straight way there keeps farthest
+/// from every threat, ties going to the point nearest `toward`. Every way starts beside the
+/// nearest threat, so the best keep that distance: they lead straight away from all of them,
+/// and home when home lies that way, else to the side.
+fn escape(world: &World, from: Vec2, toward: Vec2, threats: &[Vec2], step: Fx) -> Vec2 {
+    let safety = |to: Vec2| threats.iter().map(|&t| clearance(from, to, t)).min().unwrap_or(Fx::ZERO);
+    let around = (0..16).map(|k| {
+        let (dx, dy) = ring_offset(2, k);
+        let dir = Vec2::from_int(dx, dy);
+        from + dir.scale(step / dir.length())
+    });
+    let open = |p: Vec2| {
+        world.map.walkable(p) && {
+            let (cx, cy) = world.nav.cell(p);
+            !world.nav.blocked(cx, cy)
+        }
+    };
+    std::iter::once(toward)
+        .chain(around.filter(|&p| open(p)))
+        .max_by_key(|&p| (safety(p), std::cmp::Reverse(p.distance(toward)), p.x, p.y))
+        .unwrap_or(toward)
 }
 
 /// Whether `p` is within `DEFEND_RADIUS` of the edge of one of the base's buildings (a held
