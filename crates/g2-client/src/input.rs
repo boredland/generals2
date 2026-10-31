@@ -16,9 +16,10 @@
 //! moves the camera there. A click on any HUD panel stays with the HUD: it never selects or
 //! orders in the world.
 //! Space pauses, +/- change speed (×1, ×2, ×4, ×8). F10 surrenders. Tab selects the next own
-//! collector and centres the camera on it. G arms the general's power, F1-F3 the faction's
-//! support powers: the next left click aims it (right click or Esc disarms). Esc is handled by
-//! `menu` alone, so it cancels a placement or an armed power before it opens the pause menu.
+//! collector and centres the camera on it. G arms the general's power, F1-F6 the faction's
+//! support powers and then those the slotted perks add: the next left click aims it (right
+//! click or Esc disarms). Esc is handled by `menu` alone, so it cancels a placement or an
+//! armed power before it opens the pause menu.
 //! M (mute) is handled by `audio`, V (to the last alert) by `alerts`.
 
 use bevy::prelude::*;
@@ -34,17 +35,19 @@ pub struct Selection(pub Vec<EntityId>);
 #[derive(Resource, Default)]
 pub struct Placement(pub Option<DefId>);
 
-/// A power is armed, by slot (0 the general's, 1-3 support), or the selected units' special
-/// shot (`SPECIAL`): the next left click on the ground uses the power there, on an enemy fires
-/// the special at it.
+/// A power is armed, by slot (0 the general's, then support and perk powers), or the selected
+/// units' special shot (`SPECIAL`): the next left click on the ground uses the power there, on
+/// an enemy fires the special at it.
 #[derive(Resource, Default)]
 pub struct PowerAim(pub Option<u8>);
 
 /// `PowerAim` for the selection's special shot (R) rather than a power slot.
 pub const SPECIAL: u8 = u8::MAX;
 
-/// The key that arms each power slot.
-pub const POWER_KEYS: [KeyCode; 4] = [KeyCode::KeyG, KeyCode::F1, KeyCode::F2, KeyCode::F3];
+/// The key that arms each power slot: room for a general's power, a faction's three support
+/// powers and the perk powers after them.
+pub const POWER_KEYS: [KeyCode; 7] =
+    [KeyCode::KeyG, KeyCode::F1, KeyCode::F2, KeyCode::F3, KeyCode::F4, KeyCode::F5, KeyCode::F6];
 
 /// The left button's drag start, whether the right button went down over the world, and the
 /// last left click (where and when), for telling a double click.
@@ -654,13 +657,15 @@ mod tests {
     }
 
     /// G arms the general's power only once it is ready, and never for a player without one;
-    /// F1 arms the faction's first support power, on its own timer.
+    /// F1 arms the faction's first support power, on its own timer; each further key the next
+    /// slot: F3 the EU's third support power, F4 the power Mercury Red's Strike Team perk adds.
     #[test]
     fn power_keys_arm_only_ready_powers() {
         use bevy::ecs::system::RunSystemOnce;
-        let armed = |general: Option<g2_sim::GeneralId>, key: KeyCode, ticks: u32| {
+        let armed = |general: Option<g2_sim::GeneralId>, perks: &[g2_sim::defs::PerkId], key: KeyCode, ticks: u32| {
             let mut players = Sim::players([g2_sim::Faction::Eu, g2_sim::Faction::Gla], false);
             players[0].general = general;
+            players[0].perks = perks.to_vec();
             let mut sim = Sim::new(g2_rules::crater_ridge(), None, 1, players);
             for _ in 0..ticks {
                 sim.world.step();
@@ -676,14 +681,22 @@ mod tests {
             world.run_system_once(keyboard).unwrap();
             world.resource::<PowerAim>().0
         };
+        let rules = g2_rules::rules();
         let bulldog = g2_rules::generals::BULLDOG;
-        let ready = g2_rules::rules().general(bulldog).power.unwrap().first_ticks;
-        assert_eq!(armed(Some(bulldog), KeyCode::KeyG, ready - 30), None, "still charging");
-        assert_eq!(armed(Some(bulldog), KeyCode::KeyG, ready), Some(0), "ready");
-        assert_eq!(armed(None, KeyCode::KeyG, ready), None, "no general, no power");
-        let raid = g2_rules::rules().support_powers(g2_sim::Faction::Eu).next().unwrap().first_ticks;
-        assert_eq!(armed(None, KeyCode::F1, raid - 30), None, "support still charging");
-        assert_eq!(armed(None, KeyCode::F1, raid), Some(1), "support ready without a general");
+        let ready = rules.general(bulldog).power.unwrap().first_ticks;
+        assert_eq!(armed(Some(bulldog), &[], KeyCode::KeyG, ready - 30), None, "still charging");
+        assert_eq!(armed(Some(bulldog), &[], KeyCode::KeyG, ready), Some(0), "ready");
+        assert_eq!(armed(None, &[], KeyCode::KeyG, ready), None, "no general, no power");
+        let raid = rules.support_powers(g2_sim::Faction::Eu).next().unwrap().first_ticks;
+        assert_eq!(armed(None, &[], KeyCode::F1, raid - 30), None, "support still charging");
+        assert_eq!(armed(None, &[], KeyCode::F1, raid), Some(1), "support ready without a general");
+        let drone = rules.support_powers(g2_sim::Faction::Eu).nth(2).unwrap();
+        assert_eq!(drone.name, "UAV Spy Drone");
+        assert_eq!(armed(None, &[], KeyCode::F3, drone.first_ticks), Some(3), "F3: the third support power");
+        let (mercury, team) = (g2_rules::generals::MERCURY_RED, g2_rules::perks::MR_STRIKE_TEAM);
+        let drop = rules.perk(team).adds_power.unwrap().first_ticks;
+        assert_eq!(armed(Some(mercury), &[team], KeyCode::F4, drop), Some(4), "F4: the perk's power");
+        assert_eq!(armed(Some(mercury), &[], KeyCode::F4, drop), None, "no perk, nothing on F4");
     }
 
     /// A click on the HUD is the HUD's: on a build-grid button it trains that slot's unit, on

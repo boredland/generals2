@@ -165,6 +165,10 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
         "EU Bomber" => ("BuildButtons/Active/EU/EU_Airbomber", "UnitPortraits/EU/Vehicles/EU_Airbomber_Portrait"),
         "APA Bomber" => ("BuildButtons/Active/APA/AU_AirBomber", "UnitPortraits/APA/Vehicles/AU_AirBomber_Portrait"),
         "APA Fighter" => ("BuildButtons/Active/APA/AU_AirFighter", "UnitPortraits/APA/Vehicles/AU_AirFighter_Portrait"),
+        "EU Spy Drone" => ("BuildButtons/Active/EU/EU_SpyDrone", "UnitPortraits/EU/Vehicles/EU_SpyDrone_Portrait"),
+        "APA Sortie Fighter" => {
+            ("BuildButtons/Active/APA/AU_AirFighter", "UnitPortraits/APA/Vehicles/AU_AirFighter_Portrait")
+        }
         "GLA Scud Storm" => {
             ("BuildButtons/Active/GLA/GS_ScudStorm", "UnitPortraits/GLA/Structures/GS_ScudStorm_Portrait")
         }
@@ -273,6 +277,40 @@ pub fn upgrade_icon(upgrade: &str) -> Option<&'static str> {
     })
 }
 
+/// The alpha's player-power button for each of our powers (its `ButtonImage`), under
+/// `ui/images/PlayerAbility/`. Ours without an alpha power (Bulldog's barrage, Taskmaster's
+/// repair, Junkyard's ambush) take the nearest one's.
+pub fn power_icon(power: &str) -> Option<&'static str> {
+    Some(match power {
+        "Artillery barrage" => "PlayerAbility/APA/OffshoreBombardment",
+        "Field repair" => "PlayerAbility/SupplyDrop",
+        "Ambush" => "PlayerAbility/GLA/UnearthTunnel",
+        "Air Raid" => "PlayerAbility/EU/AirRaid",
+        "Fuel Air Bomb" => "PlayerAbility/EU/FuelAirBomb",
+        "UAV Spy Drone" => "PlayerAbility/EU/UAVSpyDrone",
+        "Bulwark" => "PlayerAbility/EU/Bulwark",
+        "Skylance" => "PlayerAbility/EU/Skylance",
+        "Plasma Bomb" => "PlayerAbility/EU/PlasmaBomb",
+        "Strike Team" => "PlayerAbility/EU/DeployStrikeTeam",
+        "Railgun Drop" => "PlayerAbility/EU/Deploy_Exp_Railgun",
+        "Carpet Bombing" => "PlayerAbility/APA/CarpetBombing",
+        "Spy Sorties" => "PlayerAbility/APA/SpySorties",
+        "Sortie" => "PlayerAbility/APA/Sortie",
+        "Offshore Bombardment" => "PlayerAbility/APA/OffshoreBombardment",
+        "Inferno Artillery" => "PlayerAbility/APA/InfernoArtillery",
+        "Thunderclap" => "PlayerAbility/APA/ThunderClap",
+        "Neutron Bomb" => "PlayerAbility/APA/NeutronBomb",
+        "Misdirection" => "PlayerAbility/APA/Misdirection",
+        "Scud Storm" => "SuperWeapon/GLA/SW_GS_ScudStrm",
+        "GPS Scrambler" => "PlayerAbility/GLA/GPSScrambler",
+        "Sabotage" => "PlayerAbility/GLA/Sabotage",
+        "Toxin Bomb" => "PlayerAbility/GLA/ToxinBomb",
+        "Mass RPG Strike" => "PlayerAbility/GLA/MassRPGStrike",
+        "Stealth Field" => "PlayerAbility/GLA/StealthField",
+        _ => return None,
+    })
+}
+
 /// The general's portrait in the bottom bar: the alpha's "basic" general of each faction.
 fn general_portrait(faction: Faction) -> &'static str {
     match faction {
@@ -295,6 +333,8 @@ enum Slot {
     Minimap,
     Portrait,
     BuildGrid,
+    /// One of the bar's power frames, by power slot.
+    Power(u8),
 }
 
 /// Windows by their layout name that our HUD fills. Everything else is drawn as the art.
@@ -308,6 +348,15 @@ fn slot(name: &str) -> Option<Slot> {
         "Timer" => Slot::Field(|| Field::Clock),
         "GeneralPortrait" => Slot::Portrait,
         "Button Container" => Slot::BuildGrid,
+        // The bar's power frames, in key order (G, F1-F4). Its first frame, `Player Ability
+        // Proxy 1`, lies under the general's portrait, which the layout draws over it, so the
+        // five beside it carry them; a sixth key's power shows only in the text list above
+        // the minimap.
+        "Power Proxy 2" => Slot::Power(0),
+        "Power Proxy 3" => Slot::Power(1),
+        "Power Proxy 4" => Slot::Power(2),
+        "Power Proxy 5" => Slot::Power(3),
+        "Power Proxy 6" => Slot::Power(4),
         _ => return None,
     })
 }
@@ -415,6 +464,18 @@ impl Ctx<'_, '_, '_> {
             Some(Slot::BuildGrid) => {
                 e.with_children(|g| crate::hud::alpha_grid(g, wd, ht));
             }
+            Some(Slot::Power(slot)) => {
+                // The frame's own art stays beneath; our live tile sits on it.
+                if let Some(img) = &w.image {
+                    e.insert(ImageNode::new(image(self.server, &img.to_string_lossy())));
+                }
+                let font = TextFont {
+                    font: self.font.clone().into(),
+                    font_size: FontSize::Px((11.0 * s).max(8.0)),
+                    ..default()
+                };
+                e.with_children(|t| crate::hud::alpha_power(t, slot, font));
+            }
             Some(Slot::Field(f)) => {
                 let color = match f() {
                     Field::Money | Field::Power | Field::PowerFigures => Color::srgb_u8(0x00, 0xfd, 0x77),
@@ -461,7 +522,7 @@ impl Ctx<'_, '_, '_> {
         // its own text, its button art); a field keeps the plates behind its text (the
         // timer's dark backing), with the text raised above them.
         match slot {
-            Some(Slot::Minimap | Slot::BuildGrid) => {}
+            Some(Slot::Minimap | Slot::BuildGrid | Slot::Power(_)) => {}
             Some(Slot::Field(_)) => {
                 for c in w.children.iter().filter(|c| c.image.is_some() && c.text.is_none()) {
                     self.window(c, (x, y), s);
@@ -488,6 +549,16 @@ mod tests {
         for u in g2_rules::rules().upgrades {
             assert!(upgrade_icon(u.name).is_some(), "{} has no alpha icon", u.name);
         }
+        let r = g2_rules::rules();
+        let powers = r
+            .generals
+            .iter()
+            .flat_map(|g| g.power.iter().chain(g.power_levels))
+            .chain(r.support.iter().map(|(_, p)| p))
+            .chain(r.perks.iter().filter_map(|k| k.adds_power.as_ref()));
+        for p in powers {
+            assert!(power_icon(p.name).is_some(), "{} has no alpha icon", p.name);
+        }
     }
 
     /// Against a real import (`G2_ALPHA_CACHE`; skipped when unset): the layout parses, has
@@ -500,6 +571,9 @@ mod tests {
         for name in ["Minimap container", "Timer", "GeneralPortrait", "Button Container", "Power Container"] {
             assert!(layout.bottom_bar.find(name).is_some(), "{name}");
         }
+        for name in ["Power Proxy 2", "Power Proxy 6"] {
+            assert!(layout.bottom_bar.find(name).is_some(), "{name}");
+        }
         let images = cache.0.join("ui/images");
         let exists = |rel: &str| images.join(format!("{rel}.png")).is_file();
         for def in g2_rules::rules().defs.iter().filter(|d| d.faction.is_some()) {
@@ -510,6 +584,17 @@ mod tests {
         for u in g2_rules::rules().upgrades {
             let icon = upgrade_icon(u.name).unwrap();
             assert!(exists(icon), "{}: {icon}", u.name);
+        }
+        let r = g2_rules::rules();
+        let powers = r
+            .generals
+            .iter()
+            .flat_map(|g| g.power.iter().chain(g.power_levels))
+            .chain(r.support.iter().map(|(_, p)| p))
+            .chain(r.perks.iter().filter_map(|k| k.adds_power.as_ref()));
+        for p in powers {
+            let icon = power_icon(p.name).unwrap_or_else(|| panic!("{} has no alpha icon", p.name));
+            assert!(exists(icon), "{}: {icon}", p.name);
         }
         for f in [Faction::Eu, Faction::Apa, Faction::Gla] {
             assert!(exists(general_portrait(f)), "{f:?}");

@@ -1,7 +1,7 @@
 //! Generals 2 client.
 //!
 //!   g2-client [--map NAME] [--faction eu|apa|gla] [--enemy eu|apa|gla] [--general NAME]
-//!             [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
+//!             [--perks NAME,..] [--enemy-general NAME] [--seed N] [--spectate] [--reveal] [--record FILE]
 //!   g2-client --host PORT [--coop] [match flags as above]   two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
 //!   g2-client [match flags] --teams 1122                    a team game: a team digit (0-4) per player
@@ -9,6 +9,9 @@
 //!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
 //!             to a path holding {}, e.g. clip/{}.png); `--hover-slot N` shows the tooltip of
 //!             build-grid button N (from 0) as if hovered, for the `--select`ed building
+//!
+//! `--perks` slots perks of `--general`'s, by name, for you (the menu takes them from your
+//! profile): e.g. `--general "Mercury Red" --perks "Strike Team"` shows the power it adds.
 //!
 //! `--mission N|KEY` plays a mission of the campaign (1-4, or its key, e.g. `first-light`) on
 //! its own map and forces instead of a skirmish; with `--spectate` (or `--screenshot`) the
@@ -76,6 +79,9 @@ struct Args {
     map: String,
     factions: [Faction; 2],
     generals: [Option<String>; 2],
+    /// The local player's slotted perks, by name, from `--general`'s list (headless shots of
+    /// what a perk adds; a played match takes them from the profile).
+    perks: Vec<String>,
     seed: u64,
     spectate: bool,
     /// Level of every AI player in the match.
@@ -125,6 +131,7 @@ fn parse_args() -> Result<Args, String> {
         map: "Crater Ridge".to_owned(),
         factions: [Faction::Eu, Faction::Gla],
         generals: [None, None],
+        perks: Vec::new(),
         seed: 1,
         spectate: false,
         ai: g2_sim::AiLevel::Normal,
@@ -179,6 +186,9 @@ fn parse_args() -> Result<Args, String> {
             "--enemy" => a.factions[1] = faction(it.next())?,
             "--general" => a.generals[0] = Some(it.next().ok_or("--general needs a name")?),
             "--enemy-general" => a.generals[1] = Some(it.next().ok_or("--enemy-general needs a name")?),
+            "--perks" => {
+                a.perks = it.next().ok_or("--perks needs names")?.split(',').map(|s| s.trim().to_owned()).collect()
+            }
             "--seed" => a.seed = it.next().and_then(|v| v.parse().ok()).ok_or("--seed needs a number")?,
             "--spectate" => a.spectate = true,
             "--ai" => {
@@ -415,12 +425,26 @@ fn load_sim(args: &Args) -> Result<Sim, String> {
     };
     let player = |i: usize, ai: Option<g2_sim::AiLevel>| -> Result<PlayerSetup, String> {
         let general = general(i)?;
+        let mut perks = ai.map_or_else(Vec::new, |level| g2_sim::ai::ai_perks(g2_rules::rules(), general, level));
+        if i == 0 && !args.perks.is_empty() {
+            let g = general.ok_or("--perks needs --general")?;
+            perks = args
+                .perks
+                .iter()
+                .map(|name| {
+                    let own = rules.general(g).perks.iter().copied();
+                    own.into_iter()
+                        .find(|&k| rules.perk(k).name.eq_ignore_ascii_case(name))
+                        .ok_or_else(|| format!("{} has no perk {name:?}", rules.general(g).name))
+                })
+                .collect::<Result<_, String>>()?;
+        }
         Ok(PlayerSetup {
             faction: args.factions[i],
             starting_credits: 5_000,
             ai,
             general,
-            perks: ai.map_or_else(Vec::new, |level| g2_sim::ai::ai_perks(g2_rules::rules(), general, level)),
+            perks,
             rank: ai.map_or(1, g2_sim::ai::ai_rank),
             team: 0,
         })

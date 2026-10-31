@@ -248,6 +248,26 @@ impl Ai {
                     })
                     .filter(|&p| world.map.walkable(p) && vision.is_explored(p))
             }
+            // Sabotage: in support of an assault, on the visible enemy building with the most of
+            // our combat units within 40 (at least three), one the charge destroys first.
+            PowerKind::Sabotage { damage } => {
+                let army: Vec<Vec2> = mine
+                    .iter()
+                    .filter(|e| world.rules.def(e.def).is_unit() && world.rules.def(e.def).weapon().is_some())
+                    .map(|e| e.pos)
+                    .collect();
+                world
+                    .entities()
+                    .filter(|e| {
+                        world.hostile(self.player, e.owner)
+                            && world.rules.def(e.def).is_building()
+                            && world.sees(self.player, e)
+                    })
+                    .map(|e| (army.iter().filter(|&&p| p.distance(e.pos) <= Fx::from_int(40)).count(), e))
+                    .filter(|&(near, _)| near >= 3)
+                    .max_by_key(|&(near, e)| (e.hp <= damage, near, std::cmp::Reverse(e.id)))
+                    .map(|(_, e)| e.pos)
+            }
         }
     }
 

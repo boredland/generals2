@@ -43,7 +43,7 @@ pub(crate) const DIM: Color = Color::srgb(0.55, 0.58, 0.60);
 const INFO: Color = Color::srgb(0.70, 0.74, 0.76);
 const MINIMAP: f32 = 196.0;
 /// The keys that arm each power slot (`input::POWER_KEYS`), as the tiles label them.
-const POWER_LABELS: [&str; 4] = ["G", "F1", "F2", "F3"];
+const POWER_LABELS: [&str; crate::input::POWER_KEYS.len()] = ["G", "F1", "F2", "F3", "F4", "F5", "F6"];
 
 #[derive(Component)]
 pub(crate) enum Field {
@@ -121,6 +121,11 @@ struct PowerSweep(u8);
 #[derive(Component)]
 struct PowerTimer(u8);
 
+/// An alpha power frame's icon, by power slot: the alpha's own button art for the power in
+/// that slot, hidden while the slot is empty.
+#[derive(Component)]
+struct AlphaPowerIcon(u8);
+
 #[derive(Component)]
 struct QueueRow;
 
@@ -153,7 +158,8 @@ impl Plugin for HudPlugin {
             )
             .add_systems(
                 Update,
-                (update_fields, tags, minimap, overlays, popups, grid_icons, selection_portrait).after(spawn),
+                (update_fields, tags, minimap, overlays, popups, grid_icons, selection_portrait, alpha_power_icons)
+                    .after(spawn),
             )
             .add_systems(Update, (meters, grid_faces, power_tiles, portrait).after(spawn));
     }
@@ -691,6 +697,59 @@ fn power_tile(
             TextLayout::default().with_justify(Justify::Center),
         ));
     });
+}
+
+/// One of the alpha bar's power frames, filled like our tray's tiles: the alpha's button art
+/// for the power in `slot`, the charging sweep over it, its key in the corner and the time
+/// left (or READY, AIM) along the bottom. Hidden while the slot is empty.
+pub(crate) fn alpha_power(t: &mut ChildSpawnerCommands, slot: u8, font: TextFont) {
+    let shadow = || TextShadow { offset: Vec2::splat(1.0), ..default() };
+    t.spawn((
+        Node { width: percent(100), height: percent(100), ..default() },
+        ImageNode::default(),
+        AlphaPowerIcon(slot),
+        Visibility::Hidden,
+    ))
+    .with_children(|f| {
+        f.spawn((abs(px(0), px(0), px(0), px(0)), BackgroundGradient::default(), PowerSweep(slot)));
+        f.spawn((
+            abs(px(3), auto(), px(1), auto()),
+            Text::new(POWER_LABELS[slot as usize]),
+            font.clone(),
+            TextColor(TEXT),
+            shadow(),
+        ));
+        let mut foot = abs(px(0), px(0), auto(), px(2));
+        foot.justify_content = JustifyContent::Center;
+        f.spawn(foot).with_child((Text::new(""), font, TextColor(TEXT), shadow(), PowerTimer(slot)));
+    });
+}
+
+/// Puts each alpha power frame's button art up for the power now in its slot (a perk power
+/// fills the frame after the faction's, a level change keeps the name) and hides empty ones.
+fn alpha_power_icons(
+    mut commands: Commands,
+    sim: Res<Sim>,
+    server: Option<Res<AssetServer>>,
+    mut cells: Query<(Entity, &AlphaPowerIcon, &mut Visibility, &ImageNode)>,
+) {
+    let Some(server) = server else { return };
+    let powers = sim.powers();
+    for (e, cell, mut vis, img) in &mut cells {
+        let icon = powers.get(cell.0 as usize).copied().flatten().and_then(|p| crate::alpha_hud::power_icon(p.name));
+        match icon {
+            Some(icon) => {
+                let handle = crate::alpha_hud::image(&server, icon);
+                if img.image != handle {
+                    commands.entity(e).insert(ImageNode::new(handle));
+                }
+                vis.set_if_neq(Visibility::Inherited);
+            }
+            None => {
+                vis.set_if_neq(Visibility::Hidden);
+            }
+        }
+    }
 }
 
 /// What the alpha bar has no slot for, placed where its own debug and message windows sat:

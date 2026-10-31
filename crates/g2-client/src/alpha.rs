@@ -274,6 +274,8 @@ fn model_for(def: &str) -> Option<&'static str> {
         "EU Bomber" => "_eur/eu_airbomber/eu_airbomber_airraid_mesh",
         "APA Bomber" => "_asia/au_airbomber/au_airbomber_mesh",
         "APA Fighter" => "_asia/au_airfighter/au_airfighter_spysortie2_mesh",
+        "EU Spy Drone" => "_eur/eu_spydrone/eu_spydrone_skn_mesh",
+        "APA Sortie Fighter" => "_asia/au_airfighter/au_airfighter_sortie2_mesh",
         "GLA Scud Storm" => "_gla/gs_scudstorm/gs_scudstorm_mesh",
         "EU Fox LRV" => "_eur/eu_lightreconvehicle/eu_lightreconvehicle_skn_mesh",
         "EU Longbow" => "_eur/eu_lightrockethelo/eu_lightrockethelo_skn_mesh",

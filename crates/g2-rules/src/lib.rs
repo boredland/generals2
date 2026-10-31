@@ -95,6 +95,8 @@ pub mod ids {
     pub const GLA_MOBILE_CHEMIST: DefId = DefId(77);
     pub const GLA_BOMB_TRUCK: DefId = DefId(78);
     pub const GLA_BATTLE_BUNKER: DefId = DefId(79);
+    pub const EU_SPY_DRONE: DefId = DefId(80);
+    pub const APA_SORTIE_FIGHTER: DefId = DefId(81);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -130,7 +132,8 @@ pub mod generals {
     pub const KITBASH: GeneralId = GeneralId(13);
 }
 
-/// Stable ids into `RULES.perks`: eight per general, in each general's list order.
+/// Stable ids into `RULES.perks`: eight per general, in each general's list order, then the
+/// perks that add a power (appended, so a saved profile's ids keep their meaning).
 pub mod perks {
     use g2_sim::defs::PerkId;
     // Bulldog (EU).
@@ -259,6 +262,11 @@ pub mod perks {
     pub const KB_JUNK_REPAIR: PerkId = PerkId(109);
     pub const KB_INSOURCED: PerkId = PerkId(110);
     pub const KB_LEADERSHIP: PerkId = PerkId(111);
+    // Perks that add a power.
+    pub const MR_STRIKE_TEAM: PerkId = PerkId(112);
+    pub const CL_RAILGUN_DROP: PerkId = PerkId(113);
+    pub const TM_OFFSHORE: PerkId = PerkId(114);
+    pub const BJ_SORTIE: PerkId = PerkId(115);
 }
 use ids::*;
 use perks::*;
@@ -574,7 +582,7 @@ const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3
 const HARVEST_AIR: CollectorSpec = CollectorSpec { capacity: 190, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 80] = [
+static DEFS: [Def; 82] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -1472,8 +1480,9 @@ static DEFS: [Def; 80] = [
     // 2.5 s; stealthed (the wiki's passive stealth). Particle Accelerator (the alpha's
     // APA_ParticleAccelerator, a unit-targeted ability): one aimed shot, 300 damage at range 50;
     // the wiki: it "temporarily disables the cloaking shield", as the cannon's 2.5 s
-    // `StealthDisableOnFire` does. Placeholder: the 20 s recharge (the data has no cooldown;
-    // `ManaCost` and `MaxMana` are 0).
+    // `StealthDisableOnFire` does. Placeholder: the 20 s recharge (the data has no cooldown:
+    // `ManaCost` and `MaxMana` are 0, and the ability asset, staticdata/abilitydata/apa/
+    // apa_particleaccelerator, holds only its name and targeting).
     with_special(
         stealthy(ranked(
             soldier(
@@ -1624,6 +1633,11 @@ static DEFS: [Def; 80] = [
     // (`DieWithGarrison`); it can't move. Never built (its 45 s build time and $750 cost are
     // unused). Radius 4: the bus's `EntityRadius` 3.5, rounded up.
     bunker("GLA Battle Bunker", Faction::Gla, 525, 4, 4, 8),
+    // Two more support aircraft, after the rest so earlier ids keep their meaning. src: the
+    // alpha's eu_spydrone (MaxHealth 80, ArmorRating 0) for the UAV Spy Drone and
+    // au_airfighter_sortie2 (400, armour 0) for the Sortie.
+    support_jet("EU Spy Drone", Faction::Eu, 80, Armour::Light),
+    support_jet("APA Sortie Fighter", Faction::Apa, 400, Armour::Light),
 ];
 
 /// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
@@ -1632,19 +1646,27 @@ const fn support_jet(name: &'static str, faction: Faction, hp: i32, armour: Armo
     flying(with_armour(unit(name, faction, hp, credits(0), 0, 45, false, None, NONE), armour))
 }
 
-/// Every faction's support powers, in slot order (slot 1 first). src: the alpha's
+/// Every faction's support powers, in slot order (slot 1 first): the powers each faction's
+/// `*_PlayerPowerContainer` lists that are not a general's `_lvl` power. src: the alpha's
 /// `RtsPlayer*Ability` assets:
 /// - EU_PlayerAbility_AirRaid: 3 bombers, 320 base damage in a 25 radius (the AOE's 20, full
 ///   damage to 75% of it), recharge 360 s, 4 s before activation.
 /// - EU_PlayerAbility_FuelAirBomb: 600 damage in a 35 radius, recharge 420 s, 3.5 s.
-/// - APA_PlayerAbility_CarpetBombing: radius 35, recharge 420 s, 3.5 s; no damage figure.
+/// - EU_PlayerAbility_UAVSpyDrone: radius 30, recharge 90 s, no delay, aimed into the fog
+///   (`ShroudBlocksActivation` false), `Duration` 15 s.
+/// - APA_PlayerAbility_CarpetBombing: radius 35, recharge 420 s, 3.5 s; no damage figure (its
+///   bomb's projectile has BlastDamage 100, radius 5: the value every projectile in the build
+///   carries, the bombers' and the Neutron Bomb's too, so not a figure of this power).
 /// - APA_PlayerAbility_SpySorties: radius 30, recharge 90 s, no delay, `ShroudBlocksActivation`
 ///   false (aimed into the fog).
+/// - GLA_PlayerAbility_Sabotage (`TargetingType` 1, `AllowedTargets` 1: aimed at one enemy
+///   object): recharge 120 s, no delay; no damage figure.
 ///
 /// The first use waits one recharge, as the generals' powers do. How the alpha splits a strike
 /// into bombs isn't archived: the bomb counts and spacing are ours, chosen so each strike's
-/// total over its area matches the alpha's figure. Carpet Bombing's damage is a placeholder.
-static SUPPORT: [(Faction, Power); 6] = [
+/// total over its area matches the alpha's figure. Carpet Bombing's and Sabotage's damage are
+/// placeholders. A new power goes after its faction's others, so their keys stay.
+static SUPPORT: [(Faction, Power); 8] = [
     (
         Faction::Eu,
         Power {
@@ -1682,6 +1704,19 @@ static SUPPORT: [(Faction, Power); 6] = [
             first_ticks: secs(420),
             cooldown_ticks: secs(420),
             blind: false,
+            requires: None,
+        },
+    ),
+    // A flyover, like Spy Sorties: the alpha's drone hovers over the point for its 15 s
+    // `Duration` instead, which our recon pass does not model.
+    (
+        Faction::Eu,
+        Power {
+            name: "UAV Spy Drone",
+            kind: PowerKind::Recon { def: EU_SPY_DRONE },
+            first_ticks: secs(90),
+            cooldown_ticks: secs(90),
+            blind: true,
             requires: None,
         },
     ),
@@ -1756,6 +1791,20 @@ static SUPPORT: [(Faction, Power); 6] = [
             first_ticks: secs(90),
             cooldown_ticks: secs(90),
             blind: true,
+            requires: None,
+        },
+    ),
+    // The wiki: it "booby trap[s] an enemy or neutral building ... heavy damage". 600 is a
+    // placeholder: an oil derrick at once, three quarters of a power plant, a third of a
+    // command center. Neutral buildings are not targets here (they have no owner to hurt).
+    (
+        Faction::Gla,
+        Power {
+            name: "Sabotage",
+            kind: PowerKind::Sabotage { damage: 600 },
+            first_ticks: secs(120),
+            cooldown_ticks: secs(120),
+            blind: false,
             requires: None,
         },
     ),
@@ -1922,7 +1971,7 @@ static UPGRADES: [Upgrade; 9] = [
 /// 22:06-23:40), matched to what our units and powers can do: "Double Shifts" ('Carpet Bomb'
 /// comes online faster after use) tunes our general's power the same way. Every percentage,
 /// rank and price is a placeholder, of the size of a Zero Hour upgrade (10-25%).
-static PERKS: [Perk; 112] = [
+static PERKS: [Perk; 116] = [
     // ---- Bulldog (EU) ----
     perk(
         "Double Shifts",
@@ -2917,6 +2966,92 @@ static PERKS: [Perk; 112] = [
         None,
     ),
     perk("Leadership", "Units gain double experience from kills.", 5, 1500, None, GLA_LEADERSHIP, &[], None),
+    // ---- Perks that add a power ----
+    // The alpha's "drop pods" perks (the README's Perks 3.0 notes): its skill trees hold stat
+    // improvements only, so these give a general one of the faction powers the alpha has but
+    // hands to no faction or general (only `Default_PlayerPowerContainer` lists them), or one
+    // its own general of the faction never reached us with. Rank 4 and 1000 XP (placeholders,
+    // as every perk's): the AI slots only perks up to rank 3, so its generals stay as measured.
+    // src: EU_PlayerAbility_DeployStrikeTeam (RtsPlayerDeploymentAbility): three deployments
+    // of 2, 1 and 3, naming no unit; RechargeTime 5 s and DelayBeforeActivation 2 s, the
+    // defaults every unfinished ability in the build carries. Three Shock Troopers squads (the
+    // general's line infantry) and a 240 s recharge, as the generals' powers, are placeholders.
+    power_perk(
+        "Strike Team",
+        "Adds a power: three Shock Troopers squads drop in at a point.",
+        4,
+        1000,
+        Power {
+            name: "Strike Team",
+            kind: PowerKind::Ambush { def: EU_SHOCK_TROOPERS, count: 3 },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        },
+    ),
+    // src: EU_PlayerAbility_DeployRailgunTanks: recharge 240 s, 10 s before activation, radius
+    // 7, `NumberToDeploy` 3; the wiki ("Deploy experimental railgun ... deploys an Experimental
+    // Railgun Tank by air", Cleaver's): one. Our Railgun Tank is the alpha's experimental one
+    // (eu_heavyrailguntank_exp). One tank, the wiki's: three are $3750 of tanks a use. It lands
+    // at once; the 10 s delay is not modelled.
+    power_perk(
+        "Experimental Drop",
+        "Adds a power: a Railgun Tank is air-dropped at a point.",
+        4,
+        1000,
+        Power {
+            name: "Railgun Drop",
+            kind: PowerKind::Ambush { def: EU_RAILGUN_TANK, count: 1 },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        },
+    ),
+    // src: APA_PlayerAbility_OffshoreBombardment_Lvl01 (the alpha's APA classic general's
+    // power, whose units our Taskmaster has none of): recharge 240 s, 3 s before activation,
+    // radius 15, two shells 0.4 s apart (its weapon container). Its own Damage is 0; 150 a
+    // shell is EU_PlayerAbility_OffshoreBombardment's 450 over its three. The shell's blast
+    // radius 8 is a placeholder, so the pair covers the 15.
+    power_perk(
+        "Offshore Support",
+        "Adds a power: two offshore shells land at a point.",
+        4,
+        1000,
+        Power {
+            name: "Offshore Bombardment",
+            kind: PowerKind::Barrage {
+                shells: 2,
+                delay_ticks: secs(3),
+                every_ticks: 4 * g2_sim::TICKS_PER_SECOND / 10,
+                damage: 150,
+                bonus: [0, 0, 0, 0],
+                radius: Fx::from_int(8),
+            },
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        },
+    ),
+    // src: APA_PlayerAbility_Sortie: recharge 90 s, no delay, `ShroudBlocksActivation` true
+    // (aimed at explored ground); its fighter, au_airfighter_sortie2, has MaxHealth 400. That
+    // fighter also carries a 420-damage bomb, which our recon pass does not drop.
+    power_perk(
+        "Sortie",
+        "Adds a power: a fighter flies over a point and back out.",
+        4,
+        1000,
+        Power {
+            name: "Sortie",
+            kind: PowerKind::Recon { def: APA_SORTIE_FIGHTER },
+            first_ticks: secs(90),
+            cooldown_ticks: secs(90),
+            blind: false,
+            requires: None,
+        },
+    ),
 ];
 
 #[allow(clippy::too_many_arguments)]
@@ -2930,7 +3065,21 @@ const fn perk(
     modifiers: &'static [Modifier],
     power: Option<PowerTuning>,
 ) -> Perk {
-    Perk { name, description, rank, price, requires, effects, modifiers, power }
+    Perk { name, description, rank, price, requires, effects, modifiers, power, adds_power: None }
+}
+
+const fn power_perk(name: &'static str, description: &'static str, rank: u8, price: u32, adds: Power) -> Perk {
+    Perk {
+        name,
+        description,
+        rank,
+        price,
+        requires: None,
+        effects: &[],
+        modifiers: &[],
+        power: None,
+        adds_power: Some(adds),
+    }
 }
 
 // A faction's perk tables list every unit of its kind, the generals' own ones too: only a
@@ -3133,6 +3282,7 @@ static GENERALS: [General; 14] = [
             TM_VULCAN_BARRELS,
             TM_KANBAN,
             TM_COMMAND_I,
+            TM_OFFSHORE,
         ],
     },
     General {
@@ -3315,6 +3465,7 @@ static GENERALS: [General; 14] = [
             MR_FACTORY_OVERTIME,
             MR_INSOURCED,
             MR_LEADERSHIP,
+            MR_STRIKE_TEAM,
         ],
     },
     // src: the EU experimental weapons general (the wiki's Cutting Edge: Heavy Assault Laser; the alpha's EU_LaserGeneral): the Assault APC in place of the APC, the Heavy Assault Laser, the Railgun Turret in place of the Gun Turret, Longbows, Shock Troopers in place of the Recon Squad; power Skylance (an orbital strike, radius 18, recharge 240 s, 300 base damage from lvl02).
@@ -3391,9 +3542,11 @@ static GENERALS: [General; 14] = [
     },
     // src: the EU railgun general (the wiki's Cleaver: Railgun Squad; the alpha's EU_ScienceGeneral, icon EG_Railgun_01): Fox LRV, the Assault APC in place of the APC, Longbows, the Railgun Turret in place of the Gun Turret, the Railgun Tank; power Plasma Bomb (radius 25/30/35, recharge 240 s, 2.5 s).
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
-    // steps; the damage of every power is a placeholder (the alpha's are effect assets). The
+    // steps; the damage of every power is a placeholder (the alpha's are effect assets; the
+    // Plasma Bomb's `Damage` is 0 and its projectile's blast the build-wide default). The
     // Plasma Bomb at 100 (200 before), with the Railgun Tank slowed: `g2-tools generals`
     // measured Cleaver at 18 of 18 with neither, 15 with the slower tank alone, 12 with both.
+    // The Experimental Drop perk adds the alpha's Deploy Experimental Railgun.
     General {
         name: "Cleaver",
         faction: Faction::Eu,
@@ -3402,7 +3555,7 @@ static GENERALS: [General; 14] = [
             name: "Plasma Bomb",
             kind: PowerKind::Barrage {
                 shells: 1,
-                delay_ticks: secs(3),
+                delay_ticks: 5 * g2_sim::TICKS_PER_SECOND / 2,
                 every_ticks: g2_sim::TICKS_PER_SECOND / 10,
                 damage: 100,
                 bonus: [0, 0, 0, 0],
@@ -3418,7 +3571,7 @@ static GENERALS: [General; 14] = [
                 name: "Plasma Bomb",
                 kind: PowerKind::Barrage {
                     shells: 1,
-                    delay_ticks: secs(3),
+                    delay_ticks: 5 * g2_sim::TICKS_PER_SECOND / 2,
                     every_ticks: g2_sim::TICKS_PER_SECOND / 10,
                     damage: 100,
                     bonus: [0, 0, 0, 0],
@@ -3433,7 +3586,7 @@ static GENERALS: [General; 14] = [
                 name: "Plasma Bomb",
                 kind: PowerKind::Barrage {
                     shells: 1,
-                    delay_ticks: secs(3),
+                    delay_ticks: 5 * g2_sim::TICKS_PER_SECOND / 2,
                     every_ticks: g2_sim::TICKS_PER_SECOND / 10,
                     damage: 100,
                     bonus: [0, 0, 0, 0],
@@ -3461,6 +3614,7 @@ static GENERALS: [General; 14] = [
             CL_INSOURCED,
             CL_HEAVY_PLATING,
             CL_SLUGS,
+            CL_RAILGUN_DROP,
         ],
     },
     // src: the APA flame general (the wiki's Inferno: Dragon Tank, Inferno Squad, Napalm Mortar Squad, Medium Rocket Tank; the alpha's APA_FlameGeneral): the Napalm Mortar Squad, the Dragon Tank in place of the Warlord, the Rocket Tank in place of the Gatling Tank; power Inferno Artillery (radius 20/20/25, recharge 240 s, 3 s).
@@ -3607,19 +3761,31 @@ static GENERALS: [General; 14] = [
     // src: the APA nuclear general (the wiki's 1000 Suns: Sunstorm, Shadow Tank; the alpha's APA_AtomicGeneral): the Rocket Tank, the Sunstorm in place of the Thunderfist, the Shadow Tank; power Neutron Bomb (radius 20, recharge 240 s, 2 s before activation).
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
     // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    // The Neutron Bomb is a bomb and a radiation cloud (the wiki: "contaminates a large area
+    // with radiation ... damage over time for as long as they remain in the area"), as the
+    // Toxin Bomb's. src: its weapon drops one bomb from 45 above the point at speed 60
+    // (APA_PlayerAbility_NeutronBomb_Weapon_Lvl01-03), under a second; ours flies in from the
+    // start as fast as the Toxin Bomb's. Its radiation emitter lives 8 s at lvl01 and 15 s at
+    // lvl02/03 (em_apa_neutronbomb_radiation, _level2, _level3), the cloud's duration here.
+    // Its `Damage` is 0: the blast (200/250/300) and the cloud's 12 a second are placeholders,
+    // about the old blast's total (260/325/400, +100 on infantry) for a unit that stays.
     General {
         name: "1000 Suns",
         faction: Faction::Apa,
         modifiers: &[],
         power: Some(Power {
             name: "Neutron Bomb",
-            kind: PowerKind::Barrage {
-                shells: 1,
+            kind: PowerKind::Missiles {
+                missiles: 1,
                 delay_ticks: secs(2),
-                every_ticks: g2_sim::TICKS_PER_SECOND / 10,
-                damage: 260,
-                bonus: [100, 0, 0, 0],
+                every_ticks: 1,
+                speed: Fx::from_int(4),
+                spread: Fx::ZERO,
+                damage: 200,
                 radius: Fx::from_int(20),
+                cloud_radius: Fx::from_int(20),
+                cloud_damage: 12,
+                cloud_ticks: secs(8),
             },
             first_ticks: secs(240),
             cooldown_ticks: secs(240),
@@ -3629,13 +3795,17 @@ static GENERALS: [General; 14] = [
         power_levels: &[
             Power {
                 name: "Neutron Bomb",
-                kind: PowerKind::Barrage {
-                    shells: 1,
+                kind: PowerKind::Missiles {
+                    missiles: 1,
                     delay_ticks: secs(2),
-                    every_ticks: g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 325,
-                    bonus: [100, 0, 0, 0],
+                    every_ticks: 1,
+                    speed: Fx::from_int(4),
+                    spread: Fx::ZERO,
+                    damage: 250,
                     radius: Fx::from_int(20),
+                    cloud_radius: Fx::from_int(20),
+                    cloud_damage: 12,
+                    cloud_ticks: secs(15),
                 },
                 first_ticks: secs(240),
                 cooldown_ticks: secs(240),
@@ -3644,13 +3814,17 @@ static GENERALS: [General; 14] = [
             },
             Power {
                 name: "Neutron Bomb",
-                kind: PowerKind::Barrage {
-                    shells: 1,
+                kind: PowerKind::Missiles {
+                    missiles: 1,
                     delay_ticks: secs(2),
-                    every_ticks: g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 400,
-                    bonus: [100, 0, 0, 0],
+                    every_ticks: 1,
+                    speed: Fx::from_int(4),
+                    spread: Fx::ZERO,
+                    damage: 300,
                     radius: Fx::from_int(20),
+                    cloud_radius: Fx::from_int(20),
+                    cloud_damage: 12,
+                    cloud_ticks: secs(15),
                 },
                 first_ticks: secs(240),
                 cooldown_ticks: secs(240),
@@ -3722,11 +3896,13 @@ static GENERALS: [General; 14] = [
             BJ_FACTORY_OVERTIME,
             BJ_STICKY,
             BJ_LEADERSHIP,
+            BJ_SORTIE,
         ],
     },
     // src: the GLA toxin general (the wiki's Dr. Thrax: Mobile Chemist, Toxin Tank; the alpha's GLA_ToxinGeneral): the Toxin Tank in place of the Scorpion, the Mobile Chemist in place of the Technical, the Bomb Truck; power Toxin Bomb (radius 20/25/30, recharge 240 s): a toxin cloud.
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
     // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    // src: DelayBeforeActivation 0.5 s at lvl01, 0 at lvl02/03 (a tick here).
     General {
         name: "Thrax",
         faction: Faction::Gla,
@@ -3735,7 +3911,7 @@ static GENERALS: [General; 14] = [
             name: "Toxin Bomb",
             kind: PowerKind::Missiles {
                 missiles: 1,
-                delay_ticks: secs(1),
+                delay_ticks: g2_sim::TICKS_PER_SECOND / 2,
                 every_ticks: 1,
                 speed: Fx::from_int(4),
                 spread: Fx::ZERO,
@@ -3755,7 +3931,7 @@ static GENERALS: [General; 14] = [
                 name: "Toxin Bomb",
                 kind: PowerKind::Missiles {
                     missiles: 1,
-                    delay_ticks: secs(1),
+                    delay_ticks: 1,
                     every_ticks: 1,
                     speed: Fx::from_int(4),
                     spread: Fx::ZERO,
@@ -3774,7 +3950,7 @@ static GENERALS: [General; 14] = [
                 name: "Toxin Bomb",
                 kind: PowerKind::Missiles {
                     missiles: 1,
-                    delay_ticks: secs(1),
+                    delay_ticks: 1,
                     every_ticks: 1,
                     speed: Fx::from_int(4),
                     spread: Fx::ZERO,
@@ -3952,12 +4128,17 @@ mod tests {
     fn perk_ids_match_each_generals_list() {
         let r = rules();
         let mut seen = Vec::new();
+        // The eight first, in table order; a general's power perk, if any, after them.
+        let power_perks = r.perks.iter().filter(|p| p.adds_power.is_some()).count();
         for g in r.generals {
-            assert_eq!(g.perks.len(), 8, "{}: eight perks", g.name);
-            for (slot, &k) in g.perks.iter().enumerate() {
+            let (own, extra) = g.perks.split_at(8.min(g.perks.len()));
+            assert_eq!(own.len(), 8, "{}: eight perks", g.name);
+            assert!(extra.iter().all(|&k| r.perk(k).adds_power.is_some()), "{}: only a power perk after", g.name);
+            for (slot, &k) in own.iter().enumerate() {
                 assert_eq!(k.0 as usize, seen.len(), "{} perk {slot} out of table order", g.name);
                 seen.push(k);
                 let perk = r.perk(k);
+                assert!(perk.adds_power.is_none(), "{}: a power perk among the eight", perk.name);
                 assert!((1..=5).contains(&perk.rank), "{}: rank {}", perk.name, perk.rank);
                 if let Some(lower) = perk.requires {
                     assert!(g.perks.contains(&lower), "{}: lower tier from another general", perk.name);
@@ -3965,7 +4146,12 @@ mod tests {
                 }
             }
         }
-        assert_eq!(seen.len(), r.perks.len(), "every perk belongs to one general");
+        let extra: Vec<PerkId> = r.generals.iter().flat_map(|g| g.perks.iter().skip(8).copied()).collect();
+        assert_eq!(extra.len(), power_perks, "every power perk belongs to a general");
+        for (i, k) in extra.iter().enumerate() {
+            assert!(!extra[..i].contains(k), "{} belongs to two generals", r.perk(*k).name);
+        }
+        assert_eq!(seen.len() + extra.len(), r.perks.len(), "every perk belongs to one general");
     }
 
     #[test]
@@ -4052,6 +4238,8 @@ mod tests {
             (GLA_MOBILE_CHEMIST, "GLA Mobile Chemist"),
             (GLA_BOMB_TRUCK, "GLA Bomb Truck"),
             (GLA_BATTLE_BUNKER, "GLA Battle Bunker"),
+            (EU_SPY_DRONE, "EU Spy Drone"),
+            (APA_SORTIE_FIGHTER, "APA Sortie Fighter"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);
@@ -4238,10 +4426,11 @@ mod tests {
                 (jets * bombs) as i64 * damage as i64 * radius.0
             }
             PowerKind::Recon { .. } => 1,
-            PowerKind::Missiles { missiles, damage, radius, cloud_radius, .. } => {
-                missiles as i64 * damage as i64 * radius.0 + cloud_radius.0
+            PowerKind::Missiles { missiles, damage, radius, cloud_radius, cloud_damage, cloud_ticks, .. } => {
+                missiles as i64 * damage as i64 * radius.0 + cloud_damage as i64 * cloud_ticks as i64 * cloud_radius.0
             }
             PowerKind::Cloak { radius, ticks } => ticks as i64 * radius.0,
+            PowerKind::Sabotage { damage } => damage as i64,
         };
         for g in rules().generals {
             let first = g.power.unwrap_or_else(|| panic!("{}: no power", g.name));

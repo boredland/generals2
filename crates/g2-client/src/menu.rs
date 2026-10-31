@@ -1303,7 +1303,7 @@ fn controls(c: &mut ChildSpawnerCommands, kit: &Kit) {
         ("Wheel, ] / [, .", "Zoom toward the cursor, zoom in / out, toggle closest view"),
         ("WASD, edge, middle drag", "Pan the battlefield; Q / E rotate"),
         ("T, R, E", "Deploy or transform; Particle Accelerator; evacuate"),
-        ("G, F1-F3", "General's power, faction support powers"),
+        ("G, F1-F6", "General's power, faction support powers, perk powers"),
         ("Tab, V", "Next collector; go to the last attack"),
         ("Space, + / -, Esc, M", "Pause, game speed, menu, mute"),
     ]
