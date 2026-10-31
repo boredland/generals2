@@ -474,6 +474,8 @@ pub fn sim_cues(sim: &Sim) -> Vec<(Cue, Option<g2_sim::Vec2>)> {
             }
             Event::Fired { from, .. } if seen(from) => out.push((Cue::Launch, Some(from))),
             Event::Landed { at, .. } if seen(at) => out.push((Cue::Blast, Some(at))),
+            Event::FieldLanded { at, hostile: true, .. } if seen(at) => out.push((Cue::Blast, Some(at))),
+            Event::AbilityUsed { player, at, .. } if player == me => out.push((Cue::Click, Some(at))),
             Event::Produced { player, .. } | Event::Researched { player, .. } if player == me => {
                 out.push((Cue::Ready, None))
             }

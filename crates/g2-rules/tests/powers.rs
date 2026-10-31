@@ -127,11 +127,11 @@ fn a_barrage_hits_enemies_at_the_point_only() {
     assert_ne!(before, w.state_hash());
 }
 
-/// Field repair restores own units and buildings near the point by up to its amount, never
-/// above their full hit points, and leaves the far ones alone. The damage comes from a Bulldog
-/// opponent's barrage on the APA base.
+/// Supply Drop restores own units and buildings near the point by up to its amount, never
+/// above their full hit points, 2 s after the order, and leaves the far ones alone. The
+/// damage comes from a Bulldog opponent's barrage on the APA base.
 #[test]
-fn field_repair_restores_nearby_units() {
+fn supply_drop_restores_nearby_units() {
     let s = MatchSetup {
         map: crater_ridge(),
         seed: 1,
@@ -175,9 +175,12 @@ fn field_repair_restores_nearby_units() {
     assert_eq!(order(&mut w, CommandKind::Move { units: vec![crane], target: far }), vec![]);
     run_for(&mut w, 30 * 8);
     assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: far }), vec![]);
+    run_for(&mut w, 30 * 3);
     assert_eq!(w.entity(cc).unwrap().hp, damaged);
     run_for(&mut w, rules().general(TASKMASTER).power.unwrap().cooldown_ticks);
     assert_eq!(order(&mut w, CommandKind::Power { slot: 0, at: cc_pos }), vec![]);
+    assert_eq!(w.entity(cc).unwrap().hp, damaged, "not before the crate lands");
+    run_for(&mut w, 30 * 2);
     let repair = 400;
     assert_eq!(w.entity(cc).unwrap().hp, (damaged + repair).min(full));
 }

@@ -122,7 +122,9 @@ impl Icon {
     pub(crate) fn of_power(kind: &PowerKind) -> Icon {
         match kind {
             PowerKind::Barrage { .. } => Icon::Barrage,
-            PowerKind::Repair { .. } => Icon::Repair,
+            // An area power: a blast for one that hits the enemy, the cross for one that helps.
+            PowerKind::Field(f) if f.damage > 0 || f.enemies.iter().any(Option::is_some) => Icon::Barrage,
+            PowerKind::Field(_) => Icon::Repair,
             PowerKind::Ambush { .. } => Icon::Infantry,
             PowerKind::Airstrike { .. } => Icon::Aircraft,
             PowerKind::Recon { .. } => Icon::Recon,

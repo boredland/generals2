@@ -1351,15 +1351,22 @@ fn update_fields(
                     if d.becomes.is_some() && e.owner == Some(sim.local) {
                         s += "  -  T: become a bunker";
                     }
-                    if d.special.is_some() && e.owner == Some(sim.local) {
-                        let left = e.special_at.saturating_sub(world.tick());
-                        s += &if left == 0 {
-                            "  -  R: particle accelerator READY".to_owned()
+                    let ready = |name: &str, at: u32| {
+                        let left = at.saturating_sub(world.tick());
+                        if left == 0 {
+                            format!("  -  R: {} READY", name.to_lowercase())
                         } else {
                             let secs = left.div_ceil(g2_sim::TICKS_PER_SECOND);
-                            format!("  -  particle accelerator {}:{:02}", secs / 60, secs % 60)
-                        };
+                            format!("  -  {} {}:{:02}", name.to_lowercase(), secs / 60, secs % 60)
+                        }
+                    };
+                    if let (Some(sp), true) = (d.special, e.owner == Some(sim.local)) {
+                        s += &ready(sp.name, e.special_at);
                     }
+                    if let (Some(a), true) = (d.ability, e.owner == Some(sim.local)) {
+                        s += &ready(a.name, e.ability_at);
+                    }
+                    s += &crate::fx::status_text(e, world.tick());
                     if let Some(g) = d.garrison {
                         let n = world.occupants(e.id).len();
                         s += &format!("  -  garrison {n}/{}", g.capacity);

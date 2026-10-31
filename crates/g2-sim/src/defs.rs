@@ -102,7 +102,9 @@ impl Targets {
 /// ground enemy within `radius` of that spot, so a unit that moved away is missed. `air_range`,
 /// when set, is the range against aircraft (the alpha's rocket squads reach further up).
 /// `garrison_bonus` is extra damage against a building with units inside (the Thunderfist
-/// howitzer's card: "+100 vs. garrisoned buildings").
+/// howitzer's card: "+100 vs. garrisoned buildings"). A `suicidal` weapon is its unit's own
+/// charge (the Bomb Truck's, the alpha's `Suicidal`): firing it destroys the unit, which sets
+/// off its `Def::blast` instead of dealing the weapon's damage.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Weapon {
     pub damage: i32,
@@ -114,6 +116,7 @@ pub struct Weapon {
     pub targets: Targets,
     pub air_range: Option<Fx>,
     pub garrison_bonus: i32,
+    pub suicidal: bool,
 }
 
 impl Weapon {
@@ -161,11 +164,69 @@ pub struct Garrison {
 
 /// A unit's aimed special shot (the Shadow Tank's Particle Accelerator): fired once at a
 /// chosen target on command, then recharging for `cooldown_ticks`. It reveals a stealth unit
-/// as any shot does.
+/// as any shot does. With a `blast` the shot is a projectile that sets that blast off where
+/// the target stood (the Sunstorm's uranium rod) instead of hitting the target directly.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Special {
+    pub name: &'static str,
     pub weapon: Weapon,
     pub cooldown_ticks: u32,
+    pub blast: Option<Blast>,
+}
+
+/// What an entity's timed status changes (`entity::Status`), in percent of normal.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum StatusKind {
+    /// Damage taken (below 100: tougher).
+    Toughness,
+    /// Damage its weapons deal.
+    Damage,
+    /// Movement speed.
+    Speed,
+    /// How far it sees.
+    Sight,
+    /// It neither moves nor fires; the percent is unused.
+    Stun,
+}
+
+/// A status a power or ability puts on an entity: `kind` at `percent` of normal for `ticks`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct StatusEffect {
+    pub kind: StatusKind,
+    pub percent: i32,
+    pub ticks: u32,
+}
+
+/// A unit's own ability, used on command (the unit special key), then recharging for
+/// `cooldown_ticks`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Ability {
+    pub name: &'static str,
+    pub kind: AbilityKind,
+    pub cooldown_ticks: u32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AbilityKind {
+    /// The unit takes on this status (the GLA tanks' Nitro, the Longbow's Radar Pulse).
+    Boost(StatusEffect),
+    /// The unit destroys itself at once, setting off its `Def::blast`.
+    Detonate,
+}
+
+/// What goes off where a unit is destroyed, however it dies (the alpha's `PartingShot`
+/// weapons): on the next tick, `damage` (plus `bonus` per armour class) to every enemy ground
+/// unit and building whose edge is within `radius`, then a cloud of `cloud_radius` dealing
+/// `cloud_damage` every second for `cloud_ticks` (none when `cloud_ticks` is 0). Allies are
+/// spared, as by every blast.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Blast {
+    pub damage: i32,
+    pub bonus: [i32; 4],
+    pub radius: Fx,
+    pub cloud_radius: Fx,
+    pub cloud_damage: i32,
+    pub cloud_ticks: u32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -230,6 +291,10 @@ pub struct Def {
     pub becomes: Option<DefId>,
     /// An aimed special shot fired on command (`Special`); `None` for everything else.
     pub special: Option<Special>,
+    /// An ability used on command (`Ability`); `None` for everything else.
+    pub ability: Option<Ability>,
+    /// What goes off where it is destroyed (`Blast`); `None` for everything else.
+    pub blast: Option<Blast>,
 }
 
 /// What a unit gains by rank, after the alpha's `RtsVeterancyComponentData`: three ranks at
@@ -383,7 +448,8 @@ pub struct Perk {
 pub enum PowerTuning {
     /// Time between uses (also the wait for the first).
     Cooldown { percent: u32 },
-    /// Barrage shell damage, repair amount, or ambush squad count.
+    /// Barrage shell damage, ambush squad count, a field's damage, hit points and how long
+    /// its statuses last.
     Strength { percent: u32 },
 }
 
@@ -409,8 +475,8 @@ pub enum PowerKind {
     /// `shells` artillery shells land around the point, one every `every_ticks` after
     /// `delay_ticks`, each like an artillery weapon's (damage, bonus, blast radius).
     Barrage { shells: u32, delay_ticks: u32, every_ticks: u32, damage: i32, bonus: [i32; 4], radius: Fx },
-    /// Own units within `radius` of the point regain up to `hp` hit points.
-    Repair { radius: Fx, hp: i32 },
+    /// Everything within `radius` of the point is touched by the `Field` after its delay.
+    Field(Field),
     /// `count` units of `def` appear at and around the point, each on open ground (else the
     /// power is refused).
     Ambush { def: DefId, count: u32 },
@@ -445,6 +511,27 @@ pub enum PowerKind {
     /// Aimed at an enemy building the player can see (the point must fall on it): that
     /// building alone takes `damage` at once. Anything else under the point is refused.
     Sabotage { damage: i32 },
+}
+
+/// An area power acting once, `delay_ticks` after the order, on what stands within `radius`
+/// of the point then: enemy ground units and buildings whose edge is within it take `damage`;
+/// enemy ground units there (only vehicles, not infantry, with `vehicles`) take on each of
+/// `enemies`; the player's own units and buildings regain up to `hp` hit points; their own
+/// units gain `ranks` veterancy ranks (as far as rank 3) and take on each of `allies`. Every
+/// status lasts `ticks`. Support jets are left alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Field {
+    pub radius: Fx,
+    pub delay_ticks: u32,
+    pub damage: i32,
+    pub hp: i32,
+    pub ranks: u8,
+    pub ticks: u32,
+    /// `(kind, percent)` statuses for the player's own units.
+    pub allies: [Option<(StatusKind, i32)>; 2],
+    /// `(kind, percent)` statuses for enemy ground units.
+    pub enemies: [Option<(StatusKind, i32)>; 2],
+    pub vehicles: bool,
 }
 
 /// A per-def change, in whole percent; several for one def multiply.
@@ -625,7 +712,12 @@ fn tuned(rules: &Rules, mut power: Power, perks: &[PerkId]) -> Power {
             bonus: bonus(b),
             radius,
         },
-        PowerKind::Repair { radius, hp } => PowerKind::Repair { radius, hp: scale(hp as i64, strength) as i32 },
+        PowerKind::Field(f) => PowerKind::Field(Field {
+            damage: if f.damage == 0 { 0 } else { scale(f.damage as i64, strength) as i32 },
+            hp: if f.hp == 0 { 0 } else { scale(f.hp as i64, strength) as i32 },
+            ticks: if f.ticks == 0 { 0 } else { scale(f.ticks as i64, strength) as u32 },
+            ..f
+        }),
         PowerKind::Ambush { def, count } => PowerKind::Ambush { def, count: scale(count as i64, strength) as u32 },
         PowerKind::Airstrike { def, jets, spread, bombs, spacing, damage, bonus: b, radius } => PowerKind::Airstrike {
             def,

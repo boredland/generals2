@@ -278,12 +278,13 @@ pub fn upgrade_icon(upgrade: &str) -> Option<&'static str> {
 }
 
 /// The alpha's player-power button for each of our powers (its `ButtonImage`), under
-/// `ui/images/PlayerAbility/`. Ours without an alpha power (Bulldog's barrage, Taskmaster's
-/// repair, Junkyard's ambush) take the nearest one's.
+/// `ui/images/PlayerAbility/`. Ours without an alpha power (Bulldog's barrage, Junkyard's
+/// ambush) take the nearest one's.
 pub fn power_icon(power: &str) -> Option<&'static str> {
     Some(match power {
         "Artillery barrage" => "PlayerAbility/APA/OffshoreBombardment",
-        "Field repair" => "PlayerAbility/SupplyDrop",
+        "Supply Drop" => "PlayerAbility/SupplyDrop",
+        "Faulty Construction" => "PlayerAbility/GLA/FaultyConstruction",
         "Ambush" => "PlayerAbility/GLA/UnearthTunnel",
         "Air Raid" => "PlayerAbility/EU/AirRaid",
         "Fuel Air Bomb" => "PlayerAbility/EU/FuelAirBomb",

@@ -82,6 +82,16 @@ impl Look {
     pub fn of_shell(world: &g2_sim::World, source: ShellSource) -> Look {
         match source {
             ShellSource::Gun { def, deployed } => Look::of_def(world.rules.def(def), deployed),
+            // A unit's own blast: the Dragon Tank's firestorm burns on as napalm does, the
+            // Sunstorm's core breach flashes white like the neutron bomb, the rest is a big fire.
+            ShellSource::Blast { def } => {
+                let name = world.rules.def(def).name;
+                if name.contains("Dragon") {
+                    Look::Shell { toxic: false, napalm: true }
+                } else {
+                    Look::Strike { toxic: false, nuke: name.contains("Sunstorm"), missile: false }
+                }
+            }
             ShellSource::Power { player, slot } => {
                 let name = world.power_in(player, slot).map_or("", |p| p.name);
                 let missile = matches!(
@@ -946,6 +956,47 @@ pub fn spawn_shots(
                     }
                 }
             }
+            Shot::Field { at, radius, hostile } => {
+                if !seen(at) {
+                    continue;
+                }
+                let mut rng = Rng::at(at, 0xf1e1 ^ sim.world.tick());
+                let (base, r) = (sim.to_world(at) + Vec3::Y * 0.4, radius.to_f32());
+                // A ring sweeping out over the whole area: an orange shockwave for a strike on
+                // the enemy (Thunderclap), a pale blue pulse for a buff (Bulwark, Supply Drop).
+                let fade = if hostile { Fade::Fire } else { Fade::Plasma };
+                let ring = |life: f32, from: f32| Particle {
+                    age: 0.0,
+                    life,
+                    vel: Vec3::ZERO,
+                    drag: 0.0,
+                    gravity: 0.0,
+                    size: (Vec3::new(r * from, 0.4, r * from), Vec3::new(r, 0.05, r)),
+                    fade,
+                    spin: 0.0,
+                    ground: 0.0,
+                };
+                s.particle(&s.p.ring.clone(), base, Quat::IDENTITY, ring(0.6, 0.1));
+                s.particle(&s.p.ring.clone(), base + Vec3::Y * 0.3, Quat::IDENTITY, ring(0.9, 0.3));
+                if hostile {
+                    s.explosion(base, (r * 0.35).min(8.0), &mut rng, Blast::Fire);
+                    // Dust thrown out by the shockwave all round its edge.
+                    for k in 0..16 {
+                        let a = k as f32 / 16.0 * std::f32::consts::TAU + rng.range(-0.15, 0.15);
+                        let out = Vec3::new(a.cos(), 0.0, a.sin());
+                        s.puff(
+                            base + out * r * 0.8,
+                            out * 5.0 + Vec3::Y,
+                            rng.range(1.0, 1.8),
+                            (1.5, 3.5),
+                            Fade::Dust,
+                            -0.3,
+                        );
+                    }
+                } else {
+                    s.flare(base + Vec3::Y * 4.0, Color::srgb(0.6, 0.8, 1.0), 4.0e6, r * 2.0, 0.6);
+                }
+            }
             Shot::DigIn { at } => {
                 if !seen(at) {
                     continue;
@@ -1603,6 +1654,190 @@ struct Source {
     r: f32,
 }
 
+/// A cue each status on an entity shows (`g2_sim::entity::Status`), cheap enough for a whole
+/// army under one power: a toughness buff a pale blue shimmer around it, a stun sparks
+/// crackling over it, a speed boost exhaust fire at its back and a slow dark sputter, a damage
+/// buff a glow of embers over its gun and a damage cut grey soot, a sight boost a pale ring
+/// sweeping out from it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Cue {
+    Shield,
+    Stun,
+    Boost,
+    Sputter,
+    Fury,
+    Weak,
+    Scan,
+}
+
+impl Cue {
+    fn of(s: &g2_sim::entity::Status) -> Option<Cue> {
+        use g2_sim::defs::StatusKind;
+        Some(match (s.kind, s.raises()) {
+            (StatusKind::Toughness, false) => Cue::Shield,
+            (StatusKind::Stun, _) => Cue::Stun,
+            (StatusKind::Speed, true) => Cue::Boost,
+            (StatusKind::Speed, false) => Cue::Sputter,
+            (StatusKind::Damage, true) => Cue::Fury,
+            (StatusKind::Damage, false) => Cue::Weak,
+            (StatusKind::Sight, true) => Cue::Scan,
+            _ => return None,
+        })
+    }
+
+    /// Puffs a second, and how long each lives.
+    fn rate(self) -> (f32, f32) {
+        match self {
+            Cue::Shield => (7.0, 0.7),
+            Cue::Stun => (8.0, 0.3),
+            Cue::Boost => (10.0, 0.35),
+            Cue::Sputter => (3.0, 1.6),
+            Cue::Fury => (4.0, 0.6),
+            Cue::Weak => (2.5, 1.4),
+            Cue::Scan => (0.8, 1.2),
+        }
+    }
+
+    /// One puff on a unit of radius `r` standing at `at` (its centre on the ground), facing
+    /// `back` from behind, `age` seconds into its life.
+    fn emit(self, s: &mut Spawner, at: Vec3, r: f32, back: Vec3, age: f32, rng: &mut Rng) {
+        let (_, life) = self.rate();
+        let mote = |vel: Vec3, size: (f32, f32), fade: Fade, gravity: f32| Particle {
+            age: 0.0,
+            life,
+            vel,
+            drag: 1.5,
+            gravity,
+            size: (Vec3::splat(size.0), Vec3::splat(size.1)),
+            fade,
+            spin: 1.5,
+            ground: 0.0,
+        };
+        let around = |rng: &mut Rng, k: f32| {
+            let a = rng.next() * std::f32::consts::TAU;
+            Vec3::new(a.cos(), 0.0, a.sin()) * r * k
+        };
+        match self {
+            Cue::Shield => {
+                // Bright motes rising around the hull and, now and then, a ring of light at its
+                // feet, so a shielded group reads from the default zoom.
+                let side = around(rng, 1.1);
+                let p = mote(Vec3::Y * 1.6 + side * 0.15, (1.5, 0.5), Fade::Plasma, 0.0);
+                s.card(at + side + Vec3::Y * rng.range(0.3, r + 1.0), p, age);
+                if rng.next() < 0.35 {
+                    let ring = Particle {
+                        age,
+                        drag: 0.0,
+                        spin: 0.0,
+                        size: (Vec3::new(r * 1.2, 0.5, r * 1.2), Vec3::new(r * 1.6, 0.1, r * 1.6)),
+                        ..mote(Vec3::Y * 0.6, (0.0, 0.0), Fade::Plasma, 0.0)
+                    };
+                    s.particle(&s.p.ring.clone(), at + Vec3::Y * 0.3, Quat::IDENTITY, ring);
+                }
+            }
+            Cue::Stun => {
+                // Electric crackle over it: forked white streaks and a hot spark at their root.
+                let top = at + Vec3::Y * (r + 1.4) + around(rng, 0.6);
+                for _ in 0..2 {
+                    let d = rng.dir(0.1);
+                    let len = rng.range(1.0, 2.2);
+                    if age < life {
+                        s.streak(top, top + d * len, 0.25, life - age, Fade::Spark);
+                    }
+                }
+                s.card(top, mote(rng.dir(0.5) * 1.5, (1.2, 0.3), Fade::Plasma, 0.0), age);
+            }
+            Cue::Boost => {
+                let p = mote(back * 6.0 + Vec3::Y * 0.5, (0.8, 0.2), Fade::Flame, -0.5);
+                s.card(at + back * r * 1.1 + Vec3::Y * 0.9 + around(rng, 0.25), p, age);
+            }
+            Cue::Sputter => {
+                let p = mote(Vec3::Y * 1.4 + back, (0.6, 2.0), Fade::Smoke, -0.4);
+                s.card(at + back * r * 0.8 + Vec3::Y * 1.2, p, age);
+            }
+            Cue::Fury => {
+                let p = mote(Vec3::Y * 2.0 + around(rng, 0.3), (0.35, 0.1), Fade::Flame, -1.0);
+                s.card(at + Vec3::Y * (r * 0.6 + 1.2) + around(rng, 0.5), p, age);
+            }
+            Cue::Weak => {
+                let p = mote(Vec3::Y * 1.0, (0.5, 1.6), Fade::Soot, -0.3);
+                s.card(at + Vec3::Y * (r * 0.6 + 1.0) + around(rng, 0.4), p, age);
+            }
+            Cue::Scan => {
+                let ring = Particle {
+                    life,
+                    drag: 0.0,
+                    size: (Vec3::new(r, 0.08, r), Vec3::new(r * 9.0, 0.02, r * 9.0)),
+                    ..mote(Vec3::ZERO, (0.0, 0.0), Fade::Plasma, 0.0)
+                };
+                let mut ring = ring;
+                ring.age = age;
+                ring.spin = 0.0;
+                s.particle(&s.p.ring.clone(), at + Vec3::Y * 0.4, Quat::IDENTITY, ring);
+            }
+        }
+    }
+}
+
+/// The cues of every status on entities the local player sees, for `dt` seconds of match time,
+/// or (`prime`) each cue's last life drawn at once for a still frame. Counts against `budget`.
+fn status_cues(
+    s: &mut Spawner,
+    sim: &Sim,
+    roots: &dyn Fn(g2_sim::EntityId) -> Option<(Vec3, Quat)>,
+    dt: f32,
+    prime: bool,
+    budget: &mut usize,
+) {
+    let world = &sim.world;
+    let tick = world.tick();
+    for e in world.entities().filter(|e| !e.statuses.is_empty() && e.inside.is_none() && sim.sees(e)) {
+        let def = world.rules.def(e.def);
+        let ground = sim.to_world(e.pos) + Vec3::Y * crate::view::flight_height(def);
+        let (at, rot) = roots(e.id).unwrap_or((ground, Quat::IDENTITY));
+        let back = heading(sim, e.id).map_or(rot * Vec3::Z, |(dir, _)| -dir).with_y(0.0).normalize_or(Vec3::Z);
+        let r = def.radius.to_f32();
+        let mut rng = Rng(e.id.index.wrapping_mul(0x2c1b_3c6d) ^ tick.wrapping_mul(0x297a_2d39) ^ dt.to_bits());
+        for cue in e.statuses.iter().filter_map(Cue::of) {
+            let (rate, life) = cue.rate();
+            if prime {
+                for k in 0..(rate * life).ceil() as usize {
+                    if *budget == 0 {
+                        return;
+                    }
+                    cue.emit(s, at, r, back, (k as f32 + rng.next()) / rate, &mut rng);
+                    *budget -= 1;
+                }
+            } else if *budget > 0 && rng.next() < rate * dt {
+                cue.emit(s, at, r, back, 0.0, &mut rng);
+                *budget -= 1;
+            }
+        }
+    }
+}
+
+/// The statuses on `e` for its selection line: "  -  shielded 0:07  -  stunned 0:02".
+pub fn status_text(e: &g2_sim::Entity, tick: u32) -> String {
+    use g2_sim::defs::StatusKind;
+    let mut out = String::new();
+    for st in &e.statuses {
+        let what = match (st.kind, st.raises()) {
+            (StatusKind::Toughness, false) => "shielded",
+            (StatusKind::Toughness, true) => "exposed",
+            (StatusKind::Damage, true) => "damage up",
+            (StatusKind::Damage, false) => "damage down",
+            (StatusKind::Speed, true) => "boosted",
+            (StatusKind::Speed, false) => "slowed",
+            (StatusKind::Sight, true) => "scanning",
+            (StatusKind::Sight, false) => "blinded",
+            (StatusKind::Stun, _) => "stunned",
+        };
+        let secs = st.until.saturating_sub(tick).div_ceil(g2_sim::TICKS_PER_SECOND);
+        out += &format!("  -  {what} {}:{:02}", secs / 60, secs % 60);
+    }
+    out
+}
+
 /// The ambient sources the local player sees: damaged buildings and vehicles, steaming stacks,
 /// moving ground units. `alpha`: the imported models are drawn (their stacks sit elsewhere).
 fn sources(sim: &Sim, alpha: &dyn Fn(&str) -> bool) -> Vec<Source> {
@@ -1724,6 +1959,7 @@ pub fn live(
         }
     }
     living.trails.retain(|_, t| t.frame == frame);
+    status_cues(&mut s, sim, roots, dt, false, &mut budget);
     // Wrecks smoulder for their life, thinning out.
     let mut rng = Rng(tick.wrapping_mul(0x2545_f491) ^ frame);
     for w in &mut living.wrecks {
@@ -1906,6 +2142,7 @@ fn prime(
             }
         }
     }
+    status_cues(s, sim, roots, 0.0, true, &mut budget);
     // Wrecks: each column's last seconds, thinning as the wreck has aged.
     let mut rng = Rng(tick.wrapping_mul(0x2545_f491));
     for &(at, r, building, age, life) in &living.wrecks {

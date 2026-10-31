@@ -92,6 +92,26 @@ fn best_against(w: Weapon) -> usize {
     (0..3).filter(|&a| w.bonus[a] > 0).max_by_key(|&a| (w.bonus[a], std::cmp::Reverse(a))).unwrap_or(usize::MAX)
 }
 
+/// The fighting strength (`strength`, at full health, undeployed) of `faction`'s strongest
+/// standard unit: the bar a strike's target must clear. Fixed by the rules, not the general:
+/// an elite general's unit (a railgun tank) would set the bar out of reach of its own
+/// general's strike.
+fn strongest_unit(world: &World, faction: crate::defs::Faction) -> i64 {
+    world
+        .rules
+        .defs
+        .iter()
+        .filter(|d| d.faction == Some(faction) && d.is_building())
+        .flat_map(|b| b.produces.iter().map(|&u| world.rules.def(u)))
+        .filter(|d| d.is_unit())
+        .filter_map(|d| {
+            d.weapon_for(false)
+                .map(|w| d.hp as i64 * w.damage as i64 * TICKS_PER_SECOND as i64 / w.cooldown_ticks.max(1) as i64)
+        })
+        .max()
+        .unwrap_or(1)
+}
+
 impl Ai {
     pub fn new(player: PlayerId, level: AiLevel) -> Ai {
         Ai { player, level, enemy_seen: 0, regroup_until: 0 }
@@ -131,11 +151,11 @@ impl Ai {
     }
 
     /// Where to use `power` now, if it is worth it: a barrage, an airstrike or a toxin bomb on
-    /// the visible enemy army's strongest spot; a repair on the spot where our own units and
-    /// buildings have lost the most hit points (at least 600); an ambush beside the nearest
-    /// visible enemy building, else in front of our own base; a superweapon on the remembered
-    /// enemy base; the general's own cloak over our largest group of combat units out in the
-    /// field. Never a recon: flown over the enemy start, its early look sent Normal's waves at
+    /// the visible enemy army's strongest spot; an area power (`field_target`) where it does
+    /// most; an ambush beside the nearest visible enemy building, else in front of our own
+    /// base; a superweapon on the remembered enemy base; the general's own cloak over our
+    /// largest group of combat units out in the field. Never a recon: flown over the enemy
+    /// start, its early look sent Normal's waves at
     /// the base too soon (Normal won 36 of 54 against Easy with it, 40 without, and lost 12 of
     /// 15 field guns instead of under two thirds). Never the faction's cloak (the GLA's GPS
     /// Scrambler, `slot` above 0): a wide cover for a base, which Normal has no plan for.
@@ -194,36 +214,12 @@ impl Ai {
                 let reach = if shells > 1 { radius * Fx::from_int(3) } else { radius };
                 let weight =
                     |p: Vec2| enemies.iter().filter(|e| e.pos.distance(p) <= reach).map(|e| strength(world, e)).sum();
-                // Worth a barrage: at least two of our faction's strongest standard units' (at
-                // full health, undeployed) worth of enemy fighting strength in the blast area.
-                // Fixed by the rules, not the general: an elite general's unit (a railgun tank)
-                // would set the bar out of reach of its own general's strike.
-                let tank = world
-                    .rules
-                    .defs
-                    .iter()
-                    .filter(|d| d.faction == Some(player.faction) && d.is_building())
-                    .flat_map(|b| b.produces.iter().map(|&u| world.rules.def(u)))
-                    .filter(|d| d.is_unit())
-                    .filter_map(|d| {
-                        d.weapon_for(false).map(|w| {
-                            d.hp as i64 * w.damage as i64 * TICKS_PER_SECOND as i64 / w.cooldown_ticks.max(1) as i64
-                        })
-                    })
-                    .max()
-                    .unwrap_or(1);
+                // Worth a barrage: at least two of our faction's strongest standard units' worth
+                // of enemy fighting strength in the blast area (`strongest_unit`).
+                let tank = strongest_unit(world, player.faction);
                 best(&points, &weight).filter(|&(w, _)| w >= 2 * tank).map(|(_, p)| p)
             }
-            PowerKind::Repair { radius, .. } => {
-                let points: Vec<Vec2> = mine.iter().map(|e| e.pos).collect();
-                let weight = |p: Vec2| {
-                    mine.iter()
-                        .filter(|e| e.pos.distance(p) <= radius)
-                        .map(|e| (world.max_hp(e) - e.hp).max(0) as i64)
-                        .sum()
-                };
-                best(&points, &weight).filter(|&(w, _)| w >= 600).map(|(_, p)| p)
-            }
+            PowerKind::Field(f) => self.field_target(world, mine, f),
             PowerKind::Ambush { .. } => {
                 let home =
                     mine.iter().find(|e| world.rules.def(e.def).role() == Some(BuildingRole::CommandCenter))?.pos;
@@ -271,6 +267,50 @@ impl Ai {
                     .map(|(_, e)| e.pos)
             }
         }
+    }
+
+    /// `Normal`'s use of an area power (`defs::Field`), all in one place. A hostile one (damage
+    /// or a debuff: Thunderclap, Faulty Construction) on the visible enemy unit with the most
+    /// enemy fighting strength it would touch within its radius, at least two of our faction's
+    /// strongest standard units' worth (the barrage's bar), counting only vehicles for one that
+    /// touches only vehicles. One for our own side (Bulwark, Supply Drop) over our combat
+    /// units in a fight: the spot with the most of them within its radius, at least three, with
+    /// an armed enemy unit within 40 of that spot; a healing one also once 600 hit points are
+    /// missing there.
+    fn field_target(&self, world: &World, mine: &[&Entity], f: crate::defs::Field) -> Option<Vec2> {
+        let best = |points: &[Vec2], weight: &dyn Fn(Vec2) -> i64| {
+            points.iter().map(|&p| (weight(p), p)).filter(|&(w, _)| w > 0).max_by_key(|&(w, p)| (w, p.x, p.y))
+        };
+        let enemies: Vec<&Entity> = world
+            .entities()
+            .filter(|e| world.hostile(self.player, e.owner) && e.hp > 0 && world.sees(self.player, e))
+            .filter(|e| world.rules.def(e.def).is_unit() && !world.rules.def(e.def).flies())
+            .collect();
+        if f.damage > 0 || f.enemies.iter().any(Option::is_some) {
+            let touched: Vec<&&Entity> =
+                enemies.iter().filter(|e| !f.vehicles || world.rules.def(e.def).armour != Armour::Infantry).collect();
+            let points: Vec<Vec2> = touched.iter().map(|e| e.pos).collect();
+            let weight =
+                |p: Vec2| touched.iter().filter(|e| e.pos.distance(p) <= f.radius).map(|e| strength(world, e)).sum();
+            let bar = 2 * strongest_unit(world, world.player(self.player).faction);
+            return best(&points, &weight).filter(|&(w, _)| w >= bar).map(|(_, p)| p);
+        }
+        let army: Vec<&&Entity> = mine
+            .iter()
+            .filter(|e| world.rules.def(e.def).is_unit() && world.rules.def(e.def).weapon().is_some())
+            .filter(|e| e.inside.is_none() && !world.rules.def(e.def).flies())
+            .collect();
+        let points: Vec<Vec2> = army.iter().map(|e| e.pos).collect();
+        let near = |p: Vec2| army.iter().filter(move |e| e.pos.distance(p) <= f.radius);
+        let fight = |p: Vec2| {
+            enemies.iter().any(|e| world.rules.def(e.def).weapon().is_some() && e.pos.distance(p) <= Fx::from_int(40))
+        };
+        let hurt = |p: Vec2| near(p).map(|e| (world.max_hp(e) - e.hp).max(0) as i64).sum::<i64>();
+        let weight = |p: Vec2| {
+            let n = near(p).count() as i64;
+            if n >= 3 && (fight(p) || (f.hp > 0 && hurt(p) >= 600)) { n } else { 0 }
+        };
+        best(&points, &weight).map(|(_, p)| p)
     }
 
     /// `Easy`'s simpler use of powers: only the ones that hit (a barrage, an airstrike, a
@@ -890,6 +930,7 @@ impl Ai {
                 out.push(CommandKind::Special { units: vec![u.id], target: t.id });
             }
         }
+        self.use_abilities(world, mine, &enemies, home, out);
 
         // Defence: armed intruders near the base. Guards at home fight them; if the intruders
         // outweigh the guards, every wave comes home too.
@@ -972,6 +1013,58 @@ impl Ai {
             && let Some(target) = self.enemy_base(world, home)
         {
             out.push(CommandKind::AttackMove { units: idle.iter().map(|e| e.id).collect(), target });
+        }
+    }
+
+    /// `Normal`'s unit abilities, all in one place. Nitro (a speed boost): to close on a target
+    /// beyond its gun's reach by more than 5, or to get away when falling back home with an
+    /// armed enemy within 30. Radar Pulse (a sight boost): in a fight. A self-destruct: a unit
+    /// whose own weapon is its charge (the Bomb Truck) blows up beside an enemy building or two
+    /// enemy units its blast would reach; any other (the Dragon Tank) once down to a quarter
+    /// of its hit points with an enemy in reach.
+    fn use_abilities(
+        &self,
+        world: &World,
+        mine: &[&Entity],
+        enemies: &[&Entity],
+        home: Vec2,
+        out: &mut Vec<CommandKind>,
+    ) {
+        use crate::defs::{AbilityKind, StatusKind};
+        let rules = world.rules;
+        let mut ready = Vec::new();
+        for u in mine.iter().filter(|e| e.inside.is_none() && !e.stunned() && e.ability_at <= world.tick()) {
+            let d = rules.def(u.def);
+            let Some(a) = d.ability else { continue };
+            let engaged = match u.order {
+                Order::Attack { target } | Order::AttackMove { engaged: Some(target), .. } => world.entity(target),
+                _ => None,
+            };
+            let reach = |e: &Entity, r: Fx| e.pos.distance(u.pos) - rules.def(e.def).radius <= r;
+            let worth = match a.kind {
+                AbilityKind::Boost(s) if s.kind == StatusKind::Speed => {
+                    let chasing = engaged.zip(d.weapon()).is_some_and(|(t, w)| !reach(t, w.range + Fx::from_int(5)));
+                    let fleeing = matches!(u.order, Order::Move { target, .. } if target == home)
+                        && enemies.iter().any(|e| rules.def(e.def).weapon().is_some() && reach(e, Fx::from_int(30)));
+                    chasing || fleeing
+                }
+                AbilityKind::Boost(_) => engaged.is_some(),
+                AbilityKind::Detonate => d.blast.is_some_and(|b| {
+                    let near: Vec<&&Entity> =
+                        enemies.iter().filter(|e| !rules.def(e.def).flies() && reach(e, b.radius)).collect();
+                    if d.weapon().is_some_and(|w| w.suicidal) {
+                        near.iter().any(|e| rules.def(e.def).is_building()) || near.len() >= 2
+                    } else {
+                        !near.is_empty() && u.hp * 4 <= world.max_hp(u)
+                    }
+                }),
+            };
+            if worth {
+                ready.push(u.id);
+            }
+        }
+        if !ready.is_empty() {
+            out.push(CommandKind::Ability { units: ready });
         }
     }
 

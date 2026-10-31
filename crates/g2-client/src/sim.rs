@@ -317,6 +317,9 @@ pub enum Shot {
     Blast { at: g2_sim::Vec2, radius: g2_sim::Fx, look: crate::fx::Look },
     /// A unit turned into a bunker at `at` (the Battle Bus digging in).
     DigIn { at: g2_sim::Vec2 },
+    /// An area power took effect at `at` over `radius`: against the enemy (`hostile`, a
+    /// shockwave) or for the player's own units (a pulse of light).
+    Field { at: g2_sim::Vec2, radius: g2_sim::Fx, hostile: bool },
 }
 
 pub struct SimPlugin;
@@ -433,6 +436,9 @@ pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
                 hits.0.push(Shot::Blast { at, radius, look: crate::fx::Look::of_shell(world, source) })
             }
             g2_sim::world::Event::Transformed { at, .. } => hits.0.push(Shot::DigIn { at }),
+            g2_sim::world::Event::FieldLanded { at, radius, hostile, .. } => {
+                hits.0.push(Shot::Field { at, radius, hostile })
+            }
             _ => {}
         }
     }

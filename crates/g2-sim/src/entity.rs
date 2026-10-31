@@ -1,4 +1,4 @@
-use crate::defs::{DefId, UpgradeId};
+use crate::defs::{DefId, StatusEffect, StatusKind, UpgradeId};
 use crate::fixed::{Fx, Vec2};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
@@ -132,6 +132,8 @@ pub struct Entity {
     pub cloaked_until: Option<u32>,
     /// Units with a `Def::special`: the tick from which it can fire again (0: ready).
     pub special_at: u32,
+    /// Units with a `Def::ability`: the tick from which it can be used again (0: ready).
+    pub ability_at: u32,
     /// Production buildings: where the units it trains walk once out (`SetRally`). `None`
     /// until the owner sets one.
     pub rally: Option<Vec2>,
@@ -140,6 +142,31 @@ pub struct Entity {
     /// Ground units that steer around each other: how far the unit walked on its own last
     /// tick (separation's pushes aside), so others can tell where it is going. Zero otherwise.
     pub vel: Vec2,
+    /// Timed changes from powers and abilities (`Status`), at most one raising and one
+    /// lowering entry per kind, in `(kind, raising)` order. Every entry is active: an entry
+    /// is dropped as the tick it ends on begins (`World::step`).
+    pub statuses: Vec<Status>,
+}
+
+/// One timed change on an entity: `percent` of normal for its `kind` (`Stun` ignores it),
+/// active until the tick `until` begins.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Status {
+    pub kind: StatusKind,
+    pub percent: i32,
+    pub until: u32,
+}
+
+impl Status {
+    /// Above normal (a buff to speed, damage or sight; more damage taken for toughness).
+    pub fn raises(&self) -> bool {
+        self.percent > 100
+    }
+
+    /// How far from normal it is: the stronger of two of a kind and direction wins.
+    fn strength(&self) -> i32 {
+        (self.percent - 100).abs()
+    }
 }
 
 /// A deployable unit's mode. Only `Packed` can move; only `Deployed` fires the main gun.
@@ -172,6 +199,36 @@ pub struct Route {
 impl Entity {
     pub fn is_complete(&self) -> bool {
         self.construction.is_none()
+    }
+
+    /// `kind`'s statuses multiplied together, in percent: 100 with none. A raising and a
+    /// lowering one (Nitro on a unit under Faulty Construction) both count.
+    pub fn status_percent(&self, kind: StatusKind) -> i32 {
+        self.statuses.iter().filter(|s| s.kind == kind).fold(100, |p, s| p * s.percent / 100)
+    }
+
+    /// Stunned: it neither moves nor fires.
+    pub fn stunned(&self) -> bool {
+        self.statuses.iter().any(|s| s.kind == StatusKind::Stun)
+    }
+
+    /// Takes on `effect` from `tick`, for `effect.ticks`. One of the same kind and direction
+    /// already on it is replaced by a stronger one and refreshed (to the later end) by an
+    /// equal one; a weaker one is ignored.
+    pub fn add_status(&mut self, effect: StatusEffect, tick: u32) {
+        let new = Status { kind: effect.kind, percent: effect.percent, until: tick + effect.ticks };
+        let key = |s: &Status| (s.kind, s.raises());
+        match self.statuses.binary_search_by_key(&key(&new), key) {
+            Ok(i) => {
+                let old = &mut self.statuses[i];
+                if new.strength() > old.strength() {
+                    *old = new;
+                } else if new.strength() == old.strength() {
+                    old.until = old.until.max(new.until);
+                }
+            }
+            Err(i) => self.statuses.insert(i, new),
+        }
     }
 }
 
@@ -223,6 +280,14 @@ impl Entities {
             }
             _ => None,
         }
+    }
+
+    /// Every entity, mutably, in index order.
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut Entity> {
+        self.slots.iter_mut().filter_map(|s| match s {
+            Slot::Occupied(e) => Some(e),
+            Slot::Free { .. } => None,
+        })
     }
 
     pub fn get(&self, id: EntityId) -> Option<&Entity> {
@@ -292,9 +357,11 @@ mod tests {
             revealed_until: None,
             cloaked_until: None,
             special_at: 0,
+            ability_at: 0,
             rally: None,
             route: Route::default(),
             vel: Vec2::ZERO,
+            statuses: Vec::new(),
         }
     }
 
@@ -311,5 +378,32 @@ mod tests {
         assert!(es.get(a).is_none());
         assert!(es.get(c).is_some());
         assert_eq!(es.ids(), vec![c, b]);
+    }
+
+    /// Same kind and direction: a stronger status replaces, an equal one refreshes to the
+    /// later end, a weaker one is ignored; the other direction is kept beside it, and both
+    /// count. Entries stay in `(kind, raising)` order.
+    #[test]
+    fn statuses_refresh_and_the_strongest_wins() {
+        let mut e = blank(EntityId { index: 0, generation: 0 });
+        let fx = |kind, percent, ticks| StatusEffect { kind, percent, ticks };
+        e.add_status(fx(StatusKind::Speed, 150, 30), 0);
+        e.add_status(fx(StatusKind::Speed, 130, 90), 0);
+        assert_eq!(e.statuses, vec![Status { kind: StatusKind::Speed, percent: 150, until: 30 }], "weaker ignored");
+        e.add_status(fx(StatusKind::Speed, 150, 60), 10);
+        assert_eq!(e.statuses[0].until, 70, "equal refreshes");
+        e.add_status(fx(StatusKind::Speed, 150, 10), 20);
+        assert_eq!(e.statuses[0].until, 70, "a refresh never shortens");
+        e.add_status(fx(StatusKind::Speed, 200, 5), 20);
+        assert_eq!(e.statuses[0], Status { kind: StatusKind::Speed, percent: 200, until: 25 }, "stronger replaces");
+        e.add_status(fx(StatusKind::Speed, 50, 100), 20);
+        e.add_status(fx(StatusKind::Toughness, 70, 100), 20);
+        let keys: Vec<_> = e.statuses.iter().map(|s| (s.kind, s.percent)).collect();
+        assert_eq!(keys, vec![(StatusKind::Toughness, 70), (StatusKind::Speed, 50), (StatusKind::Speed, 200)]);
+        assert_eq!(e.status_percent(StatusKind::Speed), 100, "half of double");
+        assert_eq!(e.status_percent(StatusKind::Damage), 100);
+        assert!(!e.stunned());
+        e.add_status(fx(StatusKind::Stun, 0, 5), 20);
+        assert!(e.stunned());
     }
 }
