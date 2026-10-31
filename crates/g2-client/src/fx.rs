@@ -121,8 +121,40 @@ pub struct Particle {
 
 /// The wind every haze drifts with once its launch speed has died down, so plumes lean one way
 /// across the whole field as they do in the footage. Our own value, slow enough that a smoke
-/// column stays a column.
-const WIND: Vec3 = Vec3::new(0.9, 0.0, -0.35);
+/// column stays a column. Blowing sand runs before it and flags fly from it.
+pub const WIND: Vec3 = Vec3::new(0.9, 0.0, -0.35);
+
+/// How hard the wind blows `t` seconds into the match, 0 (a lull) to 1 (a gust): two slow
+/// waves out of step, so gusts come every half minute or so and never repeat exactly. Only
+/// time goes in, so every flag and sand gust on the field rises and falls together.
+pub fn gust(t: f32) -> f32 {
+    (0.5 + 0.32 * (t * 0.23).sin() + 0.22 * (t * 0.61 + 1.3).sin()).clamp(0.0, 1.0)
+}
+
+/// Downward pull of the shells' drawn arcs, world units per second squared. The sim flies a
+/// shell at its weapon's speed across the ground (`Shell::speed`), so a longer shot is longer
+/// in the air and, under a constant pull, climbs higher and leaves the barrel steeper, as a
+/// gun's does. Ours, picked so the Thunderfist's longest shot (65 away) leaves at 50 degrees
+/// and peaks 20 high, about as high as the arcs drawn before (a third of the range).
+pub const SHELL_GRAVITY: f32 = 60.0;
+
+/// How high a shell `secs` in the air rises over the straight line between its ends.
+pub fn shell_peak(secs: f32) -> f32 {
+    SHELL_GRAVITY * secs * secs / 8.0
+}
+
+/// The slope (rise over run) a shell leaves the barrel at, flying `run` across the ground in
+/// `secs` and landing `rise` above the muzzle: the start of `Flight::at`'s arc.
+pub fn launch_slope(run: f32, secs: f32, rise: f32) -> f32 {
+    (4.0 * shell_peak(secs) + rise) / run.max(1.0)
+}
+
+/// Heights above the ground a shell is drawn leaving the gun and landing at, and a direct
+/// shot's tracer leaving the gun and striking; the guns lay along these lines (`procanim`).
+pub const SHELL_MUZZLE: f32 = 2.5;
+pub const SHELL_LAND: f32 = 0.5;
+pub const TRACER_MUZZLE: f32 = 1.6;
+pub const TRACER_HIT: f32 = 1.2;
 
 impl Particle {
     /// Moves, slows, grows and turns the particle over `dt` seconds of its life (already counted
@@ -181,6 +213,8 @@ pub enum Fade {
     Soot,
     /// Alpha-blended pale grey steam from stacks; also powder thrown up on snow.
     Steam,
+    /// Alpha-blended pale sand the wind lifts off open ground: faint, swelling then thinning.
+    Sand,
     /// Alpha-blended dark brown dust thrown up on grass and rock.
     Earth,
     /// Ground decal: a tracked vehicle's tread marks, fading out.
@@ -192,7 +226,7 @@ pub enum Fade {
 impl Fade {
     /// Haze that drifts with the `WIND`.
     fn drifts(self) -> bool {
-        matches!(self, Fade::Smoke | Fade::Dust | Fade::Fumes | Fade::Soot | Fade::Steam | Fade::Earth)
+        matches!(self, Fade::Smoke | Fade::Dust | Fade::Fumes | Fade::Soot | Fade::Steam | Fade::Earth | Fade::Sand)
     }
 }
 
@@ -240,7 +274,7 @@ pub struct Palette {
     /// tracks on the same square (`Fade::Scar`, `Fade::Tread`).
     pub decal: Handle<Mesh>,
     pub scorch: Handle<StandardMaterial>,
-    tracks: [(Fade, [Handle<StandardMaterial>; STAGES]); 14],
+    tracks: [(Fade, [Handle<StandardMaterial>; STAGES]); 15],
 }
 
 impl Palette {
@@ -466,6 +500,20 @@ pub fn setup(
         ],
         &haze,
     );
+    // Wind-blown sand: a veil a little paler than the sand under it (fine dust in the air
+    // catches the light), never as dense as dust thrown up by a tank, thickest a third of the
+    // way through its drift.
+    let sand = track(
+        [
+            Color::srgba(0.8, 0.7, 0.53, 0.2),
+            Color::srgba(0.8, 0.7, 0.53, 0.42),
+            Color::srgba(0.81, 0.71, 0.54, 0.44),
+            Color::srgba(0.82, 0.72, 0.56, 0.34),
+            Color::srgba(0.83, 0.73, 0.57, 0.19),
+            Color::srgba(0.84, 0.74, 0.58, 0.04),
+        ],
+        &haze,
+    );
     // Ground decals are lit like the ground they lie on, and fade by alpha alone.
     let treads = images.add(tread_sprite());
     let mark = |c: Color, sprite: &Handle<Image>| StandardMaterial {
@@ -516,6 +564,7 @@ pub fn setup(
             (Fade::Soot, soot),
             (Fade::Steam, steam),
             (Fade::Earth, earth),
+            (Fade::Sand, sand),
             (Fade::Tread, tread),
             (Fade::Scar, scar),
         ],
@@ -834,7 +883,7 @@ pub fn spawn_shots(
                     continue;
                 }
                 let mut rng = Rng::at(at, k as u32 ^ sim.world.tick());
-                let (a, b) = (height(from, air.0) + Vec3::Y * 1.6, height(at, air.1) + Vec3::Y * 1.2);
+                let (a, b) = (height(from, air.0) + Vec3::Y * TRACER_MUZZLE, height(at, air.1) + Vec3::Y * TRACER_HIT);
                 if tracer && let Some(look) = look {
                     direct_fire(&mut s, a, b, look, &mut rng);
                 }
@@ -1024,8 +1073,11 @@ fn direct_fire(s: &mut Spawner, a: Vec3, b: Vec3, look: Look, rng: &mut Rng) {
 /// A shell, bomb or missile in flight from `from` to `at`, with `flight` ticks left and `done`
 /// of its whole flight behind it (a screenshot of one fired earlier starts partway).
 fn shell(s: &mut Spawner, sim: &Sim, from: SimVec2, at: SimVec2, flight: u32, done: f32, look: Look) {
-    let (mut a, b) = (sim.to_world(from) + Vec3::Y * 2.5, sim.to_world(at) + Vec3::Y * 0.5);
+    let (mut a, b) = (sim.to_world(from) + Vec3::Y * SHELL_MUZZLE, sim.to_world(at) + Vec3::Y * SHELL_LAND);
     let whole = flight as f32 * TICK_SECS / (1.0 - done).max(0.05);
+    // A gun's shell climbs by its whole time in the air, as the gun that fired it is laid for
+    // (`procanim::elevation`); `flight` counts from the firing tick, so `whole` is that time.
+    let arc = shell_peak(whole);
     let (peak, size, trail, fade, puff) = match look {
         // A power's bombs and barrage shells fall from high above where each lands (a barrage's
         // outer shells start at its aim point in the sim, but come in from the sky): steep,
@@ -1038,10 +1090,8 @@ fn shell(s: &mut Spawner, sim: &Sim, from: SimVec2, at: SimVec2, flight: u32, do
             let peak = (a.distance(b) * 0.3).max(40.0);
             (peak, 1.4, 0.015, if toxic { Fade::Fumes } else { Fade::Smoke }, 1.4)
         }
-        Look::Shell { toxic, .. } => {
-            ((a.distance(b) * 0.35).max(4.0), 0.75, 0.035, if toxic { Fade::Fumes } else { Fade::Smoke }, 0.55)
-        }
-        _ => ((a.distance(b) * 0.35).max(4.0), 0.75, 0.035, Fade::Smoke, 0.55),
+        Look::Shell { toxic, .. } => (arc, 0.75, 0.035, if toxic { Fade::Fumes } else { Fade::Smoke }, 0.55),
+        _ => (arc, 0.75, 0.035, Fade::Smoke, 0.55),
     };
     let glow = match look {
         Look::Shell { toxic: true, .. } | Look::Strike { toxic: true, .. } => Fade::Toxic,
@@ -1419,6 +1469,8 @@ pub struct Living {
     frame: u32,
     /// The match tick the scene was last primed for (see `prime`).
     primed: Option<u32>,
+    /// The match tick whose sand gusts are up (`sand_gusts`).
+    sanded: Option<u32>,
 }
 
 impl Living {
@@ -1428,6 +1480,10 @@ impl Living {
         self.wrecks.push((at, r, building, age, life));
     }
 }
+
+/// The most particles one `emit` spawns (a blaze's smoke, flame, core and spark): an emitter
+/// fires only with that much of the cap left, so a burst never runs past it.
+const EMIT_MAX: usize = 4;
 
 /// One puff from emitter `e` at `at`, `age` seconds old (0 for a fresh one), `scale` the size
 /// of what gives it off; `rng` picks its jitter. Returns how many particles it spawned.
@@ -1591,7 +1647,8 @@ fn sources(sim: &Sim, alpha: &dyn Fn(&str) -> bool) -> Vec<Source> {
 }
 
 /// Spawns the ambient effects: called every frame by `view.rs` after the shots. `dt` is the
-/// match time that passed (0 while paused); `alpha` names the defs drawn with imported models.
+/// match time that passed (0 while paused); `alpha` names the defs drawn with imported models;
+/// `focus` is the ground the camera looks at, where sand blows.
 #[allow(clippy::too_many_arguments)]
 pub fn live(
     c: &mut Commands,
@@ -1603,6 +1660,7 @@ pub fn live(
     alpha: &dyn Fn(&str) -> bool,
     roots: &dyn Fn(g2_sim::EntityId) -> Option<(Vec3, Quat)>,
     ambient: usize,
+    focus: Option<Vec3>,
 ) {
     let mut s = Spawner { c, p };
     let tick = sim.world.tick();
@@ -1612,7 +1670,8 @@ pub fn live(
     // frozen frame shows standing columns and a running one doesn't start bare.
     if living.primed != Some(tick) && (frozen || living.primed.is_none()) {
         living.primed = Some(tick);
-        prime(&mut s, sim, living, alpha, roots);
+        living.sanded = Some(tick);
+        prime(&mut s, sim, living, alpha, roots, focus);
         return;
     }
     if frozen || dt <= 0.0 {
@@ -1631,7 +1690,7 @@ pub fn live(
             trail.owed[slot] += em.rate() * dt;
             while trail.owed[slot] >= 1.0 {
                 trail.owed[slot] -= 1.0;
-                if budget == 0 {
+                if budget < EMIT_MAX {
                     continue;
                 }
                 let scale = em.scale(src.r);
@@ -1674,28 +1733,142 @@ pub fn live(
         let em = Emitter::Smoulder { fire: building };
         // A small wreck sends up one column, a building's a few, at its own rate each.
         let columns = if building { 2 } else { 1 };
-        if rng.next() < em.rate() * columns as f32 * dt * left.max(0.3) && budget > 0 {
+        if rng.next() < em.rate() * columns as f32 * dt * left.max(0.3) && budget >= EMIT_MAX {
             let off = Vec3::new(rng.range(-0.5, 0.5), 0.0, rng.range(-0.5, 0.5)) * r;
             let scale = (r * 0.45).clamp(1.0, 3.0);
             budget = budget.saturating_sub(emit(&mut s, em, at + off + Vec3::Y * 0.8, scale, 0.0, &mut rng, left));
         }
     }
     living.wrecks.retain(|w| w.3 < w.4);
+    // Blowing sand: this tick's gusts, once per tick however many frames show it.
+    if let Some(focus) = focus
+        && living.sanded != Some(tick)
+    {
+        living.sanded = Some(tick);
+        for (at, _, strength, mut rng) in sand_gusts(sim, focus, tick, 0.0) {
+            if budget >= SAND_PUFFS {
+                budget -= sand_gust(&mut s, at, strength, 0.0, &mut rng);
+            }
+        }
+    }
+}
+
+/// Gusts of blowing sand a second over the ground in view, at full wind on open sand: our own
+/// pick, so a desert map shows a streamer or two at a time and a green one hardly any.
+pub const SAND_RATE: f32 = 2.5;
+/// How far from the camera's focus a gust may rise: about the ground a play-zoom view shows.
+const SAND_REACH: f32 = 70.0;
+/// Seconds a sand puff drifts, and how many puffs string out along one gust.
+const SAND_LIFE: f32 = 5.0;
+const SAND_PUFFS: usize = 5;
+
+/// How readily the wind lifts sand off the ground under `(x, z)`, 0 to 1: open sand most, dry
+/// dirt and the built-in savanna less, grass a little; never rock, pavement, snow or water.
+pub fn sandiness(sim: &Sim, x: f32, z: f32) -> f32 {
+    let Some(file) = sim.source.as_ref() else { return lift(None) };
+    if crate::terrain::over_water(file, x, z) {
+        return 0.0;
+    }
+    lift(file.class_at(x, z).map(crate::terrain::Ground::of))
+}
+
+/// `sandiness` by the ground's class; `None` is the built-in savanna or an unpainted cell.
+fn lift(ground: Option<crate::terrain::Ground>) -> f32 {
+    use crate::terrain::Ground;
+    match ground {
+        Some(Ground::Sand) => 1.0,
+        Some(Ground::Dirt) | None => 0.5,
+        Some(Ground::Grass) => 0.15,
+        Some(Ground::Rock | Ground::Paved | Ground::Snow) => 0.0,
+    }
+}
+
+/// One gust of blowing sand rising at `at` (on the ground), `age` seconds ago: a low streamer
+/// of wide, faint puffs strung out downwind, running before the wind faster than smoke drifts
+/// and faster in a gust. Each puff is stretched across the screen, which the wind mostly runs
+/// along at the game camera's bearing. Returns the puffs spawned.
+fn sand_gust(s: &mut Spawner, at: Vec3, strength: f32, age: f32, rng: &mut Rng) -> usize {
+    let dir = WIND.normalize();
+    let speed = 4.0 + 5.0 * strength;
+    let mut n = 0;
+    for k in 0..SAND_PUFFS {
+        let lag = k as f32 * 0.35;
+        let life = SAND_LIFE * rng.range(0.8, 1.1);
+        if age - lag >= life || age < lag {
+            continue;
+        }
+        let side = Vec3::new(-dir.z, 0.0, dir.x) * rng.range(-1.5, 1.5) + dir * k as f32 * 3.5;
+        let size = rng.range(2.5, 3.5);
+        let p = Particle {
+            age: 0.0,
+            life,
+            vel: dir * speed * rng.range(0.85, 1.15) + Vec3::Y * 0.15,
+            drag: 0.0,
+            gravity: 0.0,
+            size: (Vec3::new(size * 1.6, size * 0.6, size), Vec3::new(size * 4.5, size * 1.3, size)),
+            fade: Fade::Sand,
+            spin: 0.0,
+            ground: 0.0,
+        };
+        // Unrolled, so the streamer lies along the ground rather than at a random tilt.
+        s.card(at + side + Vec3::Y * rng.range(0.5, 1.2), p, age - lag).insert((Ambient, Billboard(0.0)));
+        n += 1;
+    }
+    n
+}
+
+/// Gusts of sand that rose over the last `secs` seconds (up to `now`), around `focus`: each
+/// with its age and the wind's strength when it rose. A gust rises in each tick's slot with a chance by the wind (`gust`) and the
+/// ground under it, so a still frame and a running match draw the same gusts for a tick.
+fn sand_gusts(sim: &Sim, focus: Vec3, now: u32, secs: f32) -> Vec<(Vec3, f32, f32, Rng)> {
+    let tps = g2_sim::TICKS_PER_SECOND;
+    let span = (secs * tps as f32) as u32;
+    let mut out = Vec::new();
+    for tick in now.saturating_sub(span)..=now {
+        let t = tick as f32 / tps as f32;
+        let strength = gust(t);
+        let mut rng = Rng(tick.wrapping_mul(0x632b_e5ab) ^ 0x5a4d);
+        // The chance of a gust this tick at full sandiness; the ground decides the rest.
+        if rng.next() >= SAND_RATE * (0.25 + strength) / tps as f32 {
+            continue;
+        }
+        // Around the focus snapped to a grid, so the same tick picks the same ground however the
+        // camera sits within a cell.
+        let cell = 16.0;
+        let x = (focus.x / cell).round() * cell + rng.range(-SAND_REACH, SAND_REACH);
+        let z = (focus.z / cell).round() * cell + rng.range(-SAND_REACH, SAND_REACH);
+        let (w, h) = (sim.world.map.width.to_f32(), sim.world.map.height.to_f32());
+        // Not over unexplored ground, which the fog sheet hides and a puff above it wouldn't.
+        let open = (0.0..w).contains(&x) && (0.0..h).contains(&z) && sim.explored_at(x, z);
+        if !open || rng.next() >= sandiness(sim, x, z) {
+            continue;
+        }
+        out.push((Vec3::new(x, sim.ground_y(x, z), z), (now - tick) as f32 / tps as f32, strength, rng));
+    }
+    out
 }
 
 /// Draws the last seconds of every emitter at once, each puff already as old as it would be
 /// now: the screenshot's still frame and the first frame of a match show the plumes as they
-/// stand. Tread marks are laid back along each tracked vehicle's facing, as if it had driven
-/// in; craters and wrecks come from the shots and kills (`spawn_shots`, `view.rs`).
+/// stand, and the sand gusts still blowing. Tread marks are laid back along each tracked
+/// vehicle's facing, as if it had driven in; craters and wrecks come from the shots and kills
+/// (`spawn_shots`, `view.rs`).
 fn prime(
     s: &mut Spawner,
     sim: &Sim,
     living: &mut Living,
     alpha: &dyn Fn(&str) -> bool,
     roots: &dyn Fn(g2_sim::EntityId) -> Option<(Vec3, Quat)>,
+    focus: Option<Vec3>,
 ) {
     let tick = sim.world.tick();
     let mut budget = AMBIENT_PUFFS;
+    // The sand gusts still drifting, each as far along as it is by now.
+    for (at, age, strength, mut rng) in focus.map_or(Vec::new(), |f| sand_gusts(sim, f, tick, SAND_LIFE + 1.5)) {
+        if budget >= SAND_PUFFS {
+            budget -= sand_gust(s, at, strength, age, &mut rng);
+        }
+    }
     for src in sources(sim, alpha) {
         let (at, rot) = roots(src.id).unwrap_or((src.at, Quat::IDENTITY));
         let mut rng = Rng(src.id.index.wrapping_mul(0x9e37_79b1) ^ tick.wrapping_mul(0x85eb_ca6b));
@@ -1703,7 +1876,7 @@ fn prime(
             let n = (em.rate() * em.life()) as usize;
             let scale = em.scale(src.r);
             for k in 0..n {
-                if budget == 0 {
+                if budget < EMIT_MAX {
                     break;
                 }
                 let age = (k as f32 + rng.next()) / em.rate();
@@ -1740,7 +1913,7 @@ fn prime(
         let columns = if building { 2 } else { 1 };
         let scale = (r * 0.45).clamp(1.0, 3.0);
         for k in 0..(em.rate() * em.life() * columns as f32) as usize {
-            if budget == 0 {
+            if budget < EMIT_MAX {
                 break;
             }
             let back = (k as f32 + rng.next()) / (em.rate() * columns as f32);
@@ -1964,7 +2137,7 @@ mod tests {
     }
 
     /// The ambient effects never keep more than `AMBIENT_PUFFS` alive, however much is burning:
-    /// a whole army of burning buildings primes and then runs at the cap.
+    /// a whole army of burning buildings primes and then runs at the cap, sand blowing too.
     #[test]
     fn ambient_puffs_hold_their_cap() {
         let mut app = app();
@@ -1977,16 +2150,45 @@ mod tests {
             living.wreck(Vec3::new(k as f32, 0.0, 0.0), 6.0, true, 1.0, 70.0);
         }
         sim.speed = 1;
+        let focus = Vec3::new(150.0, 0.0, 150.0);
         let count = |world: &mut World| world.query_filtered::<(), With<Ambient>>().iter(world).count();
         for frame in 0..20 {
+            sim.world.step();
             let ambient = count(world);
             let mut queue = bevy::ecs::world::CommandQueue::default();
             let mut commands = Commands::new(&mut queue, world);
-            live(&mut commands, &palette, &sim, &mut living, 0.1, false, &|_| false, &|_| None, ambient);
+            live(&mut commands, &palette, &sim, &mut living, 0.1, false, &|_| false, &|_| None, ambient, Some(focus));
             queue.apply(world);
             assert!(count(world) <= AMBIENT_PUFFS, "frame {frame}: {} alive", count(world));
         }
         assert!(count(world) > AMBIENT_PUFFS / 2, "the cap is reached, not starved: {}", count(world));
+    }
+
+    /// Sand blows only off loose ground (most off sand, never off snow, rock or pavement), its
+    /// gusts come from the tick alone, and over a minute of the built-in savanna a few rise
+    /// around the camera, each inside the map and near the focus.
+    #[test]
+    fn sand_blows_off_loose_ground_by_the_tick() {
+        use crate::terrain::Ground;
+        assert_eq!(lift(Some(Ground::Snow)), 0.0);
+        assert_eq!(lift(Some(Ground::Rock)), 0.0);
+        assert_eq!(lift(Some(Ground::Paved)), 0.0);
+        assert!(lift(Some(Ground::Sand)) > lift(Some(Ground::Dirt)));
+        assert!(lift(Some(Ground::Dirt)) > lift(Some(Ground::Grass)));
+        let mut app = app();
+        let sim = app.world_mut().remove_resource::<crate::sim::Sim>().unwrap();
+        let focus = Vec3::new(200.0, 0.0, 200.0);
+        let minute = 60 * g2_sim::TICKS_PER_SECOND;
+        let gusts = sand_gusts(&sim, focus, minute, 60.0);
+        let again = sand_gusts(&sim, focus, minute, 60.0);
+        assert_eq!(gusts.len(), again.len());
+        assert!(gusts.iter().zip(&again).all(|(a, b)| a.0 == b.0 && a.1 == b.1), "the same gusts for the same ticks");
+        assert!((5..=120).contains(&gusts.len()), "a few gusts a minute: {}", gusts.len());
+        for (at, age, strength, _) in &gusts {
+            let off = (*at - focus).abs();
+            assert!(off.x <= SAND_REACH + 8.0 && off.z <= SAND_REACH + 8.0, "{at}");
+            assert!((0.0..=60.0).contains(age) && (0.0..=1.0).contains(strength));
+        }
     }
 
     /// A puff primed `age` seconds into its life is where a fresh one would be after that long.

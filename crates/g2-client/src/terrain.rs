@@ -589,6 +589,12 @@ impl<'a> Layout<'a> {
     }
 }
 
+/// Whether world `(x, z)` lies under one of an imported map's water surfaces.
+pub(crate) fn over_water(file: &MapFile, x: f32, z: f32) -> bool {
+    let (sx, sy) = file.to_sage(x, z);
+    file.water.iter().any(|w| inside(&w.outline, sx, sy))
+}
+
 /// Even-odd point-in-polygon test.
 fn inside(poly: &[(f32, f32)], x: f32, y: f32) -> bool {
     let mut hit = false;
