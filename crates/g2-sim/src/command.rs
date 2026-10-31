@@ -98,6 +98,11 @@ pub enum CommandKind {
         producer: EntityId,
         at: Vec2,
     },
+    /// Units with a ready ability (`Def::ability`: Nitro, Radar Pulse, a self-destruct) use it
+    /// now, where they stand.
+    Ability {
+        units: Vec<EntityId>,
+    },
 }
 
 /// Why a command was ignored. Rejections are deterministic and do not change state.
@@ -122,6 +127,8 @@ pub enum Reject {
     CannotTransform,
     /// None of the units has a special shot ready, or the target is not an enemy.
     SpecialNotReady,
+    /// None of the units has an ability ready.
+    AbilityNotReady,
     /// The player has no power in that slot, or it is still recharging.
     PowerNotReady,
     /// The point is unexplored (except for a recon), off the map, or (for an ambush) not open

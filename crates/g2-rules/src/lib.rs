@@ -4,9 +4,9 @@
 //! outside this repository.
 //! Everything else is a placeholder chosen for playability and will be tuned.
 use g2_sim::defs::{
-    Armour, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction, Garrison, General,
-    GeneralUnit, Modifier, Perk, PerkId, Power, PowerKind, PowerTuning, Rules, Shell, Special, Targets, Upgrade,
-    UpgradeId, Veterancy, Weapon,
+    Ability, AbilityKind, Armour, Blast, BuildingRole, Class, CollectorSpec, Cost, Def, DefId, Deploy, Effect, Faction,
+    Field, Garrison, General, GeneralUnit, Modifier, Perk, PerkId, Power, PowerKind, PowerTuning, Rules, Shell,
+    Special, StatusEffect, StatusKind, Targets, Upgrade, UpgradeId, Veterancy, Weapon,
 };
 use g2_sim::{Fx, MapDef, Vec2};
 
@@ -205,7 +205,7 @@ pub mod perks {
     pub const IN_PROTECTOR_I: PerkId = PerkId(58);
     pub const IN_PROTECTOR_II: PerkId = PerkId(59);
     pub const IN_FACTORY_OVERTIME: PerkId = PerkId(60);
-    pub const IN_IGNITION: PerkId = PerkId(61);
+    pub const IN_WILDFIRE: PerkId = PerkId(61);
     pub const IN_INSOURCED: PerkId = PerkId(62);
     pub const IN_LEADERSHIP: PerkId = PerkId(63);
     // Red Arrow (APA).
@@ -267,6 +267,7 @@ pub mod perks {
     pub const CL_RAILGUN_DROP: PerkId = PerkId(113);
     pub const TM_OFFSHORE: PerkId = PerkId(114);
     pub const BJ_SORTIE: PerkId = PerkId(115);
+    pub const JY_FAULTY_CONSTRUCTION: PerkId = PerkId(116);
 }
 use ids::*;
 use perks::*;
@@ -326,6 +327,8 @@ const fn building(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
+        ability: None,
+        blast: None,
     }
 }
 
@@ -395,6 +398,8 @@ const fn unit(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
+        ability: None,
+        blast: None,
     }
 }
 
@@ -450,6 +455,8 @@ const fn soldier(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
+        ability: None,
+        blast: None,
     }
 }
 
@@ -483,6 +490,7 @@ const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) 
         targets: Targets::Ground,
         air_range: None,
         garrison_bonus: 0,
+        suicidal: false,
     }
 }
 
@@ -520,10 +528,54 @@ const fn becoming(mut d: Def, into: DefId) -> Def {
     d
 }
 
-/// `d` fires `weapon` once on command, then recharges for `cooldown_ticks`.
-const fn with_special(mut d: Def, weapon: Weapon, cooldown_ticks: u32) -> Def {
-    d.special = Some(Special { weapon, cooldown_ticks });
+/// `d` fires `weapon` once on command (its `name`), then recharges for `cooldown_ticks`.
+const fn with_special(mut d: Def, name: &'static str, weapon: Weapon, cooldown_ticks: u32) -> Def {
+    d.special = Some(Special { name, weapon, cooldown_ticks, blast: None });
     d
+}
+
+/// `d` fires a projectile once on command (its `name`, reaching `range`), setting off `blast`
+/// where its target stood, then recharges for `cooldown_ticks`.
+const fn with_lobbed_special(mut d: Def, name: &'static str, range: i64, blast: Blast, cooldown_ticks: u32) -> Def {
+    let weapon = weapon(blast.damage, blast.bonus, range, 10);
+    d.special = Some(Special { name, weapon, cooldown_ticks, blast: Some(blast) });
+    d
+}
+
+/// `d` uses `ability` on command (the unit special key).
+const fn with_ability(mut d: Def, ability: Ability) -> Def {
+    d.ability = Some(ability);
+    d
+}
+
+/// `d` sets off `blast` where it is destroyed.
+const fn with_blast(mut d: Def, blast: Blast) -> Def {
+    d.blast = Some(blast);
+    d
+}
+
+/// `w` is the unit's own charge: firing it destroys the unit (its blast deals the damage).
+const fn suicidal(mut w: Weapon) -> Weapon {
+    w.suicidal = true;
+    w
+}
+
+/// A blast of `damage` (plus `bonus`) within `radius`, leaving no cloud.
+const fn blast(damage: i32, bonus: [i32; 4], radius: i64) -> Blast {
+    Blast { damage, bonus, radius: Fx::from_int(radius), cloud_radius: Fx::ZERO, cloud_damage: 0, cloud_ticks: 0 }
+}
+
+/// `b` leaves a cloud of `radius` dealing `damage` every second for `secs` seconds.
+const fn clouding(mut b: Blast, radius: i64, damage: i32, secs_: u32) -> Blast {
+    b.cloud_radius = Fx::from_int(radius);
+    b.cloud_damage = damage;
+    b.cloud_ticks = secs(secs_);
+    b
+}
+
+/// A timed status: `kind` at `percent` for `secs_` seconds.
+const fn status(kind: StatusKind, percent: i32, secs_: u32) -> StatusEffect {
+    StatusEffect { kind, percent, ticks: secs(secs_) }
 }
 
 /// What a unit becomes where it stands: never built, no power, immobile, holding `capacity`
@@ -603,6 +655,8 @@ static DEFS: [Def; 82] = [
         detection: Fx::ZERO,
         becomes: None,
         special: None,
+        ability: None,
+        blast: None,
     },
     Def {
         name: "Oil Well",
@@ -624,6 +678,8 @@ static DEFS: [Def; 82] = [
         detection: Fx::ZERO,
         becomes: None,
         special: None,
+        ability: None,
+        blast: None,
     },
     // ---- European Union ------------------------------------------------------------------
     // src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
@@ -907,21 +963,25 @@ static DEFS: [Def; 82] = [
         94,
     ),
     // src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
-    // placeholders: cheaper, faster and weaker than the Warlord.
-    ranked(
-        soldier(
-            "GLA Scorpion Tank",
-            Faction::Gla,
-            420,
-            Armour::Light,
-            credits(700),
-            secs(18),
-            11,
-            Fx::from_ratio(7, 2),
-            weapon(30, [0, 15, 0, 0], 30, 12),
+    // placeholders: cheaper, faster and weaker than the Warlord. Black Market Nitro (the
+    // alpha's gla_mediumcannonnitro, an instant ability with no numbers): `NITRO`.
+    with_ability(
+        ranked(
+            soldier(
+                "GLA Scorpion Tank",
+                Faction::Gla,
+                420,
+                Armour::Light,
+                credits(700),
+                secs(18),
+                11,
+                Fx::from_ratio(7, 2),
+                weapon(30, [0, 15, 0, 0], 30, 12),
+            ),
+            72,
+            92,
         ),
-        72,
-        92,
+        NITRO,
     ),
     // src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
     // cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders.
@@ -1251,21 +1311,30 @@ static DEFS: [Def; 82] = [
         1,
     ),
     // Longbow (eu_lightrockethelo): hp 240 (the wiki's card 410), $850, 24 s; rockets 36 (+16
-    // light), 30, 1.2 s, ground and air (`TargetType` 0).
-    ranked(
-        flying(soldier(
-            "EU Longbow",
-            Faction::Eu,
-            240,
-            Armour::Light,
-            credits(850),
-            secs(24),
-            12,
-            Fx::from_int(4),
-            anti_air(weapon(36, [0, 16, 0, 0], 30, 12), 30),
-        )),
-        36,
-        88,
+    // light), 30, 1.2 s, ground and air (`TargetType` 0). Radar Pulse (the wiki's Longbow
+    // ability, "temporarily improves the sight range"; the alpha's eu_radarpulse, an instant
+    // ability with no numbers): sight at 150% for 10 s, every 30 s, placeholders.
+    with_ability(
+        ranked(
+            flying(soldier(
+                "EU Longbow",
+                Faction::Eu,
+                240,
+                Armour::Light,
+                credits(850),
+                secs(24),
+                12,
+                Fx::from_int(4),
+                anti_air(weapon(36, [0, 16, 0, 0], 30, 12), 30),
+            )),
+            36,
+            88,
+        ),
+        Ability {
+            name: "Radar Pulse",
+            kind: AbilityKind::Boost(status(StatusKind::Sight, 150, 10)),
+            cooldown_ticks: secs(30),
+        },
     ),
     // Sniper Team (eu_elitesnipersoldiersquad): hp 240, $750, 13 s; sniper rifle 25 (+200 vs.
     // infantry), 50, 4 s; stealthed (the wiki's passive Camouflage).
@@ -1405,21 +1474,30 @@ static DEFS: [Def; 82] = [
         79,
     ),
     // Dragon Tank (au_mediumflametank): hp 575, $800, 16 s; flamethrower 65 (+95 garrisoned),
-    // 30, 3.15 s.
-    ranked(
-        soldier(
-            "APA Dragon Tank",
-            Faction::Apa,
-            575,
-            Armour::Light,
-            credits(800),
-            secs(16),
-            10,
-            Fx::from_ratio(7, 2),
-            garrison_buster(weapon(65, [0, 0, 0, 0], 30, 32), 95),
+    // 30, 3.15 s. Ignition (the wiki's: "self-destructs and triggers a firestorm"; the alpha's
+    // apa_fataldetonation, instant): it blows up at once, and the same `PartingShot` weapon
+    // ("Detonation") goes off however it dies. src: DamageRating 50, radius 20, a fire left
+    // 5 s (`Persistence`) burning 10 a second (its DOT).
+    with_blast(
+        with_ability(
+            ranked(
+                soldier(
+                    "APA Dragon Tank",
+                    Faction::Apa,
+                    575,
+                    Armour::Light,
+                    credits(800),
+                    secs(16),
+                    10,
+                    Fx::from_ratio(7, 2),
+                    garrison_buster(weapon(65, [0, 0, 0, 0], 30, 32), 95),
+                ),
+                72,
+                80,
+            ),
+            Ability { name: "Ignition", kind: AbilityKind::Detonate, cooldown_ticks: 0 },
         ),
-        72,
-        80,
+        clouding(blast(50, [0, 0, 0, 0], 20), 20, 10, 5),
     ),
     // Rocket Tank (au_mediumrockettank): hp 580 (the wiki's 480), $950, 20 s; rockets 45 (+33
     // light), 35, 2 s, ground and air.
@@ -1457,24 +1535,39 @@ static DEFS: [Def; 82] = [
     )),
     // Sunstorm (au_heavynukeartillery): hp 600, $1550, 24 s; on the move 60 (+20 inf), 30,
     // 2 s; deployed, the nuclear howitzer 215, 65, 5 s. Shell speed and set-up: Thunderfist's.
-    ranked(
-        deploying(
-            soldier(
-                "APA Sunstorm",
-                Faction::Apa,
-                600,
-                Armour::Light,
-                credits(1550),
-                secs(24),
-                7,
-                Fx::from_int(2),
-                weapon(60, [20, 0, 0, 0], 30, 20),
+    // Nuclear Fission (the wiki's passive; the alpha's `PartingShot` "CoreBreach"): src:
+    // DamageRating 50, radius 20, a radiation field left 7 s (`Persistence`) at 10 a second.
+    // Uranium Pile Eject (apa_uraniumpilelauncher, range 55): the alpha plants a stake that
+    // blows 100 (+75 heavy) within 10 when an enemy steps up; here the rod bursts where it
+    // lands, with a radiation cloud (radius 10, 10 a second for 10 s) and a 30 s recharge,
+    // placeholders.
+    with_blast(
+        with_lobbed_special(
+            ranked(
+                deploying(
+                    soldier(
+                        "APA Sunstorm",
+                        Faction::Apa,
+                        600,
+                        Armour::Light,
+                        credits(1550),
+                        secs(24),
+                        7,
+                        Fx::from_int(2),
+                        weapon(60, [20, 0, 0, 0], 30, 20),
+                    ),
+                    shelling(weapon(215, [0, 0, 0, 0], 65, 50), 8, 40, 20),
+                    30,
+                ),
+                45,
+                67,
             ),
-            shelling(weapon(215, [0, 0, 0, 0], 65, 50), 8, 40, 20),
-            30,
+            "Uranium Pile Eject",
+            55,
+            clouding(blast(100, [0, 0, 75, 0], 10), 10, 10, 10),
+            secs(30),
         ),
-        45,
-        67,
+        clouding(blast(50, [0, 0, 0, 0], 20), 20, 10, 7),
     ),
     // Shadow Tank (au_mediumstealthtank): hp 545, $1075, 17 s; cannon 85 (+30 light), 35,
     // 2.5 s; stealthed (the wiki's passive stealth). Particle Accelerator (the alpha's
@@ -1499,6 +1592,7 @@ static DEFS: [Def; 82] = [
             72,
             80,
         )),
+        "Particle Accelerator",
         weapon(300, [0, 0, 0, 0], 50, 0),
         secs(20),
     ),
@@ -1565,21 +1659,25 @@ static DEFS: [Def; 82] = [
     // Shrapnel Tank (gu_heavyshrapneltank): hp 650, $1000, 16 s; cannon 60 (+35 heavy), 35,
     // 2.1 s. Replaces the Scorpion for its generals. Speed 7, a placeholder below the class's
     // 10: `g2-tools generals` measured Junkyard at 11 of 18 and Wild Dog at 7, against 16 and
-    // 15 at 10 (8 gave 15 and 9).
-    ranked(
-        soldier(
-            "GLA Shrapnel Tank",
-            Faction::Gla,
-            650,
-            Armour::Light,
-            credits(1000),
-            secs(16),
-            7,
-            Fx::from_ratio(7, 2),
-            weapon(60, [0, 0, 35, 0], 35, 21),
+    // 15 at 10 (8 gave 15 and 9). Black Market Nitro (gla_mediumcannonnitro, unlocked by an
+    // upgrade in the alpha, here from the start): `NITRO`.
+    with_ability(
+        ranked(
+            soldier(
+                "GLA Shrapnel Tank",
+                Faction::Gla,
+                650,
+                Armour::Light,
+                credits(1000),
+                secs(16),
+                7,
+                Fx::from_ratio(7, 2),
+                weapon(60, [0, 0, 35, 0], 35, 21),
+            ),
+            72,
+            80,
         ),
-        72,
-        80,
+        NITRO,
     ),
     // Toxin Tank (gu_mediumtoxintank): hp 625, $875, 17 s; toxin cannon 60 (+50 inf, +50
     // garrisoned), 35, 3 s. Replaces the Scorpion for its general.
@@ -1616,17 +1714,25 @@ static DEFS: [Def; 82] = [
         94,
     ),
     // Bomb Truck (gu_lightbombvehicle): hp 160, $400, 13 s; high explosives 185 (+85 heavy),
-    // 7, 1 s: it drives up and blows its charge, but as a gun, not by dying.
-    soldier(
-        "GLA Bomb Truck",
-        Faction::Gla,
-        160,
-        Armour::Light,
-        credits(400),
-        secs(13),
-        16,
-        Fx::from_int(2),
-        weapon(185, [0, 0, 85, 0], 7, 10),
+    // 7, 1 s, `Suicidal` and a `PartingShot` bursting within 13: it drives up and blows its
+    // charge, dying with it, and the charge also goes off when it is destroyed. Detonate (the
+    // alpha's gla_bombtechnicaldetonate, instant) blows it where it stands.
+    with_blast(
+        with_ability(
+            soldier(
+                "GLA Bomb Truck",
+                Faction::Gla,
+                160,
+                Armour::Light,
+                credits(400),
+                secs(13),
+                16,
+                Fx::from_int(2),
+                suicidal(weapon(185, [0, 0, 85, 0], 7, 10)),
+            ),
+            Ability { name: "Detonate", kind: AbilityKind::Detonate, cooldown_ticks: 0 },
+        ),
+        blast(185, [0, 0, 85, 0], 13),
     ),
     // Battle Bunker (gu_battlebus_bunker, a structure blueprint): what the Battle Bus becomes.
     // hp 525, room for four squads who fire out with an 8-unit range bonus, and die with it
@@ -1833,6 +1939,8 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
         detection: Fx::ZERO,
         becomes: None,
         special: None,
+        ability: None,
+        blast: None,
     }
 }
 
@@ -1971,7 +2079,7 @@ static UPGRADES: [Upgrade; 9] = [
 /// 22:06-23:40), matched to what our units and powers can do: "Double Shifts" ('Carpet Bomb'
 /// comes online faster after use) tunes our general's power the same way. Every percentage,
 /// rank and price is a placeholder, of the size of a Zero Hour upgrade (10-25%).
-static PERKS: [Perk; 116] = [
+static PERKS: [Perk; 117] = [
     // ---- Bulldog (EU) ----
     perk(
         "Double Shifts",
@@ -2048,7 +2156,7 @@ static PERKS: [Perk; 116] = [
     ),
     perk(
         "Logistics",
-        "The field repair restores 25% more hit points.",
+        "Supply Drop restores 25% more hit points, and its buff lasts 25% longer.",
         2,
         500,
         None,
@@ -2235,7 +2343,7 @@ static PERKS: [Perk; 116] = [
     ),
     perk(
         "Field Medics",
-        "Bulwark restores 25% more hit points.",
+        "Bulwark's shield lasts 25% longer.",
         2,
         500,
         None,
@@ -2508,7 +2616,7 @@ static PERKS: [Perk; 116] = [
         None,
     ),
     perk(
-        "Ignition",
+        "Wildfire",
         "Dragon Tanks deal 20% more damage.",
         3,
         800,
@@ -2549,7 +2657,7 @@ static PERKS: [Perk; 116] = [
     ),
     perk(
         "Heavy Warheads",
-        "Thunderclap rockets deal 20% more damage.",
+        "Thunderclap hits 20% harder and stuns 20% longer.",
         2,
         500,
         None,
@@ -3052,6 +3160,36 @@ static PERKS: [Perk; 116] = [
             requires: None,
         },
     ),
+    // src: GLA_PlayerAbility_FaultyConstruction_Lvl01, the alpha's Junkyard general's own power
+    // (GLA_JunkyardGeneral's `GeneralPowers`; ours keeps the ambush in slot 0, so this is its
+    // ninth perk): radius 30, recharge 240 s, 1 s before activation, `Damage` 0 and no effect
+    // numbers. The wiki: "Causes mechanical failures to enemy vehicles, reducing their speed
+    // and combat effectiveness". Enemy vehicles at 60% speed and 75% damage for 15 s are
+    // placeholders.
+    power_perk(
+        "Faulty Construction",
+        "Adds a power: enemy vehicles at a point slow down and hit softer for a while.",
+        4,
+        1000,
+        Power {
+            name: "Faulty Construction",
+            kind: PowerKind::Field(Field {
+                radius: Fx::from_int(30),
+                delay_ticks: secs(1),
+                damage: 0,
+                hp: 0,
+                ranks: 0,
+                ticks: secs(15),
+                allies: [None, None],
+                enemies: [Some((StatusKind::Speed, 60)), Some((StatusKind::Damage, 75))],
+                vehicles: true,
+            }),
+            first_ticks: secs(240),
+            cooldown_ticks: secs(240),
+            blind: false,
+            requires: None,
+        },
+    ),
 ];
 
 #[allow(clippy::too_many_arguments)]
@@ -3081,6 +3219,82 @@ const fn power_perk(name: &'static str, description: &'static str, rank: u8, pri
         adds_power: Some(adds),
     }
 }
+
+/// Taskmaster's Supply Drop at one level: a radius, the hit points it restores and its
+/// damage buff in percent (see the general).
+const fn supply_drop(radius: i64, hp: i32, damage: i32) -> Power {
+    Power {
+        name: "Supply Drop",
+        kind: PowerKind::Field(Field {
+            radius: Fx::from_int(radius),
+            delay_ticks: secs(2),
+            damage: 0,
+            hp,
+            ranks: 1,
+            ticks: secs(30),
+            allies: [Some((StatusKind::Damage, damage)), None],
+            enemies: [None, None],
+            vehicles: false,
+        }),
+        first_ticks: secs(180),
+        cooldown_ticks: secs(180),
+        blind: false,
+        requires: None,
+    }
+}
+
+/// Mercury Red's Bulwark at one level: own units take `percent` damage (see the general).
+const fn bulwark(percent: i32) -> Power {
+    Power {
+        name: "Bulwark",
+        kind: PowerKind::Field(Field {
+            radius: Fx::from_int(25),
+            delay_ticks: 0,
+            damage: 0,
+            hp: 0,
+            ranks: 0,
+            ticks: secs(10),
+            allies: [Some((StatusKind::Toughness, percent)), None],
+            enemies: [None, None],
+            vehicles: false,
+        }),
+        first_ticks: secs(180),
+        cooldown_ticks: secs(180),
+        blind: false,
+        requires: None,
+    }
+}
+
+/// Red Arrow's Thunderclap at one level: enemy units are stunned for `stun_secs` (see the
+/// general).
+const fn thunderclap(stun_secs: u32) -> Power {
+    Power {
+        name: "Thunderclap",
+        kind: PowerKind::Field(Field {
+            radius: Fx::from_int(20),
+            delay_ticks: secs(5),
+            damage: 100,
+            hp: 0,
+            ranks: 0,
+            ticks: secs(stun_secs),
+            allies: [None, None],
+            enemies: [Some((StatusKind::Stun, 0)), None],
+            vehicles: false,
+        }),
+        first_ticks: secs(240),
+        cooldown_ticks: secs(240),
+        blind: false,
+        requires: None,
+    }
+}
+
+/// Black Market Nitro, the GLA tanks' ability: speed at 150% for 5 s, every 30 s
+/// (placeholders: the alpha's ability holds only its name and an instant targeting type).
+const NITRO: Ability = Ability {
+    name: "Nitro",
+    kind: AbilityKind::Boost(StatusEffect { kind: StatusKind::Speed, percent: 150, ticks: secs(5) }),
+    cooldown_ticks: secs(30),
+};
 
 // A faction's perk tables list every unit of its kind, the generals' own ones too: only a
 // player with that general can train them, so for anyone else those entries do nothing.
@@ -3240,35 +3454,14 @@ static GENERALS: [General; 14] = [
             Modifier::BuildTime { def: APA_DERRICK, percent: 75 },
             Modifier::Cost { def: APA_HARVESTER, percent: 115 },
         ],
-        // A field repair: the support powers' "Supply drop" heals nearby units. Every own unit
-        // and building within 30 regains up to 400 hp.
-        power: Some(Power {
-            name: "Field repair",
-            kind: PowerKind::Repair { radius: Fx::from_int(30), hp: 400 },
-            first_ticks: secs(180),
-            cooldown_ticks: secs(180),
-            blind: false,
-            requires: None,
-        }),
-        // the alpha's global Supply Drop: radius 30, then 40 at lvl02 and lvl03, recharge 180 s; units: the wiki's Inferno Squad and Saboteurs for Taskmaster.
-        power_levels: &[
-            Power {
-                name: "Field repair",
-                kind: PowerKind::Repair { radius: Fx::from_int(40), hp: 400 },
-                first_ticks: secs(180),
-                cooldown_ticks: secs(180),
-                blind: false,
-                requires: None,
-            },
-            Power {
-                name: "Field repair",
-                kind: PowerKind::Repair { radius: Fx::from_int(40), hp: 500 },
-                first_ticks: secs(180),
-                cooldown_ticks: secs(180),
-                blind: false,
-                requires: None,
-            },
-        ],
+        // src: the alpha's global Supply Drop (Global_PlayerAbility_SupplyDrop_Lvl01-03, in every
+        // faction's power list; the wiki: a crate "that heals nearby units, grants veterancy and
+        // temporarily buffs attack power"): 2 s before activation, radius 30, then 40; damage
+        // at 115%, 115% and 125% for 30 s (`RtsDamageRatingChangeApplier`); recharge 180 s. Its
+        // heal is 15/25/35 hp a second for 5 s while idle; here 400, 400 and 500 at once, and
+        // one veterancy rank, placeholders.
+        power: Some(supply_drop(30, 400, 115)),
+        power_levels: &[supply_drop(40, 400, 115), supply_drop(40, 500, 125)],
         units: &[
             GeneralUnit { unit: APA_INFERNO, replaces: None, at: APA_BARRACKS },
             GeneralUnit { unit: APA_SABOTEURS, replaces: None, at: APA_BARRACKS },
@@ -3338,6 +3531,7 @@ static GENERALS: [General; 14] = [
             JY_PROTECTOR_II,
             JY_FACTORY_OVERTIME,
             JY_LEADERSHIP,
+            JY_FAULTY_CONSTRUCTION,
         ],
     },
     // src: the EU air force general (the wiki's Daedalus, the alpha's EU_AirforceGeneral, icon EG_Airforce_01): Fox LRV in place of the APC, Longbow helicopters, the Sniper Team; power Air Raid (lvl01-03: 3 bombers, recharge 240 s, 1 s before activation).
@@ -3418,39 +3612,18 @@ static GENERALS: [General; 14] = [
             DD_INSOURCED,
         ],
     },
-    // src: the EU rapid assault general (the wiki's Mercury Red: Shock Troopers; the alpha's EU_RapidAssaultGeneral): Shock Troopers in place of the Recon Squad, the Assault APC in place of the APC, Longbows; power Bulwark (radius 25, recharge 180 s; the alpha's effect is a defensive buff, here a field repair).
+    // src: the EU rapid assault general (the wiki's Mercury Red: Shock Troopers; the alpha's EU_RapidAssaultGeneral): Shock Troopers in place of the Recon Squad, the Assault APC in place of the APC, Longbows; power Bulwark (radius 25, recharge 180 s, no delay; its area persists 10 s and its effect asset holds no amount).
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
     // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    // Bulwark (the wiki: "inspires friendly units, reducing the damage they receive for a short
+    // duration"): own units within 25 take 75%, 70% and 65% damage (placeholders) for the
+    // area's 10 s.
     General {
         name: "Mercury Red",
         faction: Faction::Eu,
         modifiers: &[],
-        power: Some(Power {
-            name: "Bulwark",
-            kind: PowerKind::Repair { radius: Fx::from_int(25), hp: 300 },
-            first_ticks: secs(180),
-            cooldown_ticks: secs(180),
-            blind: false,
-            requires: None,
-        }),
-        power_levels: &[
-            Power {
-                name: "Bulwark",
-                kind: PowerKind::Repair { radius: Fx::from_int(25), hp: 375 },
-                first_ticks: secs(180),
-                cooldown_ticks: secs(180),
-                blind: false,
-                requires: None,
-            },
-            Power {
-                name: "Bulwark",
-                kind: PowerKind::Repair { radius: Fx::from_int(25), hp: 450 },
-                first_ticks: secs(180),
-                cooldown_ticks: secs(180),
-                blind: false,
-                requires: None,
-            },
-        ],
+        power: Some(bulwark(75)),
+        power_levels: &[bulwark(70), bulwark(65)],
         units: &[
             GeneralUnit { unit: EU_SHOCK_TROOPERS, replaces: Some(EU_RECON), at: EU_BARRACKS },
             GeneralUnit { unit: EU_ASSAULT_APC, replaces: Some(EU_APC), at: EU_FACTORY },
@@ -3684,65 +3857,23 @@ static GENERALS: [General; 14] = [
             IN_PROTECTOR_I,
             IN_PROTECTOR_II,
             IN_FACTORY_OVERTIME,
-            IN_IGNITION,
+            IN_WILDFIRE,
             IN_INSOURCED,
             IN_LEADERSHIP,
         ],
     },
-    // src: the APA rocket general (the wiki's Red Arrow: Rocket Soldier, Tank Hunter; the alpha's APA_RocketGeneral): the Rocket Tank in place of the Gatling Tank, the Napalm Mortar Squad; power Thunderclap (100 damage, radius 20, recharge 240 s, 5 s before activation).
+    // src: the APA rocket general (the wiki's Red Arrow: Rocket Soldier, Tank Hunter; the alpha's APA_RocketGeneral): the Rocket Tank in place of the Gatling Tank, the Napalm Mortar Squad; power Thunderclap (100 damage, radius 20, recharge 240 s, 5 s before activation, the same at every level).
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
     // steps; the damage of every power is a placeholder (the alpha's are effect assets).
+    // Thunderclap (the wiki: "a shockwave that disables unit movement in the affected area"):
+    // one blast of 100 over 20 that stuns enemy units for 3, 4 and 5 s (placeholders; the
+    // projectile's own `HasStunEffect` is false, so the stun is the wiki's).
     General {
         name: "Red Arrow",
         faction: Faction::Apa,
         modifiers: &[],
-        power: Some(Power {
-            name: "Thunderclap",
-            kind: PowerKind::Barrage {
-                shells: 8,
-                delay_ticks: secs(5),
-                every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
-                damage: 100,
-                bonus: [0, 0, 0, 0],
-                radius: Fx::from_int(6),
-            },
-            first_ticks: secs(240),
-            cooldown_ticks: secs(240),
-            blind: false,
-            requires: None,
-        }),
-        power_levels: &[
-            Power {
-                name: "Thunderclap",
-                kind: PowerKind::Barrage {
-                    shells: 10,
-                    delay_ticks: secs(5),
-                    every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 100,
-                    bonus: [0, 0, 0, 0],
-                    radius: Fx::from_int(6),
-                },
-                first_ticks: secs(240),
-                cooldown_ticks: secs(240),
-                blind: false,
-                requires: None,
-            },
-            Power {
-                name: "Thunderclap",
-                kind: PowerKind::Barrage {
-                    shells: 12,
-                    delay_ticks: secs(5),
-                    every_ticks: 2 * g2_sim::TICKS_PER_SECOND / 10,
-                    damage: 100,
-                    bonus: [0, 0, 0, 0],
-                    radius: Fx::from_int(6),
-                },
-                first_ticks: secs(240),
-                cooldown_ticks: secs(240),
-                blind: false,
-                requires: None,
-            },
-        ],
+        power: Some(thunderclap(3)),
+        power_levels: &[thunderclap(4), thunderclap(5)],
         units: &[
             GeneralUnit { unit: APA_ROCKET_TANK, replaces: Some(APA_GATLING), at: APA_FACTORY },
             GeneralUnit { unit: APA_NAPALM_MORTAR, replaces: None, at: APA_BARRACKS },
@@ -4420,7 +4551,6 @@ mod tests {
     fn power_levels_grow() {
         let strength = |k: &PowerKind| match *k {
             PowerKind::Barrage { shells, damage, radius, .. } => (shells as i64) * damage as i64 * radius.0,
-            PowerKind::Repair { radius, hp } => hp as i64 * radius.0,
             PowerKind::Ambush { count, .. } => count as i64,
             PowerKind::Airstrike { jets, bombs, damage, radius, .. } => {
                 (jets * bombs) as i64 * damage as i64 * radius.0
@@ -4431,6 +4561,10 @@ mod tests {
             }
             PowerKind::Cloak { radius, ticks } => ticks as i64 * radius.0,
             PowerKind::Sabotage { damage } => damage as i64,
+            PowerKind::Field(f) => {
+                let off: i64 = f.allies.iter().chain(&f.enemies).flatten().map(|&(_, p)| (p - 100).abs() as i64).sum();
+                f.radius.0 * (f.damage as i64 + f.hp as i64 + f.ranks as i64 * 100 + f.ticks as i64 * (1 + off))
+            }
         };
         for g in rules().generals {
             let first = g.power.unwrap_or_else(|| panic!("{}: no power", g.name));

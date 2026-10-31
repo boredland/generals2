@@ -83,6 +83,49 @@ fn weapon_lines(label: &str, w: Weapon) -> Vec<Line> {
     out
 }
 
+/// What a unit's special shot, ability and parting blast do, a line each: "R: Nitro, speed
+/// 150% for 5 s, every 30 s".
+pub fn ability_lines(def: &g2_sim::Def) -> Vec<String> {
+    use g2_sim::defs::{AbilityKind, StatusKind};
+    let mut out = Vec::new();
+    if let Some(s) = def.special {
+        let what = match s.blast {
+            Some(b) => format!("bursts for {} within {}", b.damage, b.radius.to_f32().round()),
+            None => format!("{} damage", s.weapon.damage),
+        };
+        out.push(format!(
+            "R: {}, {what} at range {}, every {}",
+            s.name,
+            s.weapon.range.to_f32().round(),
+            seconds(s.cooldown_ticks)
+        ));
+    }
+    if let Some(a) = def.ability {
+        let what = match a.kind {
+            AbilityKind::Boost(st) => {
+                let kind = match st.kind {
+                    StatusKind::Toughness => "damage taken",
+                    StatusKind::Damage => "damage",
+                    StatusKind::Speed => "speed",
+                    StatusKind::Sight => "sight",
+                    StatusKind::Stun => "stunned",
+                };
+                format!("{kind} {}% for {}, every {}", st.percent, seconds(st.ticks), seconds(a.cooldown_ticks))
+            }
+            AbilityKind::Detonate => "self-destruct".to_owned(),
+        };
+        out.push(format!("R: {}, {what}", a.name));
+    }
+    if let Some(b) = def.blast {
+        let mut s = format!("Blows up for {} within {} when destroyed", b.damage, b.radius.to_f32().round());
+        if b.cloud_ticks > 0 {
+            s += &format!(", leaving {} a second for {}", b.cloud_damage, seconds(b.cloud_ticks));
+        }
+        out.push(s);
+    }
+    out
+}
+
 /// The tooltip of build-grid `slot` for the local player and the selection.
 pub fn lines(sim: &Sim, sel: &Selection, slot: Slot) -> Vec<Line> {
     let world = &sim.world;
@@ -118,6 +161,7 @@ pub fn lines(sim: &Sim, sel: &Selection, slot: Slot) -> Vec<Line> {
             if let Some(dep) = def.deploy {
                 out.extend(weapon_lines("Deployed", dep.weapon));
             }
+            out.extend(ability_lines(def).into_iter().map(Line::Info));
             if let Some(c) = def.collector() {
                 out.push(Line::Info(format!("Carries ${} a load", c.capacity)));
             }

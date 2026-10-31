@@ -8,15 +8,16 @@ use g2_rules::rules;
 use g2_sim::world::Event;
 use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World};
 
-/// A GLA mirror on Tournament Desert with 40,000 credits each, Normal (or Easy) in the first
-/// seat against Normal: the first seat's silo stands at 273 s and its strike flies at 694 s,
-/// and it wins at 757 s; Easy loses at 330 s with no silo (measured with Sabotage, Easy's
-/// powers and Normal's gun placement in). Against an APA or EU Normal, on this map or Heartland
-/// Shield, the match ends before the 420 s charge, and on Tournament Urban, Golden Oasis or
-/// Winding River before a silo stands.
+/// A GLA mirror on Heartland Shield with 40,000 credits each, Normal (or Easy) in the first
+/// seat against Normal: in the Normal mirror both silos stand by 284 s and the second seat's
+/// strike flies at 702 s, winning at 789 s. On Tournament Desert (the map before the GLA
+/// tanks had Nitro) the first seat's silo now falls at about 675 s, just short of its 420 s
+/// charge, and neither fires (it fired at 694 s before). Against an APA or EU Normal the
+/// match ends before the charge, and on Tournament Urban, Golden Oasis or Winding River
+/// before a silo stands.
 #[test]
 fn the_normal_ai_builds_and_fires_the_scud_storm() {
-    let map = g2_maps::resolve("gen:Tournament Desert").unwrap();
+    let map = g2_maps::resolve("gen:Heartland Shield").unwrap();
     for level in [AiLevel::Normal, AiLevel::Easy] {
         let player = |ai| PlayerSetup {
             faction: Faction::Gla,
@@ -49,7 +50,7 @@ fn the_normal_ai_builds_and_fires_the_scud_storm() {
             assert!(!built[0], "Easy built a Scud Storm");
         } else {
             assert!(built[0], "Normal built no Scud Storm");
-            assert!(used[0].contains(&1), "Normal never fired it: {:?}", used[0]);
+            assert!(used.iter().any(|s| s.contains(&1)), "no Normal fired it: {used:?}");
         }
     }
 }

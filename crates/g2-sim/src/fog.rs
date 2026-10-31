@@ -167,6 +167,9 @@ pub fn update(visions: &mut [Vision], teams: &[u8], entities: &Entities, rules: 
             continue;
         }
         let r = sight(rules, e.def, e.is_complete(), acquire);
+        // A sight status (the Longbow's Radar Pulse) stretches it.
+        let percent = e.status_percent(crate::defs::StatusKind::Sight);
+        let r = if percent == 100 { r } else { Fx(r.0 * percent as i64 / 100) };
         for (p, v) in visions.iter_mut().enumerate() {
             if allied(p, owner.0 as usize) {
                 v.reveal(e.pos, r);

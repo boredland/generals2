@@ -215,15 +215,32 @@ pub(crate) fn keyboard(
             sim.order(CommandKind::Transform { units: becoming });
         }
     }
-    // R: arm the special shot of the selected units that have one ready; the next left click
-    // on an enemy fires it.
+    // R: the selected units with a ready ability (Nitro, Radar Pulse, a self-destruct) use it at
+    // once; the special shot of those that have one is armed, and the next left click on an
+    // enemy fires it.
     if keys.just_pressed(KeyCode::KeyR) {
         let tick = sim.world.tick();
-        let ready = sel.0.iter().any(|&id| {
-            sim.world.entity(id).is_some_and(|e| {
-                e.owner == Some(sim.local) && rules.def(e.def).special.is_some() && e.special_at <= tick
+        let mine = |e: &&g2_sim::Entity| e.owner == Some(sim.local);
+        let using: Vec<_> = sel
+            .0
+            .iter()
+            .copied()
+            .filter(|&id| {
+                sim.world
+                    .entity(id)
+                    .filter(mine)
+                    .is_some_and(|e| rules.def(e.def).ability.is_some() && e.ability_at <= tick)
             })
+            .collect();
+        let ready = sel.0.iter().any(|&id| {
+            sim.world
+                .entity(id)
+                .filter(mine)
+                .is_some_and(|e| rules.def(e.def).special.is_some() && e.special_at <= tick)
         });
+        if !using.is_empty() {
+            sim.order(CommandKind::Ability { units: using });
+        }
         if ready {
             aim.0 = Some(SPECIAL);
             placing.0 = None;

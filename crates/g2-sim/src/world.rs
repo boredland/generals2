@@ -1,6 +1,6 @@
 use crate::ai::Ai;
 use crate::command::{Command, CommandKind, Reject};
-use crate::defs::{BuildingRole, Class, DefId, Effect, Faction, PowerKind, Rules, UpgradeId};
+use crate::defs::{BuildingRole, Class, DefId, Effect, Faction, PowerKind, Rules, StatusKind, UpgradeId};
 use crate::entity::{
     DeployState, Entities, Entity, EntityId, GatherPhase, Order, PlayerId, Product, Production, Route,
 };
@@ -167,6 +167,23 @@ pub enum Event {
         from: Vec2,
         at: Vec2,
     },
+    /// `player`'s area power in `slot` (`PowerKind::Field`) took effect at `at` over `radius`;
+    /// `hostile` when it touches enemies (damage or a debuff), else it helps the player's own
+    /// units. Its damage is a `Hit` per entity on the same tick. Output only.
+    FieldLanded {
+        player: PlayerId,
+        slot: u8,
+        at: Vec2,
+        radius: Fx,
+        hostile: bool,
+    },
+    /// `player`'s `unit` (a `def`) used its ability (`Def::ability`) at `at`. Output only.
+    AbilityUsed {
+        player: PlayerId,
+        unit: EntityId,
+        def: DefId,
+        at: Vec2,
+    },
 }
 
 /// What sent a shell, for drawing it: the weapon of a unit def (which outlives the shooter,
@@ -177,6 +194,8 @@ pub enum ShellSource {
     Gun { def: DefId, deployed: bool },
     /// `player`'s power in `slot`.
     Power { player: PlayerId, slot: u8 },
+    /// What a destroyed unit of this def set off (`Def::blast`).
+    Blast { def: DefId },
 }
 
 /// An artillery shell in flight. Part of the state hash, except `source`.
@@ -210,6 +229,29 @@ pub struct Cloud {
     pub until: u32,
 }
 
+/// An area power on its way (`PowerKind::Field`): it takes effect at `at` on tick `lands`.
+/// Part of the state hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingField {
+    pub owner: PlayerId,
+    pub slot: u8,
+    pub at: Vec2,
+    pub lands: u32,
+    pub field: crate::defs::Field,
+}
+
+/// A blast on its way (`Def::blast`, or a special shot's): it goes off at `at` on tick
+/// `lands`, for `owner`, as `def`'s. Part of the state hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PendingBlast {
+    pub shooter: EntityId,
+    pub owner: PlayerId,
+    pub def: DefId,
+    pub at: Vec2,
+    pub lands: u32,
+    pub blast: crate::defs::Blast,
+}
+
 pub struct World {
     pub rules: &'static Rules,
     pub map: MapDef,
@@ -238,6 +280,10 @@ pub struct World {
     pub(crate) shells: Vec<ShellInFlight>,
     /// Toxin clouds, in order of creation.
     pub(crate) clouds: Vec<Cloud>,
+    /// Area powers still to take effect, in order of use.
+    pub(crate) fields: Vec<PendingField>,
+    /// Blasts still to go off, in order of setting off.
+    pub(crate) blasts: Vec<PendingBlast>,
     /// What each player sees and has explored (index = player). Updated every tick before
     /// units act, so targeting only ever uses what is visible at the start of the tick.
     pub(crate) visions: Vec<crate::fog::Vision>,
@@ -314,6 +360,8 @@ impl World {
             shots: Vec::new(),
             shells: Vec::new(),
             clouds: Vec::new(),
+            fields: Vec::new(),
+            blasts: Vec::new(),
             visions: setup.players.iter().map(|_| crate::fog::Vision::new(setup.map.width, setup.map.height)).collect(),
             stats: vec![Stats::default(); setup.players.len()],
             checkpoints: Vec::new(),
@@ -397,8 +445,10 @@ impl World {
             revealed_until: None,
             cloaked_until: None,
             special_at: 0,
+            ability_at: 0,
             rally: None,
             route: Route::default(),
+            statuses: Vec::new(),
         }
     }
 
@@ -481,6 +531,11 @@ impl World {
     /// Toxin clouds, active and still to come.
     pub fn clouds(&self) -> &[Cloud] {
         &self.clouds
+    }
+
+    /// Area powers used and still to take effect.
+    pub fn fields(&self) -> &[PendingField] {
+        &self.fields
     }
 
     /// Match totals for player `id`.
@@ -673,7 +728,8 @@ impl World {
         w
     }
 
-    /// `w` as unit `e` fires it: its owner's upgrades, then a rank-3 unit's faster fire.
+    /// `w` as unit `e` fires it: its owner's upgrades, then a rank-3 unit's faster fire, then
+    /// its damage status (a Supply Drop's buff, Faulty Construction's debuff).
     pub(crate) fn unit_weapon(&self, e: &Entity, w: crate::defs::Weapon) -> crate::defs::Weapon {
         let mut w = match e.owner {
             Some(owner) => self.upgraded_weapon(owner, e.def, w),
@@ -681,6 +737,14 @@ impl World {
         };
         if let Some(v) = self.rules.def(e.def).veterancy.filter(|_| self.rank(e) >= 3) {
             w.cooldown_ticks = (w.cooldown_ticks * v.cooldown_percent / 100).max(1);
+        }
+        let percent = e.status_percent(StatusKind::Damage);
+        if percent != 100 {
+            let damage = w.damage * percent / 100;
+            for bonus in &mut w.bonus {
+                *bonus = (w.damage + *bonus) * percent / 100 - damage;
+            }
+            w.damage = damage;
         }
         w
     }
@@ -786,6 +850,8 @@ impl World {
         // Shells fired on earlier ticks land before this tick's shots are applied, so their
         // damage joins the same simultaneous resolution.
         self.land_shells();
+        self.land_blasts();
+        self.land_fields();
         self.poison_clouds();
         self.resolve_shots();
         // After the shots, so a unit hit this tick has its quiet spell restart before it heals.
@@ -801,6 +867,9 @@ impl World {
         self.cleanup();
         // After cleanup, so a superweapon destroyed this tick takes its power with it.
         self.update_power_sites();
+        // Before vision, so a sight status that ends with this step no longer counts; a
+        // status is active on the ticks before `until`, so it goes as the next tick is its end.
+        self.expire_statuses();
         // Last, so the AI and every unit next tick see the state this tick ended in.
         self.update_vision();
         self.tick += 1;
@@ -1228,6 +1297,25 @@ impl World {
                 self.entities.get_mut(*producer).unwrap().rally = Some(at);
                 Ok(())
             }
+            CommandKind::Ability { units } => {
+                let tick = self.tick;
+                let ready: Vec<EntityId> = self
+                    .own_units(player, units, |d| d.ability.is_some())
+                    .map_err(|_| Reject::AbilityNotReady)?
+                    .into_iter()
+                    .filter(|&u| {
+                        let e = self.entities.get(u).unwrap();
+                        e.ability_at <= tick && e.inside.is_none() && !e.stunned()
+                    })
+                    .collect();
+                if ready.is_empty() {
+                    return Err(Reject::AbilityNotReady);
+                }
+                for u in ready {
+                    self.use_ability(u);
+                }
+                Ok(())
+            }
         }
     }
 
@@ -1642,7 +1730,17 @@ impl World {
             return;
         }
         let d = self.rules.def(e.def);
-        let (pos, speed, radius, owner, order) = (e.pos, d.speed(), d.radius, e.owner.unwrap(), e.order);
+        // A speed status scales the unit's own speed and the pace it was given alike, so a
+        // boosted unit in a group pulls ahead.
+        let boost = e.status_percent(StatusKind::Speed);
+        let quicken = |v: Fx| if boost == 100 { v } else { Fx(v.0 * boost as i64 / 100) };
+        let (pos, speed, radius, owner) = (e.pos, quicken(d.speed()), d.radius, e.owner.unwrap());
+        let order = match e.order {
+            Order::Move { target, pace } => Order::Move { target, pace: quicken(pace) },
+            Order::AttackMove { dest, pace, engaged } => Order::AttackMove { dest, pace: quicken(pace), engaged },
+            o => o,
+        };
+        let given = e.order;
         let deploy = d.deploy.map(|mut dep| {
             dep.weapon = self.unit_weapon(e, dep.weapon);
             dep
@@ -1654,6 +1752,12 @@ impl World {
         }
         if let Some(container) = self.entities.get(id).unwrap().inside {
             self.fire_from_inside(id, container);
+            return;
+        }
+        // Stunned: it stays put and holds fire (its gun still reloads), its orders kept for
+        // when it comes round.
+        if self.entities.get(id).unwrap().stunned() {
+            self.entities.get_mut(id).unwrap().route = Route::default();
             return;
         }
         // Setting up and packing up take time, during which the unit neither moves nor fires.
@@ -1841,13 +1945,21 @@ impl World {
             },
             Order::Sortie { .. } => unreachable!("flown by fly_sortie"),
         };
+        // The order keeps the pace it was given, not the one a speed status made of it.
+        let kept = match (new_order, given) {
+            (Order::Move { target, .. }, Order::Move { pace, .. }) => Order::Move { target, pace },
+            (Order::AttackMove { dest, engaged, .. }, Order::AttackMove { pace, .. }) => {
+                Order::AttackMove { dest, pace, engaged }
+            }
+            (o, _) => o,
+        };
         let e = self.entities.get_mut(id).unwrap();
         e.pos = self.map.clamp(new_pos);
         // A route belongs to one goal; a new order or gather phase plans its own.
         if new_order != order {
             e.route = Route::default();
         }
-        e.order = new_order;
+        e.order = kept;
         if new_order == Order::Idle {
             e.home = None;
         }
@@ -1969,8 +2081,9 @@ impl World {
     }
 
     /// Unit `id` fires its special shot `s` at `target`: direct damage against the target's
-    /// armour, joining this tick's shots; the shot then recharges, and like any shot it gives
-    /// a stealth unit away for `STEALTH_REVEAL_TICKS` (the alpha's `StealthDisableOnFire`) and
+    /// armour, joining this tick's shots, or with a `blast` a projectile that sets the blast
+    /// off where the target stood; the shot then recharges, and like any shot it gives a
+    /// stealth unit away for `STEALTH_REVEAL_TICKS` (the alpha's `StealthDisableOnFire`) and
     /// ends a cloaking power's cover. The unit's main gun keeps its own cooldown.
     fn fire_special(&mut self, id: EntityId, target: EntityId, s: crate::defs::Special) {
         let t = self.entities.get(target).unwrap();
@@ -1984,7 +2097,16 @@ impl World {
             e.revealed_until = Some(tick + STEALTH_REVEAL_TICKS);
         }
         e.cloaked_until = None;
-        self.shots.push((id, owner, target, s.weapon.damage_vs(armour), false));
+        match s.blast {
+            None => self.shots.push((id, owner, target, s.weapon.damage_vs(armour), false)),
+            // A rod in flight: about a tenth of the way a tick (the alpha's projectile is far
+            // faster than a shell), landing at least a tick later.
+            Some(blast) => {
+                let lands = tick + (pos.distance(tpos) / Fx::from_int(10)).floor_int().max(1) as u32;
+                let def = self.entities.get(id).unwrap().def;
+                self.blasts.push(PendingBlast { shooter: id, owner, def, at: tpos, lands, blast });
+            }
+        }
         self.events.push(Event::SpecialFired { shooter: id, target, from: pos, at: tpos });
     }
 
@@ -2020,6 +2142,12 @@ impl World {
             e.revealed_until = Some(tick + STEALTH_REVEAL_TICKS);
         }
         e.cloaked_until = None;
+        if w.suicidal {
+            // The charge goes off with the unit: its blast, set off as it is swept away.
+            self.entities.get_mut(id).unwrap().hp = 0;
+            self.stats[owner.0 as usize].units_lost += 1;
+            return pos;
+        }
         match w.shell {
             None => {
                 let damage = w.damage_vs(armour) + self.garrison_bonus_vs(w.garrison_bonus, target);
@@ -2111,6 +2239,138 @@ impl World {
         if bonus != 0 && self.entities.iter().any(|e| e.inside == Some(target)) { bonus } else { 0 }
     }
 
+    /// Area powers due this tick take effect (`defs::Field`): damage joins this tick's shots,
+    /// statuses, healing and ranks apply at once.
+    fn land_fields(&mut self) {
+        let tick = self.tick;
+        let (due, later): (Vec<_>, Vec<_>) =
+            core::mem::take(&mut self.fields).into_iter().partition(|f| f.lands <= tick);
+        self.fields = later;
+        for p in due {
+            let (f, owner) = (p.field, p.owner);
+            let status = |s: Option<(StatusKind, i32)>| {
+                s.map(|(kind, percent)| crate::defs::StatusEffect { kind, percent, ticks: f.ticks })
+            };
+            for id in self.entities.ids() {
+                let e = self.entities.get(id).unwrap();
+                let d = self.rules.def(e.def);
+                if e.hp <= 0 || e.inside.is_some() || d.flies() || e.pos.distance(p.at) - d.radius > f.radius {
+                    continue;
+                }
+                if self.hostile(owner, e.owner) {
+                    if f.damage > 0 {
+                        self.shots.push((POWER_SOURCE, owner, id, f.damage, true));
+                    }
+                    if d.is_unit() && !(f.vehicles && d.armour == crate::defs::Armour::Infantry) {
+                        let e = self.entities.get_mut(id).unwrap();
+                        for s in f.enemies.into_iter().filter_map(status) {
+                            e.add_status(s, tick);
+                        }
+                    }
+                } else if e.owner == Some(owner) && !d.is_support_jet() {
+                    if d.is_unit() {
+                        self.promote(id, f.ranks);
+                        let e = self.entities.get_mut(id).unwrap();
+                        for s in f.allies.into_iter().filter_map(status) {
+                            e.add_status(s, tick);
+                        }
+                    }
+                    if f.hp > 0 {
+                        let max = self.max_hp(self.entities.get(id).unwrap());
+                        let e = self.entities.get_mut(id).unwrap();
+                        e.hp = (e.hp + f.hp).min(max);
+                    }
+                }
+            }
+            let hostile = f.damage > 0 || f.enemies.iter().any(Option::is_some);
+            self.events.push(Event::FieldLanded { player: owner, slot: p.slot, at: p.at, radius: f.radius, hostile });
+        }
+    }
+
+    /// Unit `id` gains `ranks` veterancy ranks, as far as rank 3: its experience rises to the
+    /// new rank's threshold, with a first rank's extra hit points as a kill would bring them.
+    fn promote(&mut self, id: EntityId, ranks: u8) {
+        let e = self.entities.get(id).unwrap();
+        let Some(v) = self.rules.def(e.def).veterancy.filter(|_| ranks > 0) else { return };
+        let before = self.rank(e);
+        let after = (before + ranks).min(3);
+        if after == before {
+            return;
+        }
+        let (owner, at) = (e.owner, e.pos);
+        let e = self.entities.get_mut(id).unwrap();
+        e.experience = e.experience.max(v.experience[after as usize - 1]);
+        if before == 0 {
+            e.hp += v.health;
+        }
+        if let Some(player) = owner {
+            self.events.push(Event::Promoted { player, unit: id, rank: after, at });
+        }
+    }
+
+    /// Blasts due this tick go off: every live enemy ground unit and building of the blast's
+    /// owner whose edge is within its radius takes its damage against its armour (allies are
+    /// spared), joining this tick's shots; a lingering cloud starts where it has one.
+    fn land_blasts(&mut self) {
+        let tick = self.tick;
+        let (due, later): (Vec<_>, Vec<_>) =
+            core::mem::take(&mut self.blasts).into_iter().partition(|b| b.lands <= tick);
+        self.blasts = later;
+        for p in due {
+            let b = p.blast;
+            self.events.push(Event::Landed { at: p.at, radius: b.radius, source: ShellSource::Blast { def: p.def } });
+            for e in self.entities.iter() {
+                if !self.hostile(p.owner, e.owner) || e.hp <= 0 || e.inside.is_some() {
+                    continue;
+                }
+                let d = self.rules.def(e.def);
+                if d.flies() || e.pos.distance(p.at) - d.radius > b.radius {
+                    continue;
+                }
+                self.shots.push((p.shooter, p.owner, e.id, (b.damage + b.bonus[d.armour as usize]).max(1), true));
+            }
+            if b.cloud_ticks > 0 {
+                let (radius, damage) = (b.cloud_radius, b.cloud_damage);
+                self.clouds.push(Cloud {
+                    owner: p.owner,
+                    at: p.at,
+                    radius,
+                    damage,
+                    from: tick,
+                    until: tick + b.cloud_ticks,
+                });
+            }
+        }
+    }
+
+    /// Unit `id` uses its ability now (`Def::ability`); it recharges from this tick.
+    fn use_ability(&mut self, id: EntityId) {
+        let tick = self.tick;
+        let e = self.entities.get(id).unwrap();
+        let Some(a) = self.rules.def(e.def).ability else { return };
+        let (owner, def, at) = (e.owner.unwrap(), e.def, e.pos);
+        let e = self.entities.get_mut(id).unwrap();
+        e.ability_at = tick + a.cooldown_ticks;
+        match a.kind {
+            crate::defs::AbilityKind::Boost(s) => e.add_status(s, tick),
+            crate::defs::AbilityKind::Detonate => {
+                // Its blast goes off as it is swept away (`cleanup`).
+                e.hp = 0;
+                self.stats[owner.0 as usize].units_lost += 1;
+            }
+        }
+        self.events.push(Event::AbilityUsed { player: owner, unit: id, def, at });
+    }
+
+    /// Statuses ending on the coming tick are dropped as this one closes, so between steps
+    /// (where the AI, the client and the next tick look) every entry left is active.
+    fn expire_statuses(&mut self) {
+        let tick = self.tick;
+        for e in self.entities.iter_mut().filter(|e| !e.statuses.is_empty()) {
+            e.statuses.retain(|s| s.until > tick + 1);
+        }
+    }
+
     /// `player`'s power in `slot` at `at`. A power aims only at ground the player has explored,
     /// so it can't be used to scout, unless it is `blind`. Barrage shells, airstrike bombs and
     /// missiles fly like artillery shells, with no shooter entity (`POWER_SOURCE`), and are
@@ -2143,15 +2403,9 @@ impl World {
                     });
                 }
             }
-            PowerKind::Repair { radius, hp } => {
-                for id in self.entities.ids() {
-                    let e = self.entities.get(id).unwrap();
-                    if e.owner == Some(player) && e.hp > 0 && e.pos.distance(at) <= radius {
-                        let max = self.max_hp(e);
-                        let e = self.entities.get_mut(id).unwrap();
-                        e.hp = (e.hp + hp).min(max);
-                    }
-                }
+            PowerKind::Field(field) => {
+                let lands = self.tick + field.delay_ticks;
+                self.fields.push(PendingField { owner: player, slot, at, lands, field });
             }
             PowerKind::Ambush { def, count } => {
                 // Every squad needs open ground (walkable, no water, cliff or bridge deck within
@@ -2347,7 +2601,8 @@ impl World {
     /// Applies this tick's shots together, so every unit alive at the start of the tick fires
     /// and the outcome does not depend on entity order: two units that shoot each other both
     /// land their hit. `killed` is reported once, by the shot that took the target to zero.
-    /// The target's toughness upgrades scale each hit (at least 1 damage still lands).
+    /// The target's toughness upgrades scale each hit (at least 1 damage still lands), then
+    /// its toughness status (Bulwark).
     fn resolve_shots(&mut self) {
         for (shooter, by, target, damage, splash) in core::mem::take(&mut self.shots) {
             let Some(t) = self.entities.get(target) else { continue };
@@ -2360,6 +2615,8 @@ impl World {
                     .sum()
             });
             let damage = if toughness == 0 { damage } else { (damage * (100 + toughness) / 100).max(1) };
+            let shield = t.status_percent(StatusKind::Toughness);
+            let damage = if shield == 100 { damage } else { (damage * shield / 100).max(1) };
             let tick = self.tick;
             let t = self.entities.get_mut(target).unwrap();
             let was_alive = t.hp > 0;
@@ -2645,6 +2902,13 @@ impl World {
                 continue;
             }
             if depleted || e.hp <= 0 || owner_out {
+                // A unit with a parting blast sets it off as it dies (not as its player leaves).
+                if let (Some(blast), Some(owner), false) = (d.blast, e.owner, owner_out)
+                    && e.hp <= 0
+                {
+                    let (at, def, lands) = (e.pos, e.def, self.tick + 1);
+                    self.blasts.push(PendingBlast { shooter: id, owner, def, at, lands, blast });
+                }
                 self.entities.despawn(id);
             }
         }

@@ -138,6 +138,15 @@ impl World {
             if e.special_at != 0 {
                 h.u64(0x7370_0000_0000 | e.special_at as u64);
             }
+            // Only once an ability has been used, so matches without one hash as before.
+            if e.ability_at != 0 {
+                h.u64(0x6162_0000_0000 | e.ability_at as u64);
+            }
+            // Only while a status is on it, so matches without them hash as before.
+            for s in &e.statuses {
+                h.u64(0x7374_0000_0000_0000 | (s.kind as u64) << 40 | s.until as u64);
+                h.i64(s.percent as i64);
+            }
             // Only for units inside something, so matches without garrisons hash as before.
             if let Some(c) = e.inside {
                 h.u64(0x6761_7272);
@@ -204,6 +213,42 @@ impl World {
             h.i64(c.radius.0);
             h.i64(c.damage as i64);
             h.u64(((c.from as u64) << 32) | c.until as u64);
+        }
+        // Only while an area power is on its way, so matches without them hash as before.
+        for f in &self.fields {
+            let d = f.field;
+            h.u64(0x6669_656c_0000 | (f.owner.0 as u64) << 8 | f.slot as u64);
+            h.i64(f.at.x.0);
+            h.i64(f.at.y.0);
+            h.u64(f.lands as u64);
+            h.i64(d.radius.0);
+            h.u64(((d.delay_ticks as u64) << 32) | d.ticks as u64);
+            h.i64(d.damage as i64);
+            h.i64(d.hp as i64);
+            h.u64(((d.ranks as u64) << 1) | d.vehicles as u64);
+            for (kind, percent) in
+                d.allies.iter().chain(&d.enemies).map(|s| s.map_or((u64::MAX, 0), |(k, p)| (k as u64, p)))
+            {
+                h.u64(kind);
+                h.i64(percent as i64);
+            }
+        }
+        // Only while a blast is on its way, so matches without them hash as before.
+        for b in &self.blasts {
+            id(&mut h, b.shooter);
+            h.u64(0x626c_0000 | (b.owner.0 as u64) << 16 | b.def.0 as u64);
+            h.i64(b.at.x.0);
+            h.i64(b.at.y.0);
+            h.u64(b.lands as u64);
+            let x = b.blast;
+            h.i64(x.damage as i64);
+            for v in x.bonus {
+                h.i64(v as i64);
+            }
+            h.i64(x.radius.0);
+            h.i64(x.cloud_radius.0);
+            h.i64(x.cloud_damage as i64);
+            h.u64(x.cloud_ticks as u64);
         }
         // Only in a mission, so other matches hash as before. What was said is output only.
         if let Some(m) = &self.mission {
