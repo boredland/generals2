@@ -518,6 +518,11 @@ pub enum PowerKind {
     /// Aimed at an enemy building the player can see (the point must fall on it): that
     /// building alone takes `damage` at once. Anything else under the point is refused.
     Sabotage { damage: i32 },
+    /// Each of the player's armed ground units within `radius` of the point gets a holographic
+    /// copy beside it (`Entity::decoy_until`): a unit of its def that takes orders and fires
+    /// like it, dealing no damage, and vanishes after `ticks` or at the first hit. To enemies
+    /// it is a unit like any other.
+    Decoys { radius: Fx, ticks: u32 },
 }
 
 /// An area power acting once, `delay_ticks` after the order, on what stands within `radius`
@@ -746,6 +751,9 @@ fn tuned(rules: &Rules, mut power: Power, perks: &[PerkId]) -> Power {
             kind
         }
         PowerKind::Cloak { radius, ticks } => PowerKind::Cloak { radius, ticks: scale(ticks as i64, strength) as u32 },
+        PowerKind::Decoys { radius, ticks } => {
+            PowerKind::Decoys { radius, ticks: scale(ticks as i64, strength) as u32 }
+        }
         PowerKind::Sabotage { damage } => PowerKind::Sabotage { damage: scale(damage as i64, strength) as i32 },
     };
     power

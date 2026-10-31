@@ -2836,7 +2836,7 @@ static PERKS: [Perk; 117] = [
     ),
     perk(
         "Deep Cover",
-        "Misdirection lasts 25% longer.",
+        "Misdirection's holograms last 25% longer.",
         2,
         500,
         None,
@@ -4013,7 +4013,7 @@ static GENERALS: [General; 14] = [
             TS_LEADERSHIP,
         ],
     },
-    // src: the APA espionage general (the wiki's Blackjack: Saboteurs, Shadow Tank, Urban Assault Squad; the alpha's APA_EspionageGeneral): the Urban Assault Squad in place of the Red Guard, the Dragon Tank, the Shadow Tank in place of the Warlord, the Saboteurs; power Misdirection (radius 15, recharge 240 s; here a cloak over the point).
+    // src: the APA espionage general (the wiki's Blackjack: Saboteurs, Shadow Tank, Urban Assault Squad; the alpha's APA_EspionageGeneral): the Urban Assault Squad in place of the Red Guard, the Dragon Tank, the Shadow Tank in place of the Warlord, the Saboteurs; power Misdirection (radius 15, recharge 240 s; holographic copies of the units there, per the wiki's list of powers: how long they last is a placeholder, the alpha's asset holds only the radius).
     // Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
     // steps; the damage of every power is a placeholder (the alpha's are effect assets).
     General {
@@ -4022,7 +4022,7 @@ static GENERALS: [General; 14] = [
         modifiers: &[],
         power: Some(Power {
             name: "Misdirection",
-            kind: PowerKind::Cloak { radius: Fx::from_int(15), ticks: secs(20) },
+            kind: PowerKind::Decoys { radius: Fx::from_int(15), ticks: secs(20) },
             first_ticks: secs(240),
             cooldown_ticks: secs(240),
             blind: false,
@@ -4031,7 +4031,7 @@ static GENERALS: [General; 14] = [
         power_levels: &[
             Power {
                 name: "Misdirection",
-                kind: PowerKind::Cloak { radius: Fx::from_int(15), ticks: secs(25) },
+                kind: PowerKind::Decoys { radius: Fx::from_int(15), ticks: secs(25) },
                 first_ticks: secs(240),
                 cooldown_ticks: secs(240),
                 blind: false,
@@ -4039,7 +4039,7 @@ static GENERALS: [General; 14] = [
             },
             Power {
                 name: "Misdirection",
-                kind: PowerKind::Cloak { radius: Fx::from_int(20), ticks: secs(30) },
+                kind: PowerKind::Decoys { radius: Fx::from_int(20), ticks: secs(30) },
                 first_ticks: secs(240),
                 cooldown_ticks: secs(240),
                 blind: false,
@@ -4594,7 +4594,7 @@ mod tests {
             PowerKind::Missiles { missiles, damage, radius, cloud_radius, cloud_damage, cloud_ticks, .. } => {
                 missiles as i64 * damage as i64 * radius.0 + cloud_damage as i64 * cloud_ticks as i64 * cloud_radius.0
             }
-            PowerKind::Cloak { radius, ticks } => ticks as i64 * radius.0,
+            PowerKind::Cloak { radius, ticks } | PowerKind::Decoys { radius, ticks } => ticks as i64 * radius.0,
             PowerKind::Sabotage { damage } => damage as i64,
             PowerKind::Field(f) => {
                 let off: i64 = f.allies.iter().chain(&f.enemies).flatten().map(|&(_, p)| (p - 100).abs() as i64).sum();

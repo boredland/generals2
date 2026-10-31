@@ -147,6 +147,10 @@ impl World {
                 h.u64(0x7374_0000_0000_0000 | (s.kind as u64) << 40 | s.until as u64);
                 h.i64(s.percent as i64);
             }
+            // Only for holograms, so matches without them hash as before.
+            if let Some(t) = e.decoy_until {
+                h.u64(0x6465_636f_0000_0000 | t as u64);
+            }
             // Only for units inside something, so matches without garrisons hash as before.
             if let Some(c) = e.inside {
                 h.u64(0x6761_7272);

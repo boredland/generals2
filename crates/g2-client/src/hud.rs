@@ -1366,6 +1366,11 @@ fn update_fields(
                     if let (Some(a), true) = (d.ability, e.owner == Some(sim.local)) {
                         s += &ready(a.name, e.ability_at);
                     }
+                    // Only its owner learns it is a hologram, and how long it has left.
+                    if let (Some(until), true) = (e.decoy_until, e.owner == Some(sim.local)) {
+                        let secs = until.saturating_sub(world.tick()).div_ceil(g2_sim::TICKS_PER_SECOND);
+                        s += &format!("  -  HOLOGRAM {}:{:02}", secs / 60, secs % 60);
+                    }
                     s += &crate::fx::status_text(e, world.tick());
                     if let Some(g) = d.garrison {
                         let n = world.occupants(e.id).len();

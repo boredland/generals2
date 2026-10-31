@@ -129,7 +129,7 @@ impl Icon {
             PowerKind::Airstrike { .. } => Icon::Aircraft,
             PowerKind::Recon { .. } => Icon::Recon,
             PowerKind::Missiles { .. } => Icon::Missile,
-            PowerKind::Cloak { .. } => Icon::Cloak,
+            PowerKind::Cloak { .. } | PowerKind::Decoys { .. } => Icon::Cloak,
             // A charge set in an enemy building: the building mark.
             PowerKind::Sabotage { .. } => Icon::Building,
         }

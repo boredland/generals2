@@ -188,6 +188,39 @@ impl Ai {
                 let weight = |p: Vec2| field.iter().filter(|e| e.pos.distance(p) <= radius).count() as i64;
                 best(&points, &weight).filter(|&(w, _)| w >= 3).map(|(_, p)| p)
             }
+            // Misdirection: in an attack, over our largest group of combat units out in the
+            // field (at least three, away from home) with an armed enemy within 60, so the
+            // holograms draw the enemy's first shots.
+            PowerKind::Decoys { radius, .. } => {
+                let home =
+                    mine.iter().find(|e| world.rules.def(e.def).role() == Some(BuildingRole::CommandCenter))?.pos;
+                let field: Vec<&&Entity> = mine
+                    .iter()
+                    .filter(|e| {
+                        let d = world.rules.def(e.def);
+                        d.is_unit()
+                            && d.weapon().is_some()
+                            && !d.flies()
+                            && e.inside.is_none()
+                            && e.decoy_until.is_none()
+                            && e.pos.distance(home) > Fx::from_int(80)
+                    })
+                    .collect();
+                let armed: Vec<Vec2> = world
+                    .entities()
+                    .filter(|e| {
+                        world.hostile(self.player, e.owner) && strength(world, e) > 0 && world.sees(self.player, e)
+                    })
+                    .map(|e| e.pos)
+                    .collect();
+                let points: Vec<Vec2> = field.iter().map(|e| e.pos).collect();
+                let weight = |p: Vec2| {
+                    let near = field.iter().filter(|e| e.pos.distance(p) <= radius).count() as i64;
+                    let fight = armed.iter().any(|q| q.distance(p) <= Fx::from_int(60));
+                    if fight { near } else { 0 }
+                };
+                best(&points, &weight).filter(|&(w, _)| w >= 3).map(|(_, p)| p)
+            }
             // The superweapon: on the enemy base, at the remembered building with the most
             // building hit points around it within the cloud.
             PowerKind::Missiles { cloud_radius, .. } if power.requires.is_some() => {
@@ -647,8 +680,10 @@ impl Ai {
             .copied()
             .filter(|e| rules.def(e.def).is_unit() && rules.def(e.def).weapon().is_some() && e.inside.is_none())
             .filter(|e| !world.scripted(e.id))
+            .filter(|e| e.decoy_until.is_none())
             .collect();
         let home = cc.map(|c| c.pos).or_else(|| mine.first().map(|e| e.pos));
+        self.send_decoys(world, &mine, out);
         let placed = self.place_guns(world, &army, home, out);
         let army: Vec<_> = army.into_iter().filter(|e| !placed.contains(&e.id)).collect();
         if self.level == AiLevel::Easy {
@@ -1065,6 +1100,22 @@ impl Ai {
         }
         if !ready.is_empty() {
             out.push(CommandKind::Ability { units: ready });
+        }
+    }
+
+    /// Our holograms (Misdirection's) are no army to weigh: once idle, each walks at the
+    /// nearest enemy it sees to draw its fire, else at the enemy base.
+    fn send_decoys(&self, world: &World, mine: &[&Entity], out: &mut Vec<CommandKind>) {
+        let idle: Vec<&&Entity> = mine.iter().filter(|e| e.decoy_until.is_some() && e.order == Order::Idle).collect();
+        let Some(first) = idle.first() else { return };
+        let target = world
+            .entities()
+            .filter(|e| world.hostile(self.player, e.owner) && e.hp > 0 && world.sees(self.player, e))
+            .min_by_key(|e| (e.pos.distance(first.pos), e.id))
+            .map(|e| e.pos)
+            .or_else(|| self.enemy_base(world, first.pos));
+        if let Some(target) = target {
+            out.push(CommandKind::AttackMove { units: idle.iter().map(|e| e.id).collect(), target });
         }
     }
 

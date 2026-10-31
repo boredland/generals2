@@ -146,6 +146,10 @@ pub struct Entity {
     /// lowering entry per kind, in `(kind, raising)` order. Every entry is active: an entry
     /// is dropped as the tick it ends on begins (`World::step`).
     pub statuses: Vec<Status>,
+    /// A hologram (the Misdirection power's): a copy of a real unit of its def that takes
+    /// orders and fires, dealing no damage, until the tick it vanishes, or until it is hit.
+    /// `None` for every real entity.
+    pub decoy_until: Option<u32>,
 }
 
 /// One timed change on an entity: `percent` of normal for its `kind` (`Stun` ignores it),
@@ -362,6 +366,7 @@ mod tests {
             route: Route::default(),
             vel: Vec2::ZERO,
             statuses: Vec::new(),
+            decoy_until: None,
         }
     }
 
