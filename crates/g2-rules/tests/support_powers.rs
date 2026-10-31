@@ -55,14 +55,14 @@ fn ready_at(faction: Faction, slot: usize) -> u32 {
     rules().support_powers(faction).nth(slot - 1).unwrap().first_ticks
 }
 
-/// Every faction's slots: an empty slot 0 without a general, then its support powers. EU and
-/// APA have two each, GLA none; they charge on their own timers and a used one recharges.
+/// Every faction's slots: an empty slot 0 without a general, then its support powers (EU and
+/// GLA three, APA two); they charge on their own timers and a used one recharges.
 #[test]
 fn support_powers_have_their_own_slots_and_timers() {
     let w = World::new(&setup(Faction::Eu, Faction::Gla), rules());
     let names = |p: PlayerId| w.powers_of(p).iter().map(|p| p.map(|p| p.name)).collect::<Vec<_>>();
-    assert_eq!(names(P0), vec![None, Some("Air Raid"), Some("Fuel Air Bomb")]);
-    assert_eq!(names(P1), vec![None, Some("Scud Storm"), Some("GPS Scrambler")]);
+    assert_eq!(names(P0), vec![None, Some("Air Raid"), Some("Fuel Air Bomb"), Some("UAV Spy Drone")]);
+    assert_eq!(names(P1), vec![None, Some("Scud Storm"), Some("GPS Scrambler"), Some("Sabotage")]);
     let w = World::new(&setup(Faction::Apa, Faction::Eu), rules());
     assert_eq!(
         w.powers_of(P0).iter().map(|p| p.map(|p| p.name)).collect::<Vec<_>>(),
@@ -454,4 +454,84 @@ fn firing_ends_a_cloak() {
     }
     assert!(fired, "the rabble fired");
     assert!(!w.hidden(w.entity(rabble).unwrap()), "firing ended the cloak");
+}
+
+/// The UAV Spy Drone, like Spy Sorties, may be aimed into the fog: the drone flies over the
+/// point, its sight explores it, and it leaves without counting as a loss.
+#[test]
+fn the_spy_drone_scouts_the_fog() {
+    let mut w = World::new(&setup(Faction::Eu, Faction::Gla), rules());
+    let enemy = crater_ridge().spawns[1];
+    run_until(&mut w, ready_at(Faction::Eu, 3));
+    assert!(!w.vision(P0).is_explored(enemy));
+    assert_eq!(order(&mut w, P0, CommandKind::Power { slot: 3, at: enemy }), vec![]);
+    let drone = jets(&w, P0);
+    assert_eq!(drone.iter().map(|&id| w.entity(id).unwrap().def).collect::<Vec<_>>(), vec![EU_SPY_DRONE]);
+    for _ in 0..30 * 60 {
+        w.step();
+        if jets(&w, P0).is_empty() {
+            break;
+        }
+    }
+    assert!(w.vision(P0).is_explored(enemy), "the pass explored the enemy start");
+    assert!(jets(&w, P0).is_empty() && w.stats(P0).units_lost == 0, "gone home, no loss");
+}
+
+/// Sabotage needs a visible enemy building under the point: open ground, an enemy unit, its
+/// own building or an unexplored one are refused (and it stays ready). On an enemy supply
+/// center it deals its damage to that building alone, at once: the units around it are
+/// untouched.
+#[test]
+fn sabotage_hits_only_the_enemy_building() {
+    let s = setup(Faction::Gla, Faction::Eu);
+    let mut w = World::new(&s, rules());
+    let ready = ready_at(Faction::Gla, 3);
+    let PowerKind::Sabotage { damage } = rules().support_powers(Faction::Gla).nth(2).unwrap().kind else {
+        panic!("slot 3 is Sabotage")
+    };
+    let cc = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_CC).unwrap();
+    let (cc, cc_at) = (cc.id, cc.pos);
+    let own = w.entities().find(|e| e.owner == Some(P0) && e.def == GLA_CC).unwrap().pos;
+    run_until(&mut w, ready);
+    let sabotage = |w: &mut World, at| order(w, P0, CommandKind::Power { slot: 3, at });
+    assert_eq!(sabotage(&mut w, cc_at), vec![Reject::InvalidTarget], "not seen");
+    // A GLA worker walks up to the EU command center (its sight reaches the centre from 20
+    // away), and the EU dozer to a spot beside the worker, outside the command center.
+    let worker = w.entities().find(|e| e.owner == Some(P0) && e.def == GLA_WORKER).unwrap().id;
+    let watch = cc_at - Vec2::from_int(20, 0);
+    w.submit(P0, CommandKind::Move { units: vec![worker], target: watch });
+    let dozer = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_DOZER).unwrap().id;
+    let beside = cc_at - Vec2::from_int(14, 10);
+    w.submit(P1, CommandKind::Move { units: vec![dozer], target: beside });
+    for _ in 0..30 * 120 {
+        w.step();
+        if w.sees(P0, w.entity(cc).unwrap()) && w.entity(dozer).unwrap().pos.distance(beside) < Fx::from_int(2) {
+            break;
+        }
+    }
+    assert!(w.sees(P0, w.entity(cc).unwrap()), "the worker sees the command center");
+    let dozer_at = w.entity(dozer).unwrap().pos;
+    assert!(w.sees(P0, w.entity(dozer).unwrap()) && dozer_at.distance(cc_at) > w.rules.def(EU_CC).radius);
+    assert_eq!(sabotage(&mut w, own), vec![Reject::InvalidTarget], "its own building");
+    assert_eq!(sabotage(&mut w, cc_at + Vec2::from_int(0, 40)), vec![Reject::InvalidTarget], "open ground");
+    assert_eq!(sabotage(&mut w, dozer_at), vec![Reject::InvalidTarget], "a unit");
+    assert_eq!(w.power_wait(P0, 3), Some(0), "refused, still ready");
+    let (cc_hp, dozer_hp) = (w.entity(cc).unwrap().hp, w.entity(dozer).unwrap().hp);
+    // Off-centre, on the side the worker has explored: anywhere on the building counts.
+    let edge = cc_at - Vec2::new(w.rules.def(EU_CC).radius - Fx::ONE, Fx::ZERO);
+    w.submit(P0, CommandKind::Power { slot: 3, at: edge });
+    let mut hits = Vec::new();
+    for _ in 0..=INPUT_DELAY {
+        w.step();
+        hits.extend(w.events().iter().filter_map(|e| match e {
+            Event::Hit { target, damage, .. } if w.entity(*target).is_some_and(|t| t.owner == Some(P1)) => {
+                Some((*target, *damage))
+            }
+            _ => None,
+        }));
+    }
+    assert_eq!(hits, vec![(cc, damage)], "the command center alone, once");
+    assert_eq!(w.entity(cc).unwrap().hp, cc_hp - damage);
+    assert_eq!(w.entity(dozer).unwrap().hp, dozer_hp, "the dozer beside it is untouched");
+    assert!(w.power_wait(P0, 3).unwrap() > 0, "recharging");
 }

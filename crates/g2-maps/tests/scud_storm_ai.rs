@@ -8,16 +8,15 @@ use g2_rules::rules;
 use g2_sim::world::Event;
 use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World};
 
-/// A GLA mirror on Heartland Shield with 40,000 credits each, Normal (or Easy) in the first
-/// seat against Normal in the second: the second seat's silo stands at 281 s and its strike
-/// flies at 702 s against Normal (measured; against Easy, which builds no silo, it wins at
-/// 410 s first). On Tournament Desert the Normal mirror now ends at 589 s, before either
-/// silo (273 and 271 s) has charged its 420 s: Normal places its guns since, and that mirror
-/// fired at 694 s before. (On Tournament Urban it stood at 862 s and fired at 1,283 s while
-/// the AI walled its war factories in.)
+/// A GLA mirror on Tournament Desert with 40,000 credits each, Normal (or Easy) in the first
+/// seat against Normal: the first seat's silo stands at 273 s and its strike flies at 694 s,
+/// and it wins at 757 s; Easy loses at 330 s with no silo (measured with Sabotage, Easy's
+/// powers and Normal's gun placement in). Against an APA or EU Normal, on this map or Heartland
+/// Shield, the match ends before the 420 s charge, and on Tournament Urban, Golden Oasis or
+/// Winding River before a silo stands.
 #[test]
 fn the_normal_ai_builds_and_fires_the_scud_storm() {
-    let map = g2_maps::resolve("gen:Heartland Shield").unwrap();
+    let map = g2_maps::resolve("gen:Tournament Desert").unwrap();
     for level in [AiLevel::Normal, AiLevel::Easy] {
         let player = |ai| PlayerSetup {
             faction: Faction::Gla,
@@ -49,8 +48,8 @@ fn the_normal_ai_builds_and_fires_the_scud_storm() {
         if level == AiLevel::Easy {
             assert!(!built[0], "Easy built a Scud Storm");
         } else {
-            assert!(built[0] && built[1], "Normal built no Scud Storm: {built:?}");
-            assert!(used[1].contains(&1), "Normal never fired it: {:?}", used[1]);
+            assert!(built[0], "Normal built no Scud Storm");
+            assert!(used[0].contains(&1), "Normal never fired it: {:?}", used[0]);
         }
     }
 }

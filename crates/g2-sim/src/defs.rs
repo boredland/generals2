@@ -361,9 +361,10 @@ pub const PERK_SLOTS: usize = 5;
 
 /// A perk: a permanent, additive bonus a player slots into one of their general's perk slots
 /// before a match. `effects` work like a finished upgrade's from the first tick; `power`
-/// tunes the general's power. `rank` is the general rank it needs, `price` its experience
-/// cost to buy, `requires` the lower tier that must be bought first (the alpha shows all
-/// three).
+/// tunes the general's power; `adds_power` gives the player one more power (the alpha's "drop
+/// pods" perks), after the faction's support powers. `rank` is the general rank it needs,
+/// `price` its experience cost to buy, `requires` the lower tier that must be bought first
+/// (the alpha shows all three).
 #[derive(Clone, Debug)]
 pub struct Perk {
     pub name: &'static str,
@@ -374,6 +375,7 @@ pub struct Perk {
     pub effects: &'static [(DefId, Effect)],
     pub modifiers: &'static [Modifier],
     pub power: Option<PowerTuning>,
+    pub adds_power: Option<Power>,
 }
 
 /// How a perk changes its general's power, in whole percent of normal.
@@ -385,12 +387,13 @@ pub enum PowerTuning {
     Strength { percent: u32 },
 }
 
-/// An active power: a general's, or one of its faction's support powers. Aimed at a point the
-/// player has explored, unless it is `blind` (the alpha's `ShroudBlocksActivation` false: may
-/// aim into the fog), then unavailable for `cooldown_ticks`. The first use is possible
-/// `first_ticks` into the match, or, for a power that `requires` a building, `first_ticks`
-/// after the player's first one of them is finished; while none stands the power is
-/// unavailable, and a new one charges it from the start.
+/// An active power: a general's, one of its faction's support powers, or one a perk adds.
+/// Aimed at a point the player has explored, unless it is `blind` (the alpha's
+/// `ShroudBlocksActivation` false: may aim into the fog), then unavailable for
+/// `cooldown_ticks`. The first use is possible `first_ticks` into the match, or, for a power
+/// that `requires` a building, `first_ticks` after the player's first one of them is
+/// finished; while none stands the power is unavailable, and a new one charges it from the
+/// start.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Power {
     pub name: &'static str,
@@ -439,6 +442,9 @@ pub enum PowerKind {
     /// Own units within `radius` of the point are hidden from the enemy for `ticks`, as
     /// stealth units are: a detector in range sees them, and firing gives them away.
     Cloak { radius: Fx, ticks: u32 },
+    /// Aimed at an enemy building the player can see (the point must fall on it): that
+    /// building alone takes `damage` at once. Anything else under the point is refused.
+    Sabotage { damage: i32 },
 }
 
 /// A per-def change, in whole percent; several for one def multiply.
@@ -572,8 +578,9 @@ impl Rules {
 
 /// Every power a player has, by slot: `general`'s first (slot 0, at the level their `rank`
 /// with it reaches, tuned by `perks`), or `None` in slot 0 without a general power, then
-/// `faction`'s support powers. Perk tunings add up (two -10% cooldown perks make -20%), as
-/// upgrade effects do; they apply to the general's power only.
+/// `faction`'s support powers, then the powers `perks` add, in slotted order. Perk tunings
+/// add up (two -10% cooldown perks make -20%), as upgrade effects do; they apply to the
+/// general's power only.
 pub fn powers(
     rules: &Rules,
     faction: Faction,
@@ -583,6 +590,7 @@ pub fn powers(
 ) -> Vec<Option<Power>> {
     let mut out = vec![general.and_then(|g| general_power(rules.general(g), rank)).map(|p| tuned(rules, p, perks))];
     out.extend(rules.support_powers(faction).map(|&p| Some(p)));
+    out.extend(perks.iter().filter_map(|&k| rules.perk(k).adds_power).map(Some));
     out
 }
 
@@ -639,6 +647,7 @@ fn tuned(rules: &Rules, mut power: Power, perks: &[PerkId]) -> Power {
             kind
         }
         PowerKind::Cloak { radius, ticks } => PowerKind::Cloak { radius, ticks: scale(ticks as i64, strength) as u32 },
+        PowerKind::Sabotage { damage } => PowerKind::Sabotage { damage: scale(damage as i64, strength) as i32 },
     };
     power
 }

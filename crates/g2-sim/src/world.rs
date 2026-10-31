@@ -2250,6 +2250,28 @@ impl World {
                     }
                 }
             }
+            PowerKind::Sabotage { damage } => {
+                // The visible enemy building under the point, nearest its centre first.
+                let target = self
+                    .entities
+                    .iter()
+                    .filter(|e| {
+                        let d = self.rules.def(e.def);
+                        self.hostile(player, e.owner)
+                            && d.is_building()
+                            && e.hp > 0
+                            && e.pos.distance(at) <= d.radius
+                            && self.sees(player, e)
+                    })
+                    .min_by_key(|e| (e.pos.distance(at), e.id))
+                    .map(|e| (e.id, e.pos, self.rules.def(e.def).radius))
+                    .ok_or(Reject::InvalidTarget)?;
+                let (id, pos, radius) = target;
+                self.shots.push((POWER_SOURCE, player, id, damage, false));
+                // No shell flies: the charge goes off in the building, drawn and heard as a
+                // power's blast there.
+                self.events.push(Event::Landed { at: pos, radius, source: ShellSource::Power { player, slot } });
+            }
         }
         self.players[player.0 as usize].power_ready[slot as usize] = Some(self.tick + power.cooldown_ticks);
         self.events.push(Event::PowerUsed { player, slot, at });

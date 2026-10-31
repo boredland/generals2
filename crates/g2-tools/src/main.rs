@@ -7,12 +7,13 @@
 //!   g2-tools artillery LEVEL [--map NAME]             where LEVEL's artillery stands in its fights, against Easy
 //!   g2-tools summary <file.g2rp>                      print the final economy of a replay
 //!   g2-tools maps                                     list importable Generals / Zero Hour maps
-//!   g2-tools alpha DIR [import [OUT]]                 index a 2013 alpha install you own; import decodes it into the client cache
+//!   g2-tools alpha DIR [import [OUT] | dump SUBSTR]   index a 2013 alpha install you own; import decodes it into the client cache, dump prints matching ebx assets' fields
 //!
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` from `maps`.
 //! `--factions` entries may name a general: `eu:bulldog,gla:junkyard`. AI levels: easy,
 //! normal (`--ai`, default easy, applies to every player).
 
+use std::io::Write;
 use std::process::ExitCode;
 use std::time::Instant;
 
@@ -45,7 +46,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] [--ai L] [--map NAME] | bench [--ticks N] [--ai L] [--map NAME] | survey A B [--seeds N] [--map NAME] | generals [--map NAME]... | summary FILE | maps | alpha DIR [import [OUT]]>";
+const USAGE: &str = "usage: g2-tools <verify FILE | record OUT [--ticks N] [--seed S] [--factions A,B] [--ai L] [--map NAME] | bench [--ticks N] [--ai L] [--map NAME] | survey A B [--seeds N] [--map NAME] | generals [--map NAME]... | summary FILE | maps | alpha DIR [import [OUT] | dump SUBSTRING]>";
 
 fn level(s: &str) -> Result<AiLevel, String> {
     match s.to_ascii_lowercase().as_str() {
@@ -269,8 +270,9 @@ fn maps() -> Result<(), String> {
 
 /// Indexes an alpha install and reports what it holds; `import [OUT]` decodes its sounds,
 /// movies, textures and models into the client's cache (default: see
-/// `g2_frostbite::import::default_cache`). The output stays on this machine: it is EA's
-/// content, read from the user's own copy.
+/// `g2_frostbite::import::default_cache`); `dump SUBSTRING` prints the fields of every ebx
+/// asset whose name contains SUBSTRING (case-insensitive), to read gameplay numbers off.
+/// The output stays on this machine: it is EA's content, read from the user's own copy.
 fn alpha(args: &[String]) -> Result<(), String> {
     use g2_frostbite::{Alpha, import, res_type};
     let dir = args.first().filter(|a| !a.starts_with("--")).ok_or(USAGE)?;
@@ -297,8 +299,10 @@ fn alpha(args: &[String]) -> Result<(), String> {
     for (t, n) in &kinds {
         println!("  res {t:08x} {n:6} {}", label(*t));
     }
-    if args.get(1).map(String::as_str) != Some("import") {
-        return Ok(());
+    match args.get(1).map(String::as_str) {
+        Some("import") => {}
+        Some("dump") => return dump(&a, args.get(2).ok_or(USAGE)?),
+        _ => return Ok(()),
     }
     let out = match args.get(2) {
         Some(p) => std::path::PathBuf::from(p),
@@ -311,6 +315,88 @@ fn alpha(args: &[String]) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     print!("{}", report.summary());
     println!("written to {} in {:.0} s", out.display(), t0.elapsed().as_secs_f32());
+    Ok(())
+}
+
+fn dump(a: &g2_frostbite::Alpha, needle: &str) -> Result<(), String> {
+    let needle = needle.to_ascii_lowercase();
+    let matching: Vec<&String> = a.ebx.keys().filter(|n| n.to_ascii_lowercase().contains(&needle)).collect();
+    // External links name a partition by GUID only; reading every partition's header once
+    // turns them into asset names, which is what makes a general's power list readable.
+    let names: std::collections::HashMap<[u8; 16], &str> =
+        a.ebx.keys().filter_map(|n| Some((a.asset(n).ok()?.file_guid, n.as_str()))).collect();
+    let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+    for name in matching {
+        let p = match a.asset(name) {
+            Ok(p) => p,
+            Err(e) => {
+                writeln!(out, "{name}: {e}").map_err(|e| e.to_string())?;
+                continue;
+            }
+        };
+        writeln!(out, "== {name}").map_err(|e| e.to_string())?;
+        let mut seen = vec![false; p.instances.len()];
+        if let Some(i) = p.instances.iter().position(|i| i.guid == p.primary_guid) {
+            seen[i] = true;
+        }
+        if let Some(v) = p.primary() {
+            dump_value(&mut out, &p, &names, v, 1, &mut seen).map_err(|e| e.to_string())?;
+        }
+        writeln!(out).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Prints a value indented by `depth`, following each internal link the first time it is
+/// met (the instances form a graph, often with back links).
+fn dump_value(
+    out: &mut impl Write,
+    p: &g2_frostbite::ebx::Partition,
+    names: &std::collections::HashMap<[u8; 16], &str>,
+    v: &g2_frostbite::ebx::Value,
+    depth: usize,
+    seen: &mut [bool],
+) -> std::io::Result<()> {
+    use g2_frostbite::ebx::{Link, Value};
+    let pad = "  ".repeat(depth);
+    match v {
+        Value::Complex { ty, fields } => {
+            writeln!(out, "{ty}")?;
+            for (k, f) in fields {
+                write!(out, "{pad}{k}: ")?;
+                dump_value(out, p, names, f, depth + 1, seen)?;
+            }
+        }
+        Value::Array(items) if items.is_empty() => writeln!(out, "[]")?,
+        Value::Array(items) => {
+            writeln!(out, "[{}]", items.len())?;
+            for (i, item) in items.iter().enumerate() {
+                write!(out, "{pad}{i}: ")?;
+                dump_value(out, p, names, item, depth + 1, seen)?;
+            }
+        }
+        Value::Link(Link::Null) => writeln!(out, "null")?,
+        Value::Link(Link::External(i)) => match p.imports.get(*i) {
+            Some((file, _)) if names.contains_key(file) => writeln!(out, "-> {}", names[file])?,
+            Some((file, inst)) => writeln!(out, "-> {}/{}", g2_frostbite::hex(file), g2_frostbite::hex(inst))?,
+            None => writeln!(out, "-> import {i}?")?,
+        },
+        Value::Link(Link::Internal(i)) => match p.instances.get(*i) {
+            Some(inst) if !seen[*i] => {
+                seen[*i] = true;
+                write!(out, "#{i} ")?;
+                dump_value(out, p, names, &inst.value, depth, seen)?;
+            }
+            Some(inst) => writeln!(out, "#{i} ({})", inst.value.ty().unwrap_or("?"))?,
+            None => writeln!(out, "#{i}?")?,
+        },
+        Value::String(s) => writeln!(out, "{s:?}")?,
+        Value::Bool(b) => writeln!(out, "{b}")?,
+        Value::Int(i) => writeln!(out, "{i}")?,
+        Value::Float(f) => writeln!(out, "{f}")?,
+        Value::Guid(g) => writeln!(out, "guid {}", g2_frostbite::hex(g))?,
+        Value::Sha1(h) => writeln!(out, "sha1 {}", g2_frostbite::hex(h))?,
+    }
     Ok(())
 }
 
