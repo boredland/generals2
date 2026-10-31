@@ -974,7 +974,10 @@ mod tests {
     }
 
     /// A live peer keeps the link alive by its pings alone, however long neither side has
-    /// anything else to say, and the pings time the round trip.
+    /// anything else to say, and the pings time the round trip. Pongs are answered on each
+    /// side's poll (here every 10 ms), so a pong held back until the next ping would time at
+    /// least `PING_EVERY`; a shared CI runner oversleeping its polls times far less (162 ms on
+    /// macOS), so the bound is the ping interval, not a loopback figure.
     #[test]
     fn pings_keep_a_quiet_link_alive_and_time_it() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -989,7 +992,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         let rtt = near.rtt().expect("a round trip timed");
-        assert!(rtt < Duration::from_millis(100), "{rtt:?} on loopback");
+        assert!(rtt < PING_EVERY, "{rtt:?} on loopback");
     }
 
     /// Addresses as players type them: a name, IPv4 or IPv6, with or without a port.
