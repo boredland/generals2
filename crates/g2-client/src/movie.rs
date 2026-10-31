@@ -237,7 +237,7 @@ mod tests {
                 "alpha",
                 bevy::asset::io::AssetSourceBuilder::platform_default(&cache.0.to_string_lossy(), None),
             )
-            .add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+            .add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_asset::<Image>()
             .init_asset::<Font>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(33)))

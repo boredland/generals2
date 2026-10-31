@@ -33,8 +33,15 @@ pub struct SoundPlugin;
 
 impl Plugin for SoundPlugin {
     fn build(&self, app: &mut App) {
-        app.add_audio_source::<Sound>()
-            .init_resource::<Muted>()
+        // Without bevy's audio (the tests), sounds are still started, so tests can count them,
+        // but never played: each test app opening its own sound device at once crashed
+        // Windows test runs.
+        if app.is_plugin_added::<bevy::audio::AudioPlugin>() {
+            app.add_audio_source::<Sound>();
+        } else {
+            app.init_asset::<Sound>();
+        }
+        app.init_resource::<Muted>()
             .add_systems(Startup, load_sounds)
             // Before the menu applies its queued actions, so each one is heard as a click.
             .add_systems(
@@ -829,13 +836,13 @@ mod tests {
 
     /// Through the real schedule: an order clicks once, a played minute turns into sounds with
     /// no frame starting more than `VOICES_PER_FRAME` of one kind, and muting stops new sounds
-    /// while the match goes on. Counts the `AudioPlayer`s spawned; where no audio device is
-    /// open, bevy leaves them unplayed.
+    /// while the match goes on. Counts the `AudioPlayer`s spawned; the test app has no sound
+    /// device, so they are never played.
     #[test]
     fn a_match_is_heard_until_muted() {
         use bevy::time::TimeUpdateStrategy;
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(33)))
             .insert_resource(Sim::new(crater_ridge(), None, 3, Sim::players([Faction::Eu, Faction::Gla], false)))
             .init_resource::<ButtonInput<KeyCode>>()
@@ -898,7 +905,7 @@ mod tests {
         use crate::alpha::Response;
         use bevy::time::TimeUpdateStrategy;
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)))
             .insert_resource(Sim::new(crater_ridge(), None, 3, Sim::players([Faction::Eu, Faction::Gla], false)))
             .init_resource::<ButtonInput<KeyCode>>()
@@ -967,7 +974,7 @@ mod tests {
     #[test]
     fn a_new_match_clicks_from_its_first_order() {
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .init_resource::<ButtonInput<KeyCode>>()
             .add_plugins((crate::sim::SimPlugin, SoundPlugin));
         let fresh = || {
@@ -1012,7 +1019,7 @@ mod tests {
     fn menu_choices_click_once_and_a_new_match_starts_quiet() {
         use crate::menu::{Act, MenuPlugin, Pending};
         let mut app = App::new();
-        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::audio::AudioPlugin::default()))
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
             .insert_resource(Sim::new(crater_ridge(), None, 3, Sim::players([Faction::Eu, Faction::Gla], false)))
             .init_resource::<crate::input::Selection>()
             .init_resource::<crate::input::Placement>()
@@ -1064,21 +1071,16 @@ mod tests {
         }
         sim.speed = 0;
         let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            AssetPlugin::default(),
-            bevy::audio::AudioPlugin::default(),
-            bevy::input::InputPlugin,
-        ))
-        .insert_resource(sim)
-        .init_resource::<crate::input::Selection>()
-        .init_resource::<crate::input::Placement>()
-        .init_resource::<crate::input::PowerAim>()
-        .init_resource::<crate::view::Mirror>()
-        .init_resource::<crate::settings::Settings>()
-        .init_resource::<crate::profile::Profile>()
-        .add_plugins((crate::sim::SimPlugin, MenuPlugin { blocking: true }, SoundPlugin))
-        .add_systems(Update, crate::input::keyboard.in_set(crate::input::InputSet).run_if(crate::menu::playing));
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), bevy::input::InputPlugin))
+            .insert_resource(sim)
+            .init_resource::<crate::input::Selection>()
+            .init_resource::<crate::input::Placement>()
+            .init_resource::<crate::input::PowerAim>()
+            .init_resource::<crate::view::Mirror>()
+            .init_resource::<crate::settings::Settings>()
+            .init_resource::<crate::profile::Profile>()
+            .add_plugins((crate::sim::SimPlugin, MenuPlugin { blocking: true }, SoundPlugin))
+            .add_systems(Update, crate::input::keyboard.in_set(crate::input::InputSet).run_if(crate::menu::playing));
         let key = |app: &mut App, code: KeyCode, logical: Key| {
             for state in [ButtonState::Pressed, ButtonState::Released] {
                 let window = Entity::PLACEHOLDER;
