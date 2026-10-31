@@ -2,8 +2,8 @@
 //! `rig.rs` plays the alpha's clips on its models: soldiers walk at their unit's pace, shift
 //! their weight standing, raise their guns at what they attack and kick when they fire, and fall
 //! when killed; treads run and wheels roll with the ground they cover; turrets turn to their
-//! target and barrels kick back; a pumpjack nods while its well pays; rotors, fans and radar
-//! feeds turn, cranes and flags swing.
+//! target, barrels lay to the elevation of their shot and kick back; a pumpjack nods while its
+//! well pays; rotors, fans and radar feeds turn, cranes swing and flags fly in the wind.
 //!
 //! A pose is computed, not accumulated: from the sim tick (plus the frame's share of the next)
 //! and a phase per sim entity, so a headless frame shows the same pose on every run. Only the
@@ -15,6 +15,7 @@
 use std::f32::consts::TAU;
 
 use bevy::prelude::*;
+use g2_sim::entity::DeployState;
 use g2_sim::{BuildingRole, EntityId, Order};
 
 use crate::alpha::Action;
@@ -68,6 +69,8 @@ pub struct Pose {
     pub aim: f32,
     /// The turret's bearing from the front; it turns toward `aim` at `TURRET_SPEED`.
     pub turret: f32,
+    /// Radians the gun is laid above level; it moves toward its shot's at `ELEVATE_SPEED`.
+    pub elevation: f32,
     /// Seconds since the gun last fired; large when it hasn't lately.
     pub fired: f32,
     /// Metres the vehicle has driven forward (backing up runs it back).
@@ -77,10 +80,20 @@ pub struct Pose {
     /// A building at work: complete and powered; a derrick, complete on a well with oil left,
     /// since it pays with power or without (`World::update_derricks`).
     pub working: bool,
+    /// Bearing the wind blows toward, from the model's +X toward its -Z (`fx::WIND`).
+    pub wind: f32,
+    /// How hard it blows, 0 to 1 (`fx::gust`).
+    pub gust: f32,
 }
 
 /// Radians a second a turret turns at most, as the alpha's (`rig.rs`).
 const TURRET_SPEED: f32 = 2.0;
+/// Radians a second a gun lays up or down: our own, so a howitzer reaches its longest shot's
+/// 50 degrees in about a second, before its first shell (which takes its 2-6.5 s cooldown).
+const ELEVATE_SPEED: f32 = 0.9;
+/// The steepest a gun lays: about 70 degrees, a howitzer's limit; also the cap on a long
+/// shell's arc.
+pub const MAX_ELEVATION: f32 = 1.2;
 /// Metres a soldier covers per stride cycle (a step with each foot).
 const STRIDE: f32 = 1.6;
 /// Radians a leg swings either way from the hip at a walk.
@@ -111,25 +124,44 @@ pub fn drive(
         let def = world.rules.def(e.def);
         let shot = fire.as_ref().and_then(|f| f.0.get(&r.0)).copied();
         let fired = shot.map_or(1e3, |(tick, _)| now - tick as f32 * tick_secs);
-        let target = crate::rig::aim_point(&sim, r.0).or_else(|| shot.map(|(_, at)| to_world(at)));
+        let aimed = aim_target(&sim, r.0);
+        let target = aimed.map(|(at, _)| at).or_else(|| shot.map(|(_, at)| to_world(at)));
         let aim = target.map(|at| {
             let local = tf.rotation.inverse() * (at - tf.translation);
             local.x.atan2(local.z)
         });
+        // A gun lays for the weapon it has now: packed, a Thunderfist's direct-fire cannon
+        // holds it about level; set up, its howitzer raises it.
+        let weapon = def.weapon_for(e.deploy == DeployState::Deployed);
+        let lift = match (target, weapon) {
+            (Some(at), Some(w)) => {
+                let (here, there) = (tf.translation.with_y(0.0), at.with_y(0.0));
+                let ground = |p: Vec3| sim.ground_y(p.x, p.z);
+                let air = aimed.map_or(0.0, |(_, h)| h);
+                elevation(here.distance(there), ground(there) + air - ground(here), w.shell.map(|s| s.speed.to_f32()))
+            }
+            _ => 0.0,
+        };
         // Forward distance since the last frame; the first frame after spawning covers none.
         let at = tf.translation;
         let forward = tf.rotation * Vec3::Z;
         let travel = d.last.map_or(0.0, |before| (at - before).dot(forward));
         d.last = Some(at);
         // A turret seen for the first time is already on its target (a frame rendered mid-
-        // fight); after that it swings at its turn rate over the sim time passed.
+        // fight), and its gun laid; after that they swing at their rates over the sim time
+        // passed.
         let want = aim.unwrap_or(0.0);
-        let turret = match d.seen {
-            None => want,
+        let (turret, elevation) = match d.seen {
+            None => (want, lift),
             Some(then) => {
-                let step = TURRET_SPEED * (now - then).max(0.0);
+                let secs = (now - then).max(0.0);
+                let step = TURRET_SPEED * secs;
                 let delta = (want - d.pose.turret + std::f32::consts::PI).rem_euclid(TAU) - std::f32::consts::PI;
-                d.pose.turret + delta.clamp(-step, step)
+                let lay = ELEVATE_SPEED * secs;
+                (
+                    d.pose.turret + delta.clamp(-step, step),
+                    d.pose.elevation + (lift - d.pose.elevation).clamp(-lay, lay),
+                )
             }
         };
         d.seen = Some(now);
@@ -157,18 +189,52 @@ pub fn drive(
                 }
                 _ => e.powered,
             };
+        let wind = tf.rotation.inverse() * crate::fx::WIND;
         d.pose = Pose {
             t: now + d.phase,
             pace,
             aiming,
             aim: want,
             turret,
+            elevation,
             fired,
             travel: d.pose.travel + travel,
             unit: def.is_unit(),
             working,
+            wind: (-wind.z).atan2(wind.x),
+            gust: crate::fx::gust(now),
         };
     }
+}
+
+/// What entity `id` attacks, by its order: where it stands and how high it flies.
+fn aim_target(sim: &Sim, id: EntityId) -> Option<(Vec3, f32)> {
+    let target = match sim.world.entity(id)?.order {
+        Order::Attack { target } => Some(target),
+        Order::AttackMove { engaged, .. } => engaged,
+        _ => None,
+    }?;
+    let t = sim.world.entity(target)?;
+    Some((to_world(t.pos), crate::view::flight_height(sim.world.rules.def(t.def))))
+}
+
+/// Radians above level a gun lays to hit a point `run` away across the ground and `rise` above
+/// its own ground: for a shell flying `speed` a tick across the ground, the angle it leaves on
+/// the arc `fx.rs` draws for its flight time (as the sim counts it, `World::fire`), so the
+/// barrel points along the shell's first stretch; for direct fire, the line from muzzle to
+/// target, as the tracer runs. Never below level nor past `MAX_ELEVATION`.
+pub fn elevation(run: f32, rise: f32, speed: Option<f32>) -> f32 {
+    let slope = match speed {
+        Some(v) => {
+            // The sim lands a shell after `floor(run / speed)` ticks, at least one; the view
+            // draws it from the tick it was fired, one more.
+            let ticks = (run / v.max(1e-3)).floor().max(1.0) + 1.0;
+            let secs = ticks / g2_sim::TICKS_PER_SECOND as f32;
+            crate::fx::launch_slope(run, secs, rise + crate::fx::SHELL_LAND - crate::fx::SHELL_MUZZLE)
+        }
+        None => (rise + crate::fx::TRACER_HIT - crate::fx::TRACER_MUZZLE) / run.max(1.0),
+    };
+    slope.atan().clamp(0.0, MAX_ELEVATION)
 }
 
 /// Puts every moving part where its root's `Pose` has it, and a tread on the mesh of its run.
@@ -212,11 +278,13 @@ pub fn place(motion: Motion, rest: &Transform, p: &Pose) -> Transform {
         }
         Motion::Nod { .. } | Motion::Ride { .. } => *rest,
         Motion::Turret(pivot) => turn(rest, pivot, Quat::from_rotation_y(p.turret)),
-        Motion::Barrel(pivot) => {
+        Motion::Barrel { pivot, trunnion } => {
+            // Back along the bore, then laid about the trunnion, then turned with the turret.
             let back = Transform { translation: rest.translation - Vec3::Z * KICK * kick(p.fired), ..*rest };
-            turn(&back, pivot, Quat::from_rotation_y(p.turret))
+            let laid = turn(&back, trunnion, Quat::from_rotation_x(-p.elevation));
+            turn(&laid, pivot, Quat::from_rotation_y(p.turret))
         }
-        Motion::Recoil => Transform { translation: rest.translation - Vec3::Z * KICK * kick(p.fired), ..*rest },
+        Motion::Flag { pole, k, len } => flag(rest, pole, k, len, p),
         Motion::Wheel(radius) => {
             Transform { rotation: Quat::from_rotation_x((p.travel / radius).rem_euclid(TAU)) * rest.rotation, ..*rest }
         }
@@ -231,6 +299,23 @@ fn turn(tf: &Transform, pivot: Vec3, q: Quat) -> Transform {
         return *tf;
     }
     Transform { translation: pivot + q * (tf.translation - pivot), rotation: q * tf.rotation, scale: tf.scale }
+}
+
+/// Segment `k` of a flag on a pole through `pole`, each segment `len` long: a chain from the
+/// pole streaming downwind (`Pose::wind`), every joint swinging a little further than the one
+/// before it in a wave that runs out to the fly, faster and wider in a gust; in a lull the
+/// cloth sags toward the pole.
+fn flag(rest: &Transform, pole: Vec3, k: u8, len: f32, p: &Pose) -> Transform {
+    let rate = 4.0 + 5.0 * p.gust;
+    let swing = 0.12 + 0.22 * p.gust;
+    let sag = Quat::from_rotation_z(-(1.0 - p.gust) * 0.7);
+    let joint = |j: u8| {
+        let yaw = p.wind + swing * (j as f32 + 1.0) * (p.t * rate - j as f32 * 0.9).sin();
+        Quat::from_rotation_y(yaw) * sag
+    };
+    let start = (0..k).fold(pole, |at, j| at + joint(j) * Vec3::X * len);
+    let q = joint(k);
+    Transform { translation: start + q * Vec3::X * (len / 2.0), rotation: q * rest.rotation, scale: rest.scale }
 }
 
 /// How far back a gun is, as a share of `KICK`, `s` seconds after it fired: all the way at
@@ -378,7 +463,7 @@ mod tests {
             let at = place(p.motion, &rest, &still);
             match p.motion {
                 Motion::Spin { .. } => assert_eq!(place(p.motion, &rest, &idle), rest, "{p:?} turns idle"),
-                Motion::Slew { .. } => {}
+                Motion::Slew { .. } | Motion::Flag { .. } => {}
                 Motion::Soldier { limb: Limb::Body | Limb::Rifle | Limb::Launcher, .. } => {
                     assert!((at.translation - rest.translation).length() < 0.06, "{p:?} shifts too far: {at:?}");
                 }
@@ -427,6 +512,94 @@ mod tests {
         assert!(quarter.z > 0.99, "rolled forward: {quarter:?}");
         let back = top(place(wheel.motion, &rest, &pose(-radius * std::f32::consts::FRAC_PI_2)));
         assert!(back.z < -0.99, "rolled back: {back:?}");
+    }
+
+    /// A shell's gun lays higher the further its shot, from about level close in up to the
+    /// steepest it can go, and never past it; a direct-fire gun lays along the line to its
+    /// target, about level on flat ground. Every artillery def's longest shot is laid steeper
+    /// than its shortest, and a howitzer's longest is the steep lob the footage shows.
+    #[test]
+    fn barrel_elevation_rises_with_range_within_limits() {
+        let rules = g2_rules::rules();
+        let mut guns = 0;
+        for def in rules.defs.iter() {
+            let Some(shell) = def.weapon_for(true).and_then(|w| w.shell.map(|s| (w, s))) else { continue };
+            let (w, s) = shell;
+            let v = Some(s.speed.to_f32());
+            let mut last = 0.0;
+            let near = s.min_range.to_f32().max(4.0);
+            for k in 0..=10 {
+                let run = near + (w.range.to_f32() - near) * k as f32 / 10.0;
+                let e = elevation(run, 0.0, v);
+                assert!((0.0..=MAX_ELEVATION).contains(&e), "{}: {e} at {run}", def.name);
+                assert!(e >= last - 0.02, "{}: {e} at {run} below {last}", def.name);
+                last = e;
+            }
+            assert!(elevation(w.range.to_f32(), 0.0, v) > elevation(near, 0.0, v) + 0.2, "{}", def.name);
+            guns += 1;
+        }
+        assert!(guns >= 5, "the howitzers, Thunderfist, Sunstorm, toxin and rocket artillery: {guns}");
+        let howitzer = rules.def(rules.find("EU Howitzer").unwrap()).weapon().unwrap();
+        let lob = elevation(howitzer.range.to_f32(), 0.0, howitzer.shell.map(|s| s.speed.to_f32()));
+        assert!((0.6..=MAX_ELEVATION).contains(&lob), "a howitzer lobs its longest shot: {lob}");
+        assert!(elevation(1e4, 0.0, Some(0.5)) <= MAX_ELEVATION, "capped");
+        assert!(elevation(40.0, 0.0, None) < 0.05, "a tank's gun about level");
+        assert!(elevation(20.0, 16.5, None) > 0.6, "raised at a helicopter overhead");
+        assert_eq!(elevation(30.0, -20.0, None), 0.0, "never below level");
+    }
+
+    /// A laid barrel pitches up about its breech, its muzzle rising by its length times the
+    /// sine of the elevation, and still turns with the turret; firing kicks it back along its
+    /// bore. The breech stays where it was.
+    #[test]
+    fn a_laid_barrel_pitches_about_its_breech() {
+        let def = g2_rules::rules().defs.iter().find(|d| d.name == "APA Thunderfist").unwrap();
+        let parts = crate::models::parts_for(def, Some(g2_sim::Faction::Apa));
+        let barrel = parts.iter().find(|p| matches!(p.motion, Motion::Barrel { .. })).unwrap();
+        let Motion::Barrel { trunnion, .. } = barrel.motion else { unreachable!() };
+        let rest = barrel.transform();
+        let len = barrel.size.z;
+        let laid = Pose { elevation: 0.8, fired: 1e3, ..Pose::default() };
+        let at = place(barrel.motion, &rest, &laid);
+        let muzzle = |tf: Transform| tf.translation + tf.rotation * Vec3::Z * len / 2.0;
+        let breech = |tf: Transform| tf.translation - tf.rotation * Vec3::Z * len / 2.0;
+        assert!((muzzle(at).y - muzzle(rest).y - len * 0.8f32.sin()).abs() < 1e-3);
+        assert!(breech(at).distance(trunnion) < 1e-3, "{} vs {trunnion}", breech(at));
+        let fired = place(barrel.motion, &rest, &Pose { fired: 0.0, ..laid });
+        let back = at.translation - fired.translation;
+        assert!((back.length() - KICK).abs() < 1e-3 && back.y > 0.0, "kicked back along the bore: {back}");
+    }
+
+    /// A flag's segments join end to end from the pole and fly downwind, out toward where the
+    /// wind blows; they move from one moment to the next, and the same moment gives the same
+    /// cloth.
+    #[test]
+    fn flags_fly_downwind_in_one_piece() {
+        let def = g2_rules::rules().defs.iter().find(|d| d.name == "EU Barracks").unwrap();
+        let parts = crate::models::parts_for(def, Some(g2_sim::Faction::Eu));
+        let cloth: Vec<&Part> = parts.iter().filter(|p| matches!(p.motion, Motion::Flag { .. })).collect();
+        assert!(cloth.len() >= 4, "the yard flag and the masts' are cloth strips");
+        for wind in [0.0, 1.0, -2.5] {
+            let p = Pose { t: 7.0, wind, gust: 0.8, ..Pose::default() };
+            let mut end: Option<Vec3> = None;
+            let first = cloth[0].motion;
+            let same_pole = |c: &&&Part| matches!((c.motion, first), (Motion::Flag { pole: a, .. }, Motion::Flag { pole: b, .. }) if a == b);
+            for part in cloth.iter().filter(same_pole) {
+                let Motion::Flag { pole, k, len } = part.motion else { unreachable!() };
+                let tf = place(part.motion, &part.transform(), &p);
+                let dir = tf.rotation * Vec3::X;
+                let start = tf.translation - dir * len / 2.0;
+                assert!(start.distance(end.unwrap_or(pole)) < 1e-3, "segment {k} joins the last");
+                end = Some(tf.translation + dir * len / 2.0);
+                let downwind = Vec3::new(wind.cos(), 0.0, -wind.sin());
+                assert!(dir.with_y(0.0).normalize().dot(downwind) > 0.5, "segment {k} flies downwind: {dir}");
+            }
+            assert!(end.is_some());
+        }
+        let flag = cloth[cloth.len() - 1];
+        let at = |t: f32| place(flag.motion, &flag.transform(), &Pose { t, gust: 0.5, ..Pose::default() });
+        assert_ne!(at(1.0), at(1.3), "it waves");
+        assert_eq!(at(1.0), at(1.0));
     }
 
     /// A derrick's pumpjack stands still unless its well is paying, and nodding, the rod rides

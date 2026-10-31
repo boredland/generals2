@@ -194,6 +194,9 @@ impl Plugin for ViewPlugin {
                 crate::procanim::pose_parts,
                 crate::procanim::lay_bodies,
                 crate::fx::setup.run_if(crate::menu::scene_start),
+                crate::birds::setup.run_if(crate::menu::scene_start),
+                // Before the shots are drained, so the bangs scatter the birds.
+                crate::birds::fly,
                 spawn_effects,
                 crate::fx::age,
                 crate::fx::face_camera,
@@ -576,6 +579,7 @@ fn spawn_effects(
     mut hits: ResMut<crate::sim::Hits>,
     roots: Query<&Transform, With<SimRef>>,
     ambient: Query<(), With<crate::fx::Ambient>>,
+    camera: Query<&crate::camera::RtsCamera>,
 ) {
     let (Some(palette), Some(mut living)) = (palette, living) else { return };
     if let Some(mut aftermath) = aftermath {
@@ -600,6 +604,7 @@ fn spawn_effects(
         &|name| assets.alpha.contains_key(name),
         &root,
         ambient.iter().count(),
+        camera.iter().next().map(|c| c.pivot),
     );
 }
 

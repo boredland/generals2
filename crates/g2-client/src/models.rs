@@ -95,7 +95,7 @@ pub enum Motion {
         pivot: Vec3,
         rate: f32,
     },
-    /// Swings to and fro by up to `swing` about a vertical axis through `pivot`: cranes, flags.
+    /// Swings to and fro by up to `swing` about a vertical axis through `pivot`: cranes.
     Slew {
         pivot: Vec3,
         swing: f32,
@@ -116,10 +116,22 @@ pub enum Motion {
     },
     /// Turns with the turret, toward the target, about a vertical axis through this point.
     Turret(Vec3),
-    /// A gun barrel: turns with the turret about this point and kicks back when it fires.
-    Barrel(Vec3),
-    /// A fixed gun (a casemate's): kicks back when it fires.
-    Recoil,
+    /// A gun barrel lying level at rest: it pitches up about a horizontal axis across the
+    /// model through `trunnion` to the elevation of its shot, kicks back along its bore when it
+    /// fires, and turns toward the target about a vertical axis through `pivot` (its turret's
+    /// ring; a casemate gun's own breech, so it traverses in its mount).
+    Barrel {
+        pivot: Vec3,
+        trunnion: Vec3,
+    },
+    /// Segment `k` (counted from the pole) of a cloth flag streaming downwind from a pole
+    /// through `pole` (the flag's centre height), each segment `len` long: the segments ripple
+    /// in a wave running out to the fly, which the wind's gusts swell and ease.
+    Flag {
+        pole: Vec3,
+        k: u8,
+        len: f32,
+    },
     /// A track band, whose cleats run with the distance the vehicle covers.
     Tread,
     /// A wheel of this radius, rolling with the distance the vehicle covers.
@@ -141,7 +153,8 @@ impl Motion {
             Motion::Nod { pivot, swing, rate } => Motion::Nod { pivot: pivot * s, swing, rate },
             Motion::Ride { pivot, swing, rate } => Motion::Ride { pivot: pivot * s, swing, rate },
             Motion::Turret(pivot) => Motion::Turret(pivot * s),
-            Motion::Barrel(pivot) => Motion::Barrel(pivot * s),
+            Motion::Barrel { pivot, trunnion } => Motion::Barrel { pivot: pivot * s, trunnion: trunnion * s },
+            Motion::Flag { pole, k, len } => Motion::Flag { pole: pole * s, k, len: len * s },
             Motion::Wheel(radius) => Motion::Wheel(radius * s),
             Motion::Soldier { k, feet, limb } => Motion::Soldier { k, feet: feet * s, limb },
             m => m,
@@ -178,6 +191,25 @@ fn cyl(slot: Slot, at: Vec3, size: Vec3) -> Part {
 /// Box resting on `y0`, centred at `(x, z)`.
 fn block(slot: Slot, x: f32, z: f32, y0: f32, w: f32, h: f32, d: f32) -> Part {
     bx(slot, Vec3::new(x, y0 + h / 2.0, z), Vec3::new(w, h, d))
+}
+
+/// `p` as a gun barrel lying along +Z: it pitches about its breech (its back end) and turns
+/// with the turret about `pivot`; with no turret (`None`) it traverses about its breech.
+fn gun(p: Part, pivot: Option<Vec3>) -> Part {
+    let trunnion = Vec3::new(p.at.x, p.at.y, p.at.z - p.size.z / 2.0);
+    p.with(Motion::Barrel { pivot: pivot.unwrap_or(trunnion), trunnion })
+}
+
+/// A team-coloured flag on a pole at `(x, z)`: `n` cloth segments `len` long, the cloth `h`
+/// tall with its centre `y` high, laid out along +X at rest and streaming downwind in play
+/// (`Motion::Flag`). Each segment is a little longer than its step, so the joints stay closed
+/// as the cloth folds.
+fn flag(parts: &mut Vec<Part>, x: f32, z: f32, y: f32, h: f32, len: f32, n: u8) {
+    let pole = Vec3::new(x, y, z);
+    for k in 0..n {
+        let at = pole + Vec3::X * len * (k as f32 + 0.5);
+        parts.push(bx(Slot::Team, at, Vec3::new(len * 1.15, h, 0.08)).with(Motion::Flag { pole, k, len }));
+    }
 }
 
 /// Deterministic small hash for greeble placement (no RNG needed, just variety).
@@ -324,12 +356,14 @@ fn tier(parts: &mut Vec<Part>, x: f32, z: f32, y0: f32, w: f32, d: f32, h: f32, 
     y0 + h
 }
 
-/// Antenna mast: pole, crossbar and a warning light on top. Sized to read at the Close zoom
-/// (about 12 pixels a metre): a pole under 0.3 m was a pixel or two wide and vanished.
+/// Antenna mast: pole, crossbar, a team flag flying above the crossbar and a warning light on
+/// top. Sized to read at the Close zoom (about 12 pixels a metre): a pole under 0.3 m was a
+/// pixel or two wide and vanished.
 fn mast(parts: &mut Vec<Part>, x: f32, z: f32, y: f32) {
     parts.push(cyl(Slot::Dark, Vec3::new(x, y + 2.4, z), Vec3::new(0.45, 4.8, 0.45)));
     parts.push(bx(Slot::Dark, Vec3::new(x, y + 3.6, z), Vec3::new(3.0, 0.28, 0.28)));
     parts.push(part(Prim::Sphere, Slot::Team, Vec3::new(x, y + 5.0, z), Vec3::splat(0.75)));
+    flag(parts, x, z, y + 4.2, 0.7, 0.5, 3);
 }
 
 /// A radar dish on a pedestal: a wide bowl with a dark face inside its rim, so it reads as a
@@ -509,7 +543,7 @@ fn battle_bunker(p: &mut Vec<Part>, r: f32) {
 fn turret(p: &mut Vec<Part>, faction: Faction, r: f32) {
     let w = r * 1.6;
     let mount = Motion::Turret(Vec3::ZERO);
-    let gun = Motion::Barrel(Vec3::ZERO);
+    let mounted = Some(Vec3::ZERO);
     p.push(block(Slot::Concrete, 0.0, 0.0, 0.0, w, 0.3, w));
     match faction {
         Faction::Eu => {
@@ -518,7 +552,7 @@ fn turret(p: &mut Vec<Part>, faction: Faction, r: f32) {
             p.push(block(Slot::Panel, 0.0, 0.0, 2.0, w * 0.5, 0.8, w * 0.6).with(mount));
             p.push(block(Slot::Team, 0.0, -w * 0.05, 2.8, w * 0.45, 0.12, w * 0.3).with(mount));
             for x in [-0.15, 0.15] {
-                p.push(block(Slot::Dark, x * w, w * 0.45, 2.25, 0.18, 0.18, w * 0.65).with(gun));
+                p.push(gun(block(Slot::Dark, x * w, w * 0.45, 2.25, 0.18, 0.18, w * 0.65), mounted));
             }
             hazard_trim(p, w * 0.75, w * 0.75, 1.68);
         }
@@ -526,7 +560,7 @@ fn turret(p: &mut Vec<Part>, faction: Faction, r: f32) {
             p.push(cyl(Slot::Hull, Vec3::new(0.0, 1.0, 0.0), Vec3::new(w * 0.8, 1.4, w * 0.8)));
             p.push(cyl(Slot::Panel, Vec3::new(0.0, 1.95, 0.0), Vec3::new(w * 0.6, 0.5, w * 0.6)));
             p.push(block(Slot::Team, 0.0, 0.0, 2.2, w * 0.4, 0.12, w * 0.4).with(mount));
-            p.push(block(Slot::Dark, 0.0, w * 0.4, 1.75, 0.45, 0.45, w * 0.35).with(gun));
+            p.push(gun(block(Slot::Dark, 0.0, w * 0.4, 1.75, 0.45, 0.45, w * 0.35), mounted));
             for x in [-0.28, 0.28] {
                 p.push(cyl(Slot::Crate(4), Vec3::new(x * w, 0.9, -w * 0.32), Vec3::new(0.7, 1.2, 0.7)));
             }
@@ -670,11 +704,9 @@ fn barracks(p: &mut Vec<Part>, faction: Faction, w: f32) {
     let top = tier(p, 0.0, -w * 0.1, 3.6, w * 0.68, w * 0.42, 1.5, Slot::Panel);
     roof(p, faction, 0.0, -w * 0.1, w * 0.68, w * 0.42, top);
     p.push(block(accent, 0.0, w * 0.38, 0.4, w * 0.9, 0.7, 0.22));
-    // Flag on the yard corner, stirring in the wind about its pole.
+    // Flag on the yard corner, flying from its pole.
     p.push(block(Slot::Dark, w * 0.42, w * 0.36, 0.4, 0.26, 3.2, 0.26));
-    let pole = Vec3::new(w * 0.42, 0.0, w * 0.36);
-    let stir = Motion::Slew { pivot: pole, swing: 0.35, rate: 1.3 };
-    p.push(block(Slot::Team, w * 0.42 + 0.8, w * 0.36, 2.9, 1.5, 0.85, 0.1).with(stir));
+    flag(p, w * 0.42, w * 0.36, 3.1, 0.85, 0.45, 4);
     if faction != Faction::Eu {
         hazard_trim(p, w * 0.68, w * 0.42, 3.6);
     }
@@ -1173,11 +1205,11 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
         Faction::Eu => {
             // Long flat turret: ring, mantlet, single long gun, cupola and deck stowage.
             let ring = Vec3::new(0.0, 1.5, -l * 0.02);
-            let (turn, gun) = (Motion::Turret(ring), Motion::Barrel(ring));
+            let (turn, mounted) = (Motion::Turret(ring), Some(ring));
             p.push(cyl(Slot::Dark, ring, Vec3::new(wd * 0.62, 0.22, wd * 0.62)));
             p.push(block(Slot::Panel, 0.0, -l * 0.02, 1.65, wd * 0.58, 0.75, l * 0.46).with(turn));
             p.push(block(Slot::Dark, 0.0, l * 0.24, 1.95, wd * 0.3, 0.5, 0.5).with(turn));
-            p.push(block(Slot::Dark, 0.0, l * 0.42, 1.95, 0.24, 0.24, l * 0.5).with(gun));
+            p.push(gun(block(Slot::Dark, 0.0, l * 0.42, 1.95, 0.24, 0.24, l * 0.5), mounted));
             p.push(cyl(Slot::Dark, Vec3::new(0.0, 2.15, -l * 0.12), Vec3::new(0.5, 0.35, 0.5)).with(turn));
             p.push(block(Slot::Team, 0.0, -l * 0.18, 2.05, wd * 0.5, 0.14, l * 0.14).with(turn));
             p.push(block(Slot::Crate(3), wd * 0.22, -l * 0.3, 2.1, 0.7, 0.45, 0.6));
@@ -1187,11 +1219,11 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
         Faction::Apa => {
             // Twin-barrelled turret on a round mount.
             let ring = Vec3::new(0.0, 1.85, -l * 0.02);
-            let (turn, gun) = (Motion::Turret(ring), Motion::Barrel(ring));
+            let (turn, mounted) = (Motion::Turret(ring), Some(ring));
             p.push(cyl(Slot::Panel, ring, Vec3::new(wd * 0.62, 0.85, wd * 0.62)));
             for x in [-0.2, 0.2] {
                 p.push(block(Slot::Dark, x, l * 0.16, 2.15, 0.42, 0.55, 0.5).with(turn));
-                p.push(block(Slot::Dark, x, l * 0.36, 2.15, 0.2, 0.2, l * 0.46).with(gun));
+                p.push(gun(block(Slot::Dark, x, l * 0.36, 2.15, 0.2, 0.2, l * 0.46), mounted));
             }
             p.push(cyl(Slot::Dark, Vec3::new(0.0, 2.45, -l * 0.14), Vec3::new(0.55, 0.4, 0.55)).with(turn));
             p.push(block(Slot::Team, 0.0, -l * 0.14, 2.3, wd * 0.5, 0.15, l * 0.16).with(turn));
@@ -1200,11 +1232,11 @@ fn combat_unit(p: &mut Vec<Part>, faction: Faction, def: &Def, r: f32) {
         Faction::Gla => {
             // Small boxy turret with a scrap plate and salvaged stowage.
             let ring = Vec3::new(0.0, 1.5, -l * 0.06);
-            let (turn, gun) = (Motion::Turret(ring), Motion::Barrel(ring));
+            let (turn, mounted) = (Motion::Turret(ring), Some(ring));
             p.push(cyl(Slot::Dark, ring, Vec3::new(wd * 0.55, 0.2, wd * 0.55)));
             p.push(block(Slot::Panel, 0.0, -l * 0.08, 1.6, wd * 0.5, 0.85, l * 0.34).with(turn));
             p.push(block(Slot::Dark, 0.0, l * 0.14, 1.95, wd * 0.28, 0.5, 0.45).with(turn));
-            p.push(block(Slot::Dark, 0.0, l * 0.32, 1.95, 0.2, 0.2, l * 0.42).with(gun));
+            p.push(gun(block(Slot::Dark, 0.0, l * 0.32, 1.95, 0.2, 0.2, l * 0.42), mounted));
             p.push(block(Slot::Crate(2), wd * 0.2, -l * 0.32, 1.95, 0.85, 0.6, 0.7));
             p.push(block(Slot::Crate(4), -wd * 0.22, -l * 0.3, 1.95, 0.7, 0.5, 0.6));
             p.push(block(Slot::Team, 0.0, -l * 0.16, 2.08, wd * 0.44, 0.14, l * 0.12).with(turn));
@@ -1231,7 +1263,7 @@ fn light_vehicle(p: &mut Vec<Part>, faction: Faction, r: f32) {
             p.push(block(Slot::Glow, 0.0, l * 0.34, 1.35, wd * 0.62, 0.55, 0.1));
             p.push(cyl(Slot::Dark, ring, Vec3::new(wd * 0.42, 0.35, wd * 0.42)));
             p.push(block(Slot::Panel, 0.0, -l * 0.05, 2.25, wd * 0.38, 0.5, l * 0.24).with(Motion::Turret(ring)));
-            p.push(block(Slot::Dark, 0.0, l * 0.16, 2.35, 0.18, 0.18, l * 0.36).with(Motion::Barrel(ring)));
+            p.push(gun(block(Slot::Dark, 0.0, l * 0.16, 2.35, 0.18, 0.18, l * 0.36), Some(ring)));
             p.push(block(Slot::Team, 0.0, -l * 0.22, 1.95, wd * 0.7, 0.15, l * 0.3));
             p.push(block(Slot::Crate(3), -wd * 0.28, -l * 0.36, 1.95, 0.7, 0.5, 0.6));
             hazard_trim(p, wd * 0.82, l * 0.95, 1.9);
@@ -1242,7 +1274,7 @@ fn light_vehicle(p: &mut Vec<Part>, faction: Faction, r: f32) {
             p.push(block(Slot::Team, 0.0, -l * 0.3, 1.45, wd * 0.6, 0.15, l * 0.3));
             p.push(cyl(Slot::Panel, ring, Vec3::new(wd * 0.5, 0.6, wd * 0.5)));
             for (x, y) in [(-0.15, 1.75), (0.15, 1.75), (0.0, 2.0)] {
-                p.push(block(Slot::Dark, x, l * 0.3, y, 0.13, 0.13, l * 0.42).with(Motion::Barrel(ring)));
+                p.push(gun(block(Slot::Dark, x, l * 0.3, y, 0.13, 0.13, l * 0.42), Some(ring)));
             }
             p.push(block(Slot::Dark, 0.0, l * 0.06, 1.95, wd * 0.34, 0.45, 0.4).with(Motion::Turret(ring)));
             p.push(block(Slot::Crate(2), wd * 0.3, -l * 0.36, 1.5, 0.7, 0.5, 0.6));
@@ -1254,16 +1286,16 @@ fn light_vehicle(p: &mut Vec<Part>, faction: Faction, r: f32) {
             p.push(block(Slot::Team, 0.0, l * 0.22, 1.75, wd * 0.8, 0.15, l * 0.3));
             p.push(block(Slot::Crate(1), 0.0, -l * 0.18, 0.55, wd * 0.9, 0.6, l * 0.5));
             p.push(block(Slot::Dark, 0.0, -l * 0.2, 1.15, 0.2, 0.9, 0.2));
-            p.push(block(Slot::Dark, 0.0, -l * 0.05, 1.95, 0.14, 0.14, l * 0.4).with(Motion::Barrel(pintle)));
+            p.push(gun(block(Slot::Dark, 0.0, -l * 0.05, 1.95, 0.14, 0.14, l * 0.4), Some(pintle)));
             p.push(block(Slot::Crate(3), wd * 0.3, -l * 0.38, 1.35, 0.7, 0.55, 0.6));
             p.push(block(Slot::Crate(2), -wd * 0.3, -l * 0.38, 1.35, 0.7, 0.55, 0.6));
         }
     }
 }
 
-/// Self-propelled guns: a long chassis with a big barrel raised for indirect fire. EU: a flat
-/// casemate with hazard trim; APA (Thunderfist): a squat turret on a heavy hull; GLA: an open
-/// truck bed with a scrap-plated gun and three short tubes (the "tri-artillery cannon").
+/// Self-propelled guns: a long chassis with a big barrel that lays for indirect fire. EU: a
+/// flat casemate with hazard trim; APA (Thunderfist): a squat turret on a heavy hull; GLA: an
+/// open truck bed with a scrap-plated gun and three short tubes (the "tri-artillery cannon").
 fn artillery(p: &mut Vec<Part>, faction: Faction, r: f32) {
     let (l, wd) = (r * 2.4, r * 1.35);
     for side in [-1.0, 1.0] {
@@ -1273,19 +1305,15 @@ fn artillery(p: &mut Vec<Part>, faction: Faction, r: f32) {
     p.push(block(Slot::Team, 0.0, l * 0.32, 1.4, wd * 0.74, 0.15, l * 0.22));
     // Spade dug in at the rear.
     p.push(block(Slot::Dark, 0.0, -l * 0.5, 0.6, wd * 0.9, 0.55, 0.3));
-    let raised = |slot: Slot, x: f32, len: f32, thick: f32, motion: Motion| {
-        // Parts have no pitch, so the raised barrel is a stack of short segments, each a little
-        // further forward and higher than the last.
-        (0..3).map(move |k| {
-            let t = k as f32 / 2.0;
-            block(slot, x, -l * 0.05 + len * t, 2.1 + len * t * 0.55, thick, thick, len * 0.4).with(motion)
-        })
+    // A barrel lies level from its breech at the back of the mount; `procanim` lays it.
+    let barrel = |x: f32, len: f32, thick: f32, pivot: Option<Vec3>| {
+        gun(block(Slot::Dark, x, -l * 0.05 + len / 2.0, 2.1, thick, thick, len), pivot)
     };
     match faction {
         Faction::Eu => {
             p.push(block(Slot::Panel, 0.0, -l * 0.14, 1.4, wd * 0.64, 0.95, l * 0.52));
             p.push(block(Slot::Dark, 0.0, l * 0.12, 2.15, wd * 0.34, 0.55, 0.5));
-            p.extend(raised(Slot::Dark, 0.0, l * 0.52, 0.34, Motion::Recoil));
+            p.push(barrel(0.0, l * 0.52, 0.34, None));
             p.push(block(Slot::Crate(3), wd * 0.24, -l * 0.36, 2.45, 0.7, 0.5, 0.6));
             p.push(block(Slot::Crate(1), -wd * 0.24, -l * 0.36, 2.45, 0.7, 0.5, 0.6));
             hazard_trim(p, wd * 0.74, l * 0.95, 1.42);
@@ -1294,7 +1322,7 @@ fn artillery(p: &mut Vec<Part>, faction: Faction, r: f32) {
             let ring = Vec3::new(0.0, 1.95, -l * 0.1);
             p.push(cyl(Slot::Panel, ring, Vec3::new(wd * 0.7, 0.9, wd * 0.7)));
             p.push(block(Slot::Dark, 0.0, l * 0.1, 2.55, wd * 0.38, 0.6, 0.5).with(Motion::Turret(ring)));
-            p.extend(raised(Slot::Dark, 0.0, l * 0.55, 0.4, Motion::Barrel(ring)));
+            p.push(barrel(0.0, l * 0.55, 0.4, Some(ring)));
             p.push(
                 cyl(Slot::Dark, Vec3::new(0.0, 2.65, -l * 0.18), Vec3::new(0.55, 0.4, 0.55)).with(Motion::Turret(ring)),
             );
@@ -1303,7 +1331,7 @@ fn artillery(p: &mut Vec<Part>, faction: Faction, r: f32) {
         Faction::Gla => {
             p.push(block(Slot::Crate(1), 0.0, -l * 0.2, 1.4, wd * 0.7, 0.5, l * 0.5));
             for x in [-0.35, 0.0, 0.35] {
-                p.extend(raised(Slot::Dark, x, l * 0.42, 0.2, Motion::Recoil));
+                p.push(barrel(x, l * 0.42, 0.2, None));
             }
             p.push(block(Slot::Crate(3), wd * 0.25, l * 0.3, 1.4, 0.8, 0.6, 0.7));
             p.push(block(Slot::Crate(4), -wd * 0.25, l * 0.3, 1.4, 0.8, 0.6, 0.7));

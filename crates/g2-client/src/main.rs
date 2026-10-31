@@ -44,6 +44,7 @@ mod alerts;
 mod alpha;
 mod alpha_hud;
 mod audio;
+mod birds;
 mod camera;
 mod feedback;
 mod front;
