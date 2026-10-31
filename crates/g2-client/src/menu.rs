@@ -401,6 +401,27 @@ impl Plugin for MenuPlugin {
                     .in_set(MenuSet)
                     .run_if(resource_exists::<Sim>),
             );
+        app.add_systems(Last, release_forwards_on_exit);
+    }
+}
+
+/// On any app exit (the menu's Quit, closing the window), the router's forward of a hosted
+/// game or a network match goes before the process does.
+fn release_forwards_on_exit(
+    mut exits: MessageReader<AppExit>,
+    sim: Option<ResMut<Sim>>,
+    net: Option<ResMut<crate::lobby::Net>>,
+) {
+    if exits.read().next().is_none() {
+        return;
+    }
+    if let Some(online) = sim.and_then(|s| s.into_inner().online.as_mut()) {
+        online.drop_forward();
+    }
+    if let Some(mut net) = net
+        && let crate::lobby::Net::Hosting(h) = &mut *net
+    {
+        h.drop_forward();
     }
 }
 
@@ -609,7 +630,11 @@ fn apply_one(world: &mut World, act: Act) {
                 ui.paused = false;
                 let mut sim = world.resource_mut::<Sim>();
                 sim.speed = 0;
-                // Leaving a network match ends it: the other player sees the link close.
+                // Leaving a network match ends it: the other player sees the link close, and
+                // the router's forward goes without the frame waiting for the router.
+                if let Some(online) = &mut sim.online {
+                    online.end_forward();
+                }
                 sim.online = None;
             }
             // Online the menu opens over a running match: the clock is shared, so stopping it
@@ -820,11 +845,15 @@ pub(crate) fn swap_world(world: &mut World, sim: Sim) {
     world.resource_mut::<MatchEpoch>().0 += 1;
 }
 
-/// The match is over: freeze it and show the results.
-fn watch_winner(sim: Res<Sim>, mut ui: ResMut<Ui>) {
+/// The match is over: freeze it and show the results. A network match needs the router's
+/// forward no more.
+fn watch_winner(mut sim: ResMut<Sim>, mut ui: ResMut<Ui>) {
     if ui.screen == Screen::Match && sim.world.winner().is_some() {
         ui.screen = Screen::End;
         ui.paused = false;
+        if let Some(online) = &mut sim.online {
+            online.end_forward();
+        }
     }
 }
 
@@ -1718,8 +1747,9 @@ fn lobby(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, net: &crate::lobby::N
     // The chat window's place: what happened, the address to connect to and the port to host on.
     frame(c, rect(52.0, 315.0, 751.0, 462.0), BOX, RUST);
     let mut lines = vec![
-        "Games on this local network appear in the list. HOST opens one for a second player; JOIN takes the \
-         picked game; DIRECT CONNECT reaches a host by its address (and port, 8088 if left out)."
+        "Games on this local network appear in the list. HOST opens one for a second player (and asks your \
+         router to forward its port, for players on the internet); JOIN takes the picked game; DIRECT CONNECT \
+         reaches a host by its address or name, with its port (8088 if left out); IPv6 as [address]:port."
             .to_owned(),
     ];
     lines.extend(ui.lobby.note.as_ref().map(|n| format!("Can't do that: {n}")));
@@ -1825,9 +1855,15 @@ fn net_game(
         "Versus: destroy every building and unit of the other player."
     };
     label(c, kit, about, rect(323.0, 200.0, 535.0, 300.0), 11.0, WHITE, false);
-    // The chat window's place: who came and went, and the rank the local general plays at.
+    // The chat window's place: where the game can be joined from (the host's), who came and
+    // went, and the rank the local general plays at. Lines wrap; the addresses always show, the
+    // rest from the newest back as far as there is room.
     frame(c, rect(78.0, 324.0, 714.0, 469.0), BOX, RUST);
     let own = rows.iter().find(|r| r.own);
+    let addresses = match net {
+        crate::lobby::Net::Hosting(h) => h.addresses(),
+        _ => Vec::new(),
+    };
     let mut lines = net.log();
     if let Some(g) = own.and_then(|r| r.general) {
         let p = profile.progress(g);
@@ -1847,12 +1883,31 @@ fn net_game(
         .to_owned(),
     );
     lines.extend(ui.lobby.note.as_ref().map(|n| format!("Can't do that: {n}")));
-    let shown = lines.len().saturating_sub(7);
-    for (k, l) in lines[shown..].iter().enumerate() {
-        let y = 328.0 + 19.0 * k as f32;
-        let ink = if l.starts_with("Can't") { INK_HOT } else { WHITE };
-        label(c, kit, l, rect(84.0, y, 708.0, y + 19.0), 12.0, ink, false);
-    }
+    // A warning about the forward takes two rows.
+    let room = 7usize.saturating_sub(addresses.iter().map(|&(_, warn)| 1 + warn as usize).sum());
+    let shown = lines.len().saturating_sub(room.max(2));
+    c.spawn(Node {
+        flex_direction: FlexDirection::Column,
+        row_gap: px(3),
+        padding: UiRect::axes(px(6), px(4)),
+        overflow: Overflow::clip(),
+        ..rect(79.0, 325.0, 713.0, 468.0)
+    })
+    .with_children(|t| {
+        for (l, warn) in &addresses {
+            let ink = if *warn {
+                INK_HOT
+            } else if l.starts_with("Internet") {
+                GOLD
+            } else {
+                WHITE
+            };
+            t.spawn(kit.text(l, 12.0, ink, false));
+        }
+        for l in &lines[shown..] {
+            t.spawn(kit.text(l, 12.0, if l.starts_with("Can't") { INK_HOT } else { WHITE }, false));
+        }
+    });
     if host {
         button(c, kit, "START GAME", Act::NetStart, Look::Button, rect(94.0, 509.0, 268.0, 545.0), 16.0);
     } else {
