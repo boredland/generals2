@@ -158,6 +158,9 @@ fn units_inside_survive_a_tunnel_and_die_with_the_last() {
     let mut w = World::new(&setup(), rules());
     let (barracks, a, b) = network(&mut w);
     let squads: Vec<EntityId> = (0..2).map(|_| train(&mut w, P0, barracks, GLA_RABBLE)).collect();
+    // The tanks pass the GLA base on the way and may raze it; a barracks away from the fight
+    // keeps the GLA in the game (a player goes with their last base building).
+    build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(40, 300));
     get_in(&mut w, &squads, a);
     let factory = build(&mut w, P1, EU_FACTORY, Vec2::from_int(150, 120));
     let tanks: Vec<EntityId> = (0..5).map(|_| train(&mut w, P1, factory, EU_AEGIS)).collect();

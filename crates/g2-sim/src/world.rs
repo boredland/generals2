@@ -3236,13 +3236,14 @@ impl World {
             }
             let owner = Some(PlayerId(i as u8));
             let onslaught = self.ai[i].as_ref().is_some_and(|a| a.level() == AiLevel::Onslaught);
-            // Entities killed this tick (hp ≤ 0) are swept by `cleanup` right after. A civilian
-            // building held, or a bunker a unit turned into, is no base: neither keeps a player
-            // in the game.
-            let alive = self.entities.iter().any(|e| {
-                let d = self.rules.def(e.def);
-                e.owner == owner && e.hp > 0 && (d.is_base() || d.is_constructor())
-            });
+            // Entities killed this tick (hp ≤ 0) are swept by `cleanup` right after. Only the
+            // buildings Zero Hour counts keep a player in (`Def::counts_for_victory`): a
+            // constructor or an army left somewhere is swept with the rest, so the match ends
+            // with the base instead of after a search for one hidden unit.
+            let alive = self
+                .entities
+                .iter()
+                .any(|e| e.owner == owner && e.hp > 0 && self.rules.def(e.def).counts_for_victory());
             // The onslaught has no base to lose: it is beaten once its last wave is out and gone.
             p.defeated = if onslaught {
                 crate::onslaught::next_wave(self.tick).is_none()

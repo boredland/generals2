@@ -353,7 +353,10 @@ fn a_scud_storm_strikes_and_poisons() {
     let wait = w.power_wait(P0, 1).unwrap();
     let ready = w.tick() + wait;
     let target = s.map.spawns[1];
-    // The EU dozer waits in the cloud's reach, beyond every missile's blast.
+    // A power plant far from the point keeps the EU in the game once its command center falls
+    // (a player goes with their last base building). The dozer then waits in the cloud's
+    // reach, beyond every missile's blast.
+    build(&mut w, P1, EU_POWER, target - Vec2::from_int(120, 20));
     let dozer = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_DOZER).unwrap().id;
     let edge = target - Vec2::from_int(60, 0);
     w.submit(P1, CommandKind::Move { units: vec![dozer], target: edge });

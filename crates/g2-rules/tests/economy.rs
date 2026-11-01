@@ -1025,11 +1025,11 @@ fn idle_units_guard_their_spot() {
     assert!(w.entity(tank).unwrap().pos.distance(post) <= Fx::from_int(2), "then returned to its post");
 }
 
-/// Elimination: a player without buildings or constructors is defeated and the other wins,
-/// with no surrender involved. Under fog the tank first drives to the enemy start; after that
-/// every target it attacks is one it sees or remembers.
+/// Elimination: a player without base buildings is defeated and the other wins, with no
+/// surrender involved. Under fog the tank first drives to the enemy start; after that every
+/// target it attacks is one it sees or remembers.
 #[test]
-fn destroying_every_building_and_constructor_defeats_a_player() {
+fn destroying_every_base_building_defeats_a_player() {
     let mut w = world(Faction::Apa, 100_000);
     let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
     let enemy_start = crater_ridge().spawns[1];
@@ -1079,4 +1079,37 @@ fn destroying_every_building_and_constructor_defeats_a_player() {
     let decoded = g2_sim::Replay::decode(&replay.encode()).unwrap();
     assert_eq!(decoded, replay);
     assert_eq!(g2_sim::verify_replay(&decoded, crater_ridge(), rules()), Ok(w.state_hash()));
+}
+
+/// The last base building decides, as in a Zero Hour skirmish: the enemy drives its dozer off
+/// to a far corner, a tank destroys only its command center, and the match ends on that tick,
+/// the dozer gone with it (fails if a constructor still keeps a player in the game).
+#[test]
+fn a_constructor_left_alive_does_not_keep_a_player_in() {
+    let mut w = world(Faction::Apa, 100_000);
+    let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
+    let (enemy, dozer, cc) =
+        (PlayerId(1), first(&w, PlayerId(1), EU_DOZER).unwrap(), first(&w, PlayerId(1), EU_CC).unwrap());
+    w.submit(enemy, CommandKind::Move { units: vec![dozer], target: Vec2::from_int(390, 10) });
+    order(&mut w, CommandKind::Move { units: vec![tank], target: crater_ridge().spawns[1] - Vec2::from_int(25, 25) });
+    let mut fell = None;
+    for _ in 0..30 * 600 {
+        if w.winner().is_some() {
+            break;
+        }
+        if matches!(w.entity(tank).unwrap().order, Order::Idle | Order::Move { .. })
+            && w.vision(P0).memory.contains_key(&cc)
+        {
+            w.submit(P0, CommandKind::Attack { units: vec![tank], target: cc });
+        }
+        let tick = w.tick();
+        w.step();
+        if fell.is_none() && w.entity(cc).is_none() {
+            fell = Some(tick);
+        }
+    }
+    assert_eq!(w.winner(), Some(P0), "the command center was the last base building");
+    assert!(w.entity(dozer).is_none(), "the dozer goes with the base");
+    assert!(fell.is_some());
+    assert_eq!(w.stats(enemy).defeated_at, fell, "the match ends on the tick the base falls");
 }

@@ -1593,7 +1593,7 @@ fn setup(
         "Onslaught: the enemy has no base. Ten waves of its army come at you, the first at 2:30, then one \
          every 75 seconds; outlast the last one."
     } else {
-        "Skirmish: destroy every enemy building and unit. Players on one team are allies and win \
+        "Skirmish: destroy every enemy base building (defences don't count). Players on one team are allies and win \
          together. Click an AI player to set it Easy, Normal, Hard or Onslaught; an Open seat adds one."
     };
     c.spawn(Node {
@@ -1863,7 +1863,7 @@ fn net_game(
         "Co-op Onslaught: both players on one team against ten waves from the far side of the map, split \
          between your bases; the first at 2:30, then one every 75 seconds. Outlast the last one together."
     } else {
-        "Versus: destroy every building and unit of the other player."
+        "Versus: destroy every base building of the other player (defences don't count)."
     };
     label(c, kit, about, rect(323.0, 200.0, 535.0, 300.0), 11.0, WHITE, false);
     // The chat window's place: where the game can be joined from (the host's), who came and

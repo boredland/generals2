@@ -376,9 +376,24 @@ impl Def {
     }
 
     /// A building of a player's base: not a civilian building held, nor a bunker a unit
-    /// turned into. Only these keep a player in the game, and only these are defended.
+    /// turned into. Only these are defended; `counts_for_victory` narrows them to those that
+    /// keep a player in the game.
     pub fn is_base(&self) -> bool {
         self.is_building() && !matches!(self.role(), Some(BuildingRole::Civilian | BuildingRole::Bunker))
+    }
+
+    /// A building that keeps its player in a skirmish, Zero Hour's `MP_COUNT_FOR_VICTORY`: a
+    /// base building, not a base defence, a tunnel or an oil derrick (Zero Hour's Fire Base,
+    /// Patriot, Gattling Cannon, Stinger Site, Tunnel Network and `TechOilDerrick` don't
+    /// count), and no unit, constructors included. Every skirmish there is lost with the last
+    /// such building (`VictoryConditions::hasSinglePlayerBeenDefeated` under the
+    /// `VICTORY_NOBUILDINGS` that `GameLogic::startNewGame` sets), however many units are left.
+    pub fn counts_for_victory(&self) -> bool {
+        self.is_base()
+            && !matches!(
+                self.role(),
+                Some(BuildingRole::Defense | BuildingRole::Tunnel | BuildingRole::OilDerrick { .. })
+            )
     }
 
     pub fn is_unit(&self) -> bool {
