@@ -12,10 +12,13 @@
 id = "bulldog"
 name = "Bulldog"
 faction = "eu"
+# Power plants at 130% (120% before): with the EU harvester's 4 s load (units.toml) its
+# cheaper harvesters made Bulldog 15 of 18 in `g2-tools generals`, 11 at 130% (12 with the
+# harvesters at 90%, 15 with the barrage at 30 to 45).
 modifiers = [
     { unit = "eu_harvester", cost_percent = 80 },
     { unit = "eu_harvester", build_time_percent = 85 },
-    { unit = "eu_power", cost_percent = 120 },
+    { unit = "eu_power", cost_percent = 130 },
 ]
 perks = [
     "bd_double_shifts",
@@ -33,7 +36,8 @@ perks = [
 # Placeholder numbers. No bonus against buildings: with one it took half a command
 # center per use, a base-killer rather than a strike on an army. Shell damage 45 (90, then
 # 54), tuned by `g2-tools generals`: Bulldog 13 of 18 at 90, 12 at 54; once heroes came in,
-# 13 at 54 again, 12 at 45 (11 at 40).
+# 13 at 54 again, 12 at 45 (11 at 40); with the power plants at 130% (below) 11 at 45, 13
+# at 54.
 [general.power]
 name = "Artillery barrage"
 recharge = 240

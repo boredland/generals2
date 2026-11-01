@@ -75,8 +75,10 @@ fn an_idle_player_is_overrun() {
 }
 
 /// A `Normal` AI in the player's seat, every faction pairing on Crater Ridge (the hardest of
-/// the three measured maps: 3 of 9 held, 18 of 27 across all three; 7 and 25 with one more
-/// unit a wave, which the AI's factory and collector fixes left too weak): every match ends,
+/// the three measured maps: 4 of 9 held, 20 of 27 across all three, Tournament Desert and
+/// Alpine Assault 8 each; 5 and 18 with five more units every three waves before the
+/// balance pass after heroes; 7 and 25 with one more unit a wave, which the AI's factory and
+/// collector fixes left too weak): every match ends,
 /// with the onslaught beaten only once its last wave is out and gone, and replays exactly. The
 /// waves are a real threat but can be held, so neither side wins them all.
 #[test]

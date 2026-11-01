@@ -4,10 +4,14 @@ use g2_rules::rules;
 use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World, record, verify_replay};
 
 /// `Normal` against `Easy`, every faction pairing from both starts on three maps: `Normal`
-/// wins clearly overall (measured 49 of 54: Crater Ridge 13, Tournament Desert 18, Alpine
-/// Assault 18; across all 86 skirmish maps 1,391 to 151, 6 undecided). Before units steered
-/// around each other 47 of 54 (Crater Ridge 12, Alpine Assault 17) and 1,387 to 152, 9
-/// undecided. Before Easy fired
+/// wins clearly overall (measured 45 of 54: Crater Ridge 9, Tournament Desert 18, Alpine
+/// Assault 18; across all 86 skirmish maps 1,389 to 158, 1 undecided). Crater Ridge fell
+/// from 13 in the balance pass after heroes: the EU harvester's 4 s load, which brought the
+/// Normal EU from 77% to 55% of its matches against the other factions, took it to 6 (11
+/// at 3 s), and the Thunderfist's 2 s set-up and the Tank Hunter's speed 9 back to 9.
+/// With heroes, before that pass, 49 of 54 (Crater Ridge 13, Alpine Assault 18) and 1,409
+/// to 130, 9 undecided. Before units steered around each other 47 of 54 (Crater Ridge 12,
+/// Alpine Assault 17) and 1,387 to 152, 9 undecided. Before Easy fired
 /// its powers and pulled hit constructors home, and Normal placed its guns and routed its
 /// constructors around threats: 48 of 54 (Alpine Assault 18) and 1,401 to 143, 4 undecided;
 /// 36 of 54 and 1,254 to 272 before the balance pass, when war factories could wall in
@@ -45,5 +49,5 @@ fn normal_ai_beats_easy_and_replays_exactly() {
             }
         }
     }
-    assert!(normal_wins >= 47, "Normal won only {normal_wins} of 54 against Easy");
+    assert!(normal_wins >= 45, "Normal won only {normal_wins} of 54 against Easy");
 }

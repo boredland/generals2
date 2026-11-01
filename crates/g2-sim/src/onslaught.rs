@@ -18,11 +18,16 @@ pub const FIRST_WAVE: u32 = 150 * TICKS_PER_SECOND;
 pub const WAVE_EVERY: u32 = 75 * TICKS_PER_SECOND;
 pub const WAVES: u32 = 10;
 
-/// Units in wave `k` (0-based), five more every three waves: 2, 3, 5, 7, 8, 10, 12, 13, 15, 17.
+/// Units in wave `k` (0-based), eleven more every six waves: 2, 3, 5, 7, 9, 11, 13, 14, 16, 18.
 /// One more each wave (2 to 11) stopped being a threat once the Normal AI's factories and
-/// collectors were fixed: it held 716 of 768 decided matches on all 86 skirmish maps.
+/// collectors were fixed: it held 716 of 768 decided matches on all 86 skirmish maps. Five
+/// more every three waves (2 to 17) held 563 of 764 and won most matches on 75 of the 86
+/// maps once units steered around each other and heroes came in; eleven every six hold 507
+/// of 765 and 64 maps (515 of 766 and 67 before the last placeholder changes of that pass).
+/// Six every three (2 to 20) held 413 of 765 and 50 maps, one more to start (3 to 18) 454 of
+/// 761 and 58.
 pub fn wave_size(k: u32) -> u32 {
-    2 + 5 * k / 3
+    2 + 11 * k / 6
 }
 
 /// Experience every unit of wave `k` arrives with: none for the first three, then enough for

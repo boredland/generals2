@@ -41,8 +41,8 @@ builds = ["eu_supply", "eu_power", "eu_derrick", "eu_barracks", "eu_factory", "e
 # and 13 of 131 at Normal, at 190 63 and 74. The APA's 120 was measured too: Normal APA then
 # won 91 of 130 (64 at 100) and the GLA 40, so it keeps the APA harvester's 100 for now.
 # Load time 4 s (3 s, the APA harvester's, before): once heroes came in the Normal EU won
-# 83 of 129 at 3 s, 78 of 130 at 4 s (with the hero and Thunderfist changes of the same
-# pass), APA against EU 21-44 then 33-32.
+# 83 of 129 at 3 s, 78 of 130 at 4 s (with the hero and Thunderfist speed changes of the
+# same pass), APA against EU 21-44 then 33-32; 3.5 s left it at 66%.
 [[unit]]
 id = "eu_harvester"
 name = "EU Harvester"
@@ -200,8 +200,10 @@ range = 30
 cooldown = 1.2
 
 # src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
-# cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders. Speed 8
-# (7 before): on the 33 maps Normal APA won 54 of 131 at 7, 64 of 129 at 8.
+# cannon and deploys for a howitzer. Speed and set-up time are placeholders: speed 8 (7
+# before; on the 33 maps Normal APA won 54 of 131 at 7, 64 of 129 at 8) and set-up 2 s (3 s
+# before; with the EU harvester's 4 s load, Normal APA 64 of 129 at 3 s, 67 of 130 at 2 s,
+# and Normal against Easy on Crater Ridge 6 then 9 of 18, with the Tank Hunter's speed 9).
 [[unit]]
 id = "apa_thunderfist"
 name = "APA Thunderfist"
@@ -216,7 +218,7 @@ ranks = { health = 45, cooldown_percent = 80 }
 weapon = "thunderfist_cannon"
 
 [unit.deploy]
-time = 3
+time = 2
 weapon = "howitzer"
 
 # src: Toxin Artillery hp 950, $1000, 30.11 s, GLA war factory, anti-ground artillery.
@@ -234,14 +236,16 @@ speed = 7
 ranks = { health = 105, cooldown_percent = 95 }
 weapon = "toxin_shell"
 
-# Placeholder throughout: no EU artillery card is archived. Fires on the move.
+# Placeholder throughout: no EU artillery card is archived. Fires on the move. Cost $1000
+# ($950 before): on the 33 maps with this pass's other changes the Normal EU won 75 of 130
+# at $950, 71 of 129 at $1000.
 [[unit]]
 id = "eu_artillery"
 name = "EU Howitzer"
 faction = "eu"
 hp = 550
 armour = "heavy"
-cost = 950
+cost = 1000
 build_time = 24
 radius = 2
 speed = 7
@@ -271,6 +275,8 @@ weapon = "rockets"
 # 2.5 s, ground only. Cost and speed: placeholders, the EU Rocket Squad's. On the 33 maps,
 # with the EU Rocket Squad's 180 hp and 16.29 s, the APA won 43 of 131 at Easy (63 with
 # these); with the old the `rockets` weapon, 78 at Easy and 71 of 132 at Normal (63 and 64).
+# Speed 9 (8, the EU squad's, before): the Red Guard's; with the Thunderfist's 2 s set-up,
+# Normal against Easy on Crater Ridge 9 of 18 (6 at 8) and Normal APA 67 of 130 (64).
 [[unit]]
 id = "apa_tank_hunter"
 name = "APA Tank Hunter"
@@ -280,7 +286,7 @@ armour = "infantry"
 cost = 300
 build_time = 12
 radius = 2
-speed = 8
+speed = 9
 ranks = { health = 18, cooldown_percent = 91 }
 
 [unit.weapon]
@@ -339,12 +345,12 @@ cooldown = 2.3
 # src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
 # (anti-air too). src: speed and guns from the alpha's au_mediumguntank: `MovementRate` 11;
 # GatlingGun_Ground 14 (+8 vs. infantry) every 0.5 s, and GatlingGun_Air 14 (+8 vs. light),
-# reaching 50. A unit has one weapon here, so it is one gun with both bonuses. The ground
-# range is the alpha's 35 again (a placeholder 32 before: 35 measured worse in the first
-# balance pass, Normal APA 74 of 126 wins against 66 of 120; with heroes in, on the 33
-# maps Normal APA won 54 of 131 at 32 and 60 of 129 at 35). With the placeholder gun before
-# that (10, +12 vs. infantry, every 0.4 s, speed 12), Normal APA won 52 of 131 (64 with
-# these) and the EU 81 (74).
+# reaching 50. A unit has one weapon here, so it is one gun with both bonuses. Placeholder:
+# the ground range 32 (the alpha's 35 measured worse, before the rest of the balance pass:
+# Normal APA 74 of 126 wins against 66 of 120; after heroes, 35 lost Normal more guns to
+# the enemy on Crater Ridge, 13 of 22 against 11 of 20, and Iron Dragon on Normal). On the
+# 33 maps, with the placeholder before it (10, +12 vs. infantry, every 0.4 s, speed 12),
+# Normal APA won 52 of 131 (64 with these) and the EU 81 (74).
 [[unit]]
 id = "apa_gatling"
 name = "APA Gatling Tank"
@@ -360,7 +366,7 @@ ranks = { health = 60, cooldown_percent = 90 }
 [unit.weapon]
 damage = 14
 bonus = { infantry = 8, light = 8 }
-range = 35
+range = 32
 cooldown = 0.5
 targets = "both"
 air_range = 50

@@ -50,10 +50,13 @@ shell = { radius = 8, speed = 40, min_range = 15 }
 # measurement: Easy against Easy and Normal against Normal, every pairing from both starts on
 # Crater Ridge and the 32 imported 2-player maps (the "33 maps" below), with every other
 # change of the balance pass in, the EU won 91 of 132 and 94 of 128 at 70, 63 and 74 at 40.
+# Range 65 (60 before), the Thunderfist howitzer's: after heroes, with the EU harvester's
+# 4 s load, Normal lost 11 of 20 guns on Crater Ridge against Easy at 60 (the artillery
+# test's bound is half), 9 of 19 at 65; 63 lost 11 of 18.
 [eu_shell]
 damage = 40
 bonus = { light = 20, structure = 40 }
-range = 60
+range = 65
 cooldown = 3
 shell = { radius = 6, speed = 45, min_range = 18 }
 

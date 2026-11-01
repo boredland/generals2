@@ -278,7 +278,8 @@ fn the_thunderfist_deploys_on_its_own_to_reach_a_far_target() {
             for e in w.events() {
                 match e {
                     Event::Fired { shooter, .. } if *shooter == tf => shells += 1,
-                    Event::Hit { shooter, .. } if *shooter == tf => cannon_shots += 1,
+                    // A shell's blast is a splash hit; the cannon's are direct.
+                    Event::Hit { shooter, splash: false, .. } if *shooter == tf => cannon_shots += 1,
                     _ => {}
                 }
             }
