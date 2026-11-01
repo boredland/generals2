@@ -328,7 +328,8 @@ const fn building(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -399,7 +400,8 @@ const fn unit(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -456,7 +458,8 @@ const fn soldier(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -543,10 +546,20 @@ const fn with_lobbed_special(mut d: Def, name: &'static str, range: i64, blast: 
     d
 }
 
-/// `d` uses `ability` on command (the unit special key).
-const fn with_ability(mut d: Def, ability: Ability) -> Def {
-    d.ability = Some(ability);
+/// `d` uses `abilities` on command (the unit ability keys, in order).
+const fn with_abilities(mut d: Def, abilities: &'static [Ability]) -> Def {
+    d.abilities = abilities;
     d
+}
+
+/// A self status: `kind` at `percent` for `secs_` seconds on the unit alone.
+const fn boost(kind: StatusKind, percent: i32, secs_: u32) -> AbilityKind {
+    AbilityKind::Boost {
+        statuses: [Some(status(kind, percent, secs_)), None],
+        radius: Fx::ZERO,
+        infantry: false,
+        cloak_ticks: 0,
+    }
 }
 
 /// `d` sets off `blast` where it is destroyed.
@@ -673,7 +686,8 @@ static DEFS: [Def; 83] = [
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     },
     Def {
@@ -696,7 +710,8 @@ static DEFS: [Def; 83] = [
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     },
     // ---- European Union ------------------------------------------------------------------
@@ -992,7 +1007,7 @@ static DEFS: [Def; 83] = [
     // src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
     // placeholders: cheaper, faster and weaker than the Warlord. Black Market Nitro (the
     // alpha's gla_mediumcannonnitro, an instant ability with no numbers): `NITRO`.
-    with_ability(
+    with_abilities(
         ranked(
             soldier(
                 "GLA Scorpion Tank",
@@ -1008,7 +1023,7 @@ static DEFS: [Def; 83] = [
             72,
             92,
         ),
-        NITRO,
+        &[NITRO],
     ),
     // src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
     // cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders.
@@ -1341,7 +1356,7 @@ static DEFS: [Def; 83] = [
     // light), 30, 1.2 s, ground and air (`TargetType` 0). Radar Pulse (the wiki's Longbow
     // ability, "temporarily improves the sight range"; the alpha's eu_radarpulse, an instant
     // ability with no numbers): sight at 150% for 10 s, every 30 s, placeholders.
-    with_ability(
+    with_abilities(
         ranked(
             flying(soldier(
                 "EU Longbow",
@@ -1357,11 +1372,7 @@ static DEFS: [Def; 83] = [
             36,
             88,
         ),
-        Ability {
-            name: "Radar Pulse",
-            kind: AbilityKind::Boost(status(StatusKind::Sight, 150, 10)),
-            cooldown_ticks: secs(30),
-        },
+        &[Ability { name: "Radar Pulse", kind: boost(StatusKind::Sight, 150, 10), cooldown_ticks: secs(30) }],
     ),
     // Sniper Team (eu_elitesnipersoldiersquad): hp 240, $750, 13 s; sniper rifle 25 (+200 vs.
     // infantry), 50, 4 s; stealthed (the wiki's passive Camouflage).
@@ -1506,7 +1517,7 @@ static DEFS: [Def; 83] = [
     // ("Detonation") goes off however it dies. src: DamageRating 50, radius 20, a fire left
     // 5 s (`Persistence`) burning 10 a second (its DOT).
     with_blast(
-        with_ability(
+        with_abilities(
             ranked(
                 soldier(
                     "APA Dragon Tank",
@@ -1522,7 +1533,7 @@ static DEFS: [Def; 83] = [
                 72,
                 80,
             ),
-            Ability { name: "Ignition", kind: AbilityKind::Detonate, cooldown_ticks: 0 },
+            &[Ability { name: "Ignition", kind: AbilityKind::Detonate, cooldown_ticks: 0 }],
         ),
         clouding(blast(50, [0, 0, 0, 0], 20), 20, 10, 5),
     ),
@@ -1688,7 +1699,7 @@ static DEFS: [Def; 83] = [
     // 10: `g2-tools generals` measured Junkyard at 11 of 18 and Wild Dog at 7, against 16 and
     // 15 at 10 (8 gave 15 and 9). Black Market Nitro (gla_mediumcannonnitro, unlocked by an
     // upgrade in the alpha, here from the start): `NITRO`.
-    with_ability(
+    with_abilities(
         ranked(
             soldier(
                 "GLA Shrapnel Tank",
@@ -1704,7 +1715,7 @@ static DEFS: [Def; 83] = [
             72,
             80,
         ),
-        NITRO,
+        &[NITRO],
     ),
     // Toxin Tank (gu_mediumtoxintank): hp 625, $875, 17 s; toxin cannon 60 (+50 inf, +50
     // garrisoned), 35, 3 s. Replaces the Scorpion for its general.
@@ -1745,7 +1756,7 @@ static DEFS: [Def; 83] = [
     // charge, dying with it, and the charge also goes off when it is destroyed. Detonate (the
     // alpha's gla_bombtechnicaldetonate, instant) blows it where it stands.
     with_blast(
-        with_ability(
+        with_abilities(
             soldier(
                 "GLA Bomb Truck",
                 Faction::Gla,
@@ -1757,7 +1768,7 @@ static DEFS: [Def; 83] = [
                 Fx::from_int(2),
                 suicidal(weapon(185, [0, 0, 85, 0], 7, 10)),
             ),
-            Ability { name: "Detonate", kind: AbilityKind::Detonate, cooldown_ticks: 0 },
+            &[Ability { name: "Detonate", kind: AbilityKind::Detonate, cooldown_ticks: 0 }],
         ),
         blast(185, [0, 0, 85, 0], 13),
     ),
@@ -1973,7 +1984,8 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -3324,11 +3336,7 @@ const fn thunderclap(stun_secs: u32) -> Power {
 
 /// Black Market Nitro, the GLA tanks' ability: speed at 150% for 5 s, every 30 s
 /// (placeholders: the alpha's ability holds only its name and an instant targeting type).
-const NITRO: Ability = Ability {
-    name: "Nitro",
-    kind: AbilityKind::Boost(StatusEffect { kind: StatusKind::Speed, percent: 150, ticks: secs(5) }),
-    cooldown_ticks: secs(30),
-};
+const NITRO: Ability = Ability { name: "Nitro", kind: boost(StatusKind::Speed, 150, 5), cooldown_ticks: secs(30) };
 
 // A faction's perk tables list every unit of its kind, the generals' own ones too: only a
 // player with that general can train them, so for anyone else those entries do nothing.

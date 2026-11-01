@@ -6,6 +6,7 @@ use g2_rules::generals::{INFERNO, JUNKYARD, KITBASH, MERCURY_RED, RED_ARROW, TAS
 use g2_rules::ids::*;
 use g2_rules::perks::JY_FAULTY_CONSTRUCTION;
 use g2_rules::{crater_ridge, rules};
+use g2_sim::ability::in_place;
 use g2_sim::defs::{PerkId, PowerKind, StatusKind};
 use g2_sim::world::{Event, INPUT_DELAY, ShellSource};
 use g2_sim::{
@@ -135,7 +136,7 @@ fn nitro_lasts_exactly_its_ticks_and_speeds_the_tank_up() {
     let tank = train(&mut w, P0, f, GLA_TANK);
     walk(&mut w, P0, tank, Vec2::from_int(150, 100));
     w.submit(P0, CommandKind::Move { units: vec![tank], target: Vec2::from_int(390, 100) });
-    w.submit(P0, CommandKind::Ability { units: vec![tank] });
+    w.submit(P0, in_place(vec![tank], 0));
     let mut applied = None;
     for _ in 0..=INPUT_DELAY {
         w.step();
@@ -162,7 +163,7 @@ fn nitro_lasts_exactly_its_ticks_and_speeds_the_tank_up() {
     assert!(normal <= own && normal.0 * 100 >= own.0 * 99, "{normal:?} against {own:?}");
     let near = |got: Fx, want: i64| (got.0 - want).abs() * 100 <= want;
     assert!(near(fast, own.0 * 3 / 2), "boosted {fast:?} against {own:?}");
-    assert_eq!(order(&mut w, P0, CommandKind::Ability { units: vec![tank] }), vec![Reject::AbilityNotReady]);
+    assert_eq!(order(&mut w, P0, in_place(vec![tank], 0)), vec![Reject::AbilityNotReady]);
 }
 
 /// Thunderclap: 5 s after the order, 100 damage and a 3 s stun (level 1) on enemy units
@@ -313,7 +314,7 @@ fn a_bomb_truck_detonates_hitting_enemies_only() {
     let ally = train(&mut w, P0, f, GLA_TOXIN_TANK);
     walk(&mut w, P0, ally, MEET - Vec2::from_int(9, 0));
     walk(&mut w, P0, truck, MEET - Vec2::from_int(6, 4));
-    w.submit(P0, CommandKind::Ability { units: vec![truck] });
+    w.submit(P0, in_place(vec![truck], 0));
     let mut blast = None;
     step_until(&mut w, 30, "the blast", |w| {
         blast = w.events().iter().find_map(|e| match *e {
@@ -372,7 +373,7 @@ fn a_dragon_tank_ignites_into_a_firestorm() {
     let f = factory(&mut w, P0, APA_FACTORY);
     let dragon = train(&mut w, P0, f, APA_DRAGON);
     walk(&mut w, P0, dragon, MEET - Vec2::from_int(15, 0));
-    assert_eq!(order(&mut w, P0, CommandKind::Ability { units: vec![dragon] }), vec![]);
+    assert_eq!(order(&mut w, P0, in_place(vec![dragon], 0)), vec![]);
     assert!(w.entity(dragon).is_none() || w.entity(dragon).unwrap().hp <= 0);
     let mut burned = Vec::new();
     for _ in 0..30 * 7 {
@@ -395,7 +396,7 @@ fn radar_pulse_stretches_sight_for_a_while() {
     let sight = g2_sim::fog::sight(rules(), EU_LONGBOW, true, Fx::from_int(15));
     let far = MEET + Vec2::new(sight + Fx::from_int(12), Fx::ZERO);
     assert!(!w.vision(P0).is_visible(far));
-    assert_eq!(order(&mut w, P0, CommandKind::Ability { units: vec![heli] }), vec![]);
+    assert_eq!(order(&mut w, P0, in_place(vec![heli], 0)), vec![]);
     let pulse = status(&w, heli, StatusKind::Sight).expect("pulsing");
     assert_eq!(pulse.percent, 150);
     assert!(w.vision(P0).is_visible(far), "sees further");
@@ -454,7 +455,7 @@ fn statuses_and_abilities_replay_exactly() {
     let (done, replay) = record(w, &s, end, |w| {
         if w.tick() == ready {
             w.submit(P0, CommandKind::Power { slot: 0, at: MEET });
-            w.submit(P0, CommandKind::Ability { units: vec![warlord] });
+            w.submit(P0, in_place(vec![warlord], 0));
         }
     });
     assert!(done.entity(aegis).is_none_or(|e| e.hp > 0));

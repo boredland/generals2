@@ -1068,22 +1068,23 @@ impl Ai {
         use crate::defs::{AbilityKind, StatusKind};
         let rules = world.rules;
         let mut ready = Vec::new();
-        for u in mine.iter().filter(|e| e.inside.is_none() && !e.stunned() && e.ability_at <= world.tick()) {
+        for u in mine.iter().filter(|e| e.inside.is_none() && !e.stunned() && e.decoy_until.is_none()) {
             let d = rules.def(u.def);
-            let Some(a) = d.ability else { continue };
+            // The first ability only: every unit outside the heroes has one.
+            let Some(a) = d.abilities.first().filter(|_| u.ability_at[0] <= world.tick()) else { continue };
             let engaged = match u.order {
                 Order::Attack { target } | Order::AttackMove { engaged: Some(target), .. } => world.entity(target),
                 _ => None,
             };
             let reach = |e: &Entity, r: Fx| e.pos.distance(u.pos) - rules.def(e.def).radius <= r;
             let worth = match a.kind {
-                AbilityKind::Boost(s) if s.kind == StatusKind::Speed => {
+                AbilityKind::Boost { statuses: [Some(s), _], .. } if s.kind == StatusKind::Speed => {
                     let chasing = engaged.zip(d.weapon()).is_some_and(|(t, w)| !reach(t, w.range + Fx::from_int(5)));
                     let fleeing = matches!(u.order, Order::Move { target, .. } if target == home)
                         && enemies.iter().any(|e| rules.def(e.def).weapon().is_some() && reach(e, Fx::from_int(30)));
                     chasing || fleeing
                 }
-                AbilityKind::Boost(_) => engaged.is_some(),
+                AbilityKind::Boost { .. } => engaged.is_some(),
                 AbilityKind::Detonate => d.blast.is_some_and(|b| {
                     let near: Vec<&&Entity> =
                         enemies.iter().filter(|e| !rules.def(e.def).flies() && reach(e, b.radius)).collect();
@@ -1093,13 +1094,14 @@ impl Ai {
                         !near.is_empty() && u.hp * 4 <= world.max_hp(u)
                     }
                 }),
+                _ => false,
             };
             if worth {
                 ready.push(u.id);
             }
         }
         if !ready.is_empty() {
-            out.push(CommandKind::Ability { units: ready });
+            out.push(crate::ability::in_place(ready, 0));
         }
     }
 

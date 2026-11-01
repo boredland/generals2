@@ -98,10 +98,14 @@ pub enum CommandKind {
         producer: EntityId,
         at: Vec2,
     },
-    /// Units with a ready ability (`Def::ability`: Nitro, Radar Pulse, a self-destruct) use it
-    /// now, where they stand.
+    /// Units whose ability `slot` (`Def::abilities`: Nitro, Radar Pulse, a self-destruct, a
+    /// hero's) is ready use it: one used where they stand at once, one aimed at a point or an
+    /// enemy (`aim`) once they have walked within its reach. An aim that doesn't fit the
+    /// ability is refused.
     Ability {
         units: Vec<EntityId>,
+        slot: u8,
+        aim: Aim,
     },
     /// Armed units fire at bridge `bridge` (`MapDef::bridges` index) until it falls: Zero
     /// Hour's force-attack on a bridge, open to every player.
@@ -139,8 +143,11 @@ pub enum Reject {
     CannotTransform,
     /// None of the units has a special shot ready, or the target is not an enemy.
     SpecialNotReady,
-    /// None of the units has an ability ready.
+    /// None of the units has an ability ready in that slot.
     AbilityNotReady,
+    /// The player already has the one of it they may have (`Def::unique`), standing or in
+    /// training.
+    LimitReached,
     /// The player has no power in that slot, or it is still recharging.
     PowerNotReady,
     /// The point is unexplored (except for a recon), off the map, or (for an ambush) not open
@@ -150,4 +157,13 @@ pub enum Reject {
     AlreadyResearched,
     /// No unit can go in: none is infantry, the container is full, an enemy's, or holds none.
     CannotGarrison,
+}
+
+/// What a unit ability is aimed at (`AbilityKind::aim`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Aim {
+    /// Nothing: used where the unit stands.
+    Here,
+    Point(Vec2),
+    Unit(EntityId),
 }

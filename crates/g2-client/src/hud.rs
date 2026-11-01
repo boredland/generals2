@@ -1226,6 +1226,25 @@ fn onslaught_status(world: &g2_sim::World) -> Option<String> {
     })
 }
 
+/// The line shown while the selection's special shot or an aimed ability is armed:
+/// "GRENADE VOLLEY: click the ground", "PARTICLE ACCELERATOR: click an enemy". `None` while a
+/// power is armed (its own line says so).
+fn aim_label(sim: &Sim, sel: &Selection, aim: u8) -> Option<String> {
+    let world = &sim.world;
+    let defs = || sel.0.iter().filter_map(|&id| world.entity(id)).map(|e| world.rules.def(e.def));
+    if aim == crate::input::SPECIAL {
+        let name = defs().find_map(|d| d.special).map_or("SPECIAL", |s| s.name);
+        return Some(format!("{}: click an enemy", name.to_uppercase()));
+    }
+    let slot = aim.checked_sub(crate::input::ABILITY)? as usize;
+    let a = defs().find_map(|d| d.abilities.get(slot))?;
+    let what = match a.kind.aim() {
+        g2_sim::defs::AbilityAim::Unit(_) => "click an enemy",
+        _ => "click the ground",
+    };
+    Some(format!("{}: {what}", a.name.to_uppercase()))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn update_fields(
     sim: Res<Sim>,
@@ -1280,16 +1299,14 @@ fn update_fields(
                             None => return None,
                         })
                     })
-                    .chain(
-                        (aim == Some(crate::input::SPECIAL)).then(|| "PARTICLE ACCELERATOR: click an enemy".to_owned()),
-                    )
+                    .chain(aim.and_then(|a| aim_label(&sim, &sel, a)))
                     .collect();
                 t.0 = lines.join("\n");
             }
             Field::Aim => {
                 let power = |slot: u8| sim.powers().get(slot as usize).copied().flatten();
                 t.0 = match aim {
-                    Some(crate::input::SPECIAL) => "PARTICLE ACCELERATOR: click an enemy".into(),
+                    Some(a) if a >= crate::input::ABILITY => aim_label(&sim, &sel, a).unwrap_or_default(),
                     Some(slot) => {
                         power(slot).map_or(String::new(), |p| format!("{}: click to aim", p.name.to_uppercase()))
                     }
@@ -1351,20 +1368,22 @@ fn update_fields(
                     if d.becomes.is_some() && e.owner == Some(sim.local) {
                         s += "  -  T: become a bunker";
                     }
-                    let ready = |name: &str, at: u32| {
+                    let ready = |key: &str, name: &str, at: u32| {
                         let left = at.saturating_sub(world.tick());
                         if left == 0 {
-                            format!("  -  R: {} READY", name.to_lowercase())
+                            format!("  -  {key}: {} READY", name.to_lowercase())
                         } else {
                             let secs = left.div_ceil(g2_sim::TICKS_PER_SECOND);
                             format!("  -  {} {}:{:02}", name.to_lowercase(), secs / 60, secs % 60)
                         }
                     };
                     if let (Some(sp), true) = (d.special, e.owner == Some(sim.local)) {
-                        s += &ready(sp.name, e.special_at);
+                        s += &ready("R", sp.name, e.special_at);
                     }
-                    if let (Some(a), true) = (d.ability, e.owner == Some(sim.local)) {
-                        s += &ready(a.name, e.ability_at);
+                    if e.owner == Some(sim.local) {
+                        for ((a, key), &at) in d.abilities.iter().zip(crate::input::ABILITY_LABELS).zip(&e.ability_at) {
+                            s += &ready(key, a.name, at);
+                        }
                     }
                     // Only its owner learns it is a hologram, and how long it has left.
                     if let (Some(until), true) = (e.decoy_until, e.owner == Some(sim.local)) {

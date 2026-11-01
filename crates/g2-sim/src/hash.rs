@@ -144,9 +144,10 @@ impl World {
             if e.special_at != 0 {
                 h.u64(0x7370_0000_0000 | e.special_at as u64);
             }
-            // Only once an ability has been used, so matches without one hash as before.
-            if e.ability_at != 0 {
-                h.u64(0x6162_0000_0000 | e.ability_at as u64);
+            // Only once an ability has been used, so matches without one hash as before; the
+            // first slot's as it was before units had more.
+            for (slot, &at) in e.ability_at.iter().enumerate().filter(|&(_, &at)| at != 0) {
+                h.u64(0x6162_0000_0000 | (slot as u64) << 40 | at as u64);
             }
             // Only while a status is on it, so matches without them hash as before.
             for s in &e.statuses {
@@ -266,6 +267,16 @@ impl World {
             h.i64(x.cloud_damage as i64);
             h.u64(x.cloud_ticks as u64);
         }
+        // Only while a trap lies, so matches without them hash as before.
+        for t in &self.traps {
+            id(&mut h, t.shooter);
+            h.u64(0x7472_6170_0000 | (t.owner.0 as u64) << 16 | t.def.0 as u64);
+            h.i64(t.at.x.0);
+            h.i64(t.at.y.0);
+            h.i64(t.radius.0);
+            h.i64(t.damage as i64);
+            h.u64(t.slot as u64);
+        }
         // Only once a bridge has been hurt, so matches without that hash as before.
         self.bridges.hash_into(|x| h.u64(x));
         // Only in a mission, so other matches hash as before. What was said is output only.
@@ -374,6 +385,22 @@ fn hash_order(h: &mut Fnv, o: Order) {
         Order::Special { target } => {
             h.u64(8);
             id(h, target);
+        }
+        Order::Cast { slot, aim } => {
+            h.u64(9);
+            h.u64(slot as u64);
+            match aim {
+                crate::command::Aim::Here => h.u64(0),
+                crate::command::Aim::Point(p) => {
+                    h.u64(1);
+                    h.i64(p.x.0);
+                    h.i64(p.y.0);
+                }
+                crate::command::Aim::Unit(t) => {
+                    h.u64(2);
+                    id(h, t);
+                }
+            }
         }
         Order::Sortie { aim, exit, slot, dropped } => {
             h.u64(7);

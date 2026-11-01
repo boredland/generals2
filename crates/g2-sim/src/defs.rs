@@ -199,8 +199,9 @@ pub struct StatusEffect {
     pub ticks: u32,
 }
 
-/// A unit's own ability, used on command (the unit special key), then recharging for
-/// `cooldown_ticks`.
+/// A unit's own ability, used on command (its key: R for the first, then F and C), then
+/// recharging for `cooldown_ticks`. One aimed at a point or a unit (`AbilityKind::aim`) is
+/// used once the unit has walked within reach of its aim.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Ability {
     pub name: &'static str,
@@ -208,12 +209,58 @@ pub struct Ability {
     pub cooldown_ticks: u32,
 }
 
+/// The most abilities one unit has (the alpha's heroes have three active ones).
+pub const MAX_ABILITIES: usize = 3;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AbilityKind {
-    /// The unit takes on this status (the GLA tanks' Nitro, the Longbow's Radar Pulse).
-    Boost(StatusEffect),
+    /// The unit, and its player's units within `radius` of it (only infantry with `infantry`;
+    /// none at radius 0), take on each of `statuses`; with `cloak_ticks` above 0 the unit
+    /// itself is also hidden that long, as by a cloaking power (Nitro, Radar Pulse, a hero's
+    /// rally or camouflage).
+    Boost { statuses: [Option<StatusEffect>; 2], radius: Fx, infantry: bool, cloak_ticks: u32 },
     /// The unit destroys itself at once, setting off its `Def::blast`.
     Detonate,
+    /// Aimed at a point within `range`: `shells` shells of `blast` (its damage and radius) are
+    /// thrown at it, one every `every_ticks` from the cast, flying at `speed` and landing on
+    /// and around it no further than `spread` out; then `blast`'s cloud, if it has one, burns
+    /// at the point from the last landing.
+    Throw { range: Fx, blast: Blast, shells: u32, every_ticks: u32, spread: Fx, speed: Fx },
+    /// Aimed at a point within `range`: `field` takes effect there, as an area power's does.
+    Area { range: Fx, field: Field },
+    /// Aimed at an enemy within the weapon's reach: one shot of `weapon` at it.
+    Shot { weapon: Weapon },
+    /// Aimed at a point within `range`: a hidden trap lies there until an enemy aircraft comes
+    /// within `radius` of it; then every enemy aircraft that near takes `damage`, and the
+    /// trap is spent.
+    Trap { range: Fx, radius: Fx, damage: i32 },
+    /// Aimed at a point within `range`: every other armed infantry unit of the player's within
+    /// `radius` of it is destroyed, each setting off `blast` where it stood.
+    Sacrifice { range: Fx, radius: Fx, blast: Blast },
+}
+
+/// What an ability is aimed at, and from how far.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AbilityAim {
+    /// Used where the unit stands.
+    Here,
+    /// A point on the ground within this distance of the unit's centre.
+    Point(Fx),
+    /// An enemy whose edge is within this distance (its weapon's reach).
+    Unit(Weapon),
+}
+
+impl AbilityKind {
+    pub fn aim(&self) -> AbilityAim {
+        match *self {
+            AbilityKind::Boost { .. } | AbilityKind::Detonate => AbilityAim::Here,
+            AbilityKind::Throw { range, .. }
+            | AbilityKind::Area { range, .. }
+            | AbilityKind::Trap { range, .. }
+            | AbilityKind::Sacrifice { range, .. } => AbilityAim::Point(range),
+            AbilityKind::Shot { weapon } => AbilityAim::Unit(weapon),
+        }
+    }
 }
 
 /// What goes off where a unit is destroyed, however it dies (the alpha's `PartingShot`
@@ -298,8 +345,11 @@ pub struct Def {
     pub becomes: Option<DefId>,
     /// An aimed special shot fired on command (`Special`); `None` for everything else.
     pub special: Option<Special>,
-    /// An ability used on command (`Ability`); `None` for everything else.
-    pub ability: Option<Ability>,
+    /// Abilities used on command (`Ability`), in key order; empty for everything else.
+    pub abilities: &'static [Ability],
+    /// At most one per player, standing or in training (the alpha's heroes, built one at a
+    /// time).
+    pub unique: bool,
     /// What goes off where it is destroyed (`Blast`); `None` for everything else.
     pub blast: Option<Blast>,
 }

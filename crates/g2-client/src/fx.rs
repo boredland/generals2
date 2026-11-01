@@ -92,6 +92,18 @@ impl Look {
                     Look::Strike { toxic: false, nuke: name.contains("Sunstorm"), missile: false }
                 }
             }
+            // A hero's thrown grenades: fire for the incendiary one (it leaves a burn), else a
+            // shell's burst; a trap goes off as a flak burst.
+            ShellSource::Ability { def, slot } => {
+                use g2_sim::defs::AbilityKind;
+                match world.rules.def(def).abilities.get(slot as usize).map(|a| a.kind) {
+                    Some(AbilityKind::Throw { blast, .. }) => {
+                        Look::Shell { toxic: false, napalm: blast.cloud_ticks > 0 }
+                    }
+                    Some(AbilityKind::Trap { .. }) => Look::Cannon { heavy: true },
+                    _ => Look::Strike { toxic: false, nuke: false, missile: false },
+                }
+            }
             ShellSource::Power { player, slot } => {
                 let name = world.power_in(player, slot).map_or("", |p| p.name);
                 let missile = matches!(

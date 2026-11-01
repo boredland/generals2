@@ -51,6 +51,13 @@ pub enum Order {
     Special {
         target: EntityId,
     },
+    /// Walk within reach of `aim` and use ability `slot` (`Def::abilities`, one aimed at a
+    /// point or an enemy) there, then stop. A target lost, or the ability spent meanwhile,
+    /// drops the order.
+    Cast {
+        slot: u8,
+        aim: crate::command::Aim,
+    },
     /// A support power's jet: flies straight to `aim`, does its power slot `slot`'s work there
     /// (an airstrike's bombs), then flies on to `exit` and leaves the map. Takes no orders.
     Sortie {
@@ -140,8 +147,8 @@ pub struct Entity {
     pub cloaked_until: Option<u32>,
     /// Units with a `Def::special`: the tick from which it can fire again (0: ready).
     pub special_at: u32,
-    /// Units with a `Def::ability`: the tick from which it can be used again (0: ready).
-    pub ability_at: u32,
+    /// Per entry of `Def::abilities`: the tick from which it can be used again (0: ready).
+    pub ability_at: [u32; crate::defs::MAX_ABILITIES],
     /// Production buildings: where the units it trains walk once out (`SetRally`). `None`
     /// until the owner sets one.
     pub rally: Option<Vec2>,
@@ -369,7 +376,7 @@ mod tests {
             revealed_until: None,
             cloaked_until: None,
             special_at: 0,
-            ability_at: 0,
+            ability_at: [0; crate::defs::MAX_ABILITIES],
             rally: None,
             route: Route::default(),
             vel: Vec2::ZERO,
