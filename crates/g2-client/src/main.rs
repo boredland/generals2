@@ -5,7 +5,7 @@
 //!   g2-client --host PORT [--coop] [match flags as above]   two players over the network: you host
 //!   g2-client --join HOST:PORT [--reveal] [--record FILE]   ...and the other player joins
 //!   g2-client [match flags] --teams 1122                    a team game: a team digit (0-4) per player
-//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|at:X,Z] [--camera closest|close|medium|far] [--select DEF] [--hover-slot N] [--movie-frame N] [--frames N] [--no-hud] [...]
+//!   g2-client --screenshot out.png [--ticks N] [--view base|map|battle|selected|at:X,Z] [--camera closest|close|medium|far] [--select DEF] [--hover-slot N] [--movie-frame N] [--frames N] [--no-hud] [...]
 //!             headless: simulate N ticks, render one frame (or, with --frames, a clip of frames
 //!             to a path holding {}, e.g. clip/{}.png); `--hover-slot N` shows the tooltip of
 //!             build-grid button N (from 0) as if hovered, for the `--select`ed building
@@ -245,12 +245,13 @@ fn parse_args() -> Result<Args, String> {
                     Some("base") => headless::View::Base,
                     Some("map") => headless::View::Map,
                     Some("battle") => headless::View::Battle,
+                    Some("selected") => headless::View::Selected,
                     Some(v) if let Some((x, z)) = v.strip_prefix("at:").and_then(|p| p.split_once(',')) => {
                         let n =
                             |s: &str| s.parse::<f32>().map_err(|_| format!("--view at:X,Z needs numbers, got {v:?}"));
                         headless::View::At(n(x)?, n(z)?)
                     }
-                    other => return Err(format!("--view expects base|map|battle|at:X,Z, got {other:?}")),
+                    other => return Err(format!("--view expects base|map|battle|selected|at:X,Z, got {other:?}")),
                 }
             }
             "--select" => a.select = Some(it.next().ok_or("--select needs a def name")?),
@@ -608,6 +609,8 @@ mod headless {
         Battle,
         /// The in-game camera over world position `(x, z)`.
         At(f32, f32),
+        /// The in-game camera over the `--select`ed entity (the base without one).
+        Selected,
     }
 
     /// What to capture: the sim's state after `ticks`, seen through `view`, at `size`, saved
@@ -771,13 +774,18 @@ mod headless {
                     yaw: crate::look::YAW,
                     pitch: crate::look::PITCH,
                 },
+                // On the `--select`ed entity, so one unit can be looked at closely.
+                View::Selected if let Some(e) = selected.and_then(|id| sim.world.entity(id)) => {
+                    let at = sim.to_world(e.pos);
+                    RtsCamera { pivot: at, distance, yaw: crate::look::YAW, pitch: crate::look::PITCH }
+                }
                 View::At(x, z) => RtsCamera {
                     pivot: Vec3::new(x, sim.ground_y(x, z), z),
                     distance,
                     yaw: crate::look::YAW,
                     pitch: crate::look::PITCH,
                 },
-                View::Base | View::Battle => {
+                View::Base | View::Battle | View::Selected => {
                     // The command center, not the first own entity: depleted piles free low
                     // entity slots, which later units reuse.
                     let rules = sim.world.rules;
