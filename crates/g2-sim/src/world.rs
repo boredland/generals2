@@ -14,7 +14,7 @@ pub const TICKS_PER_SECOND: u32 = 30;
 pub const INPUT_DELAY: u32 = 2;
 pub const MAX_QUEUE: usize = 5;
 /// Distance tolerance for "has reached" checks, so units pushed apart by separation still arrive.
-const SLACK: Fx = Fx::from_int(1);
+pub(crate) const SLACK: Fx = Fx::from_int(1);
 /// Armed units notice enemies this far beyond their weapon range (idle guard, attack-move).
 const ACQUIRE: Fx = Fx::from_int(15);
 /// A unit keeps its planned route while its target moves less than this from where the route
@@ -197,11 +197,13 @@ pub enum Event {
         radius: Fx,
         hostile: bool,
     },
-    /// `player`'s `unit` (a `def`) used its ability (`Def::ability`) at `at`. Output only.
+    /// `player`'s `unit` (a `def`) used its ability in `slot` (`Def::abilities`), aimed at
+    /// `at` (where it stood, for one used in place). Output only.
     AbilityUsed {
         player: PlayerId,
         unit: EntityId,
         def: DefId,
+        slot: u8,
         at: Vec2,
     },
     /// `by` fired directly at bridge `bridge` from `from`, hitting it at `at` for `damage`.
@@ -235,6 +237,8 @@ pub enum ShellSource {
     Power { player: PlayerId, slot: u8 },
     /// What a destroyed unit of this def set off (`Def::blast`).
     Blast { def: DefId },
+    /// What a unit of this def threw or set with its ability in `slot` (`Def::abilities`).
+    Ability { def: DefId, slot: u8 },
 }
 
 /// An artillery shell in flight. Part of the state hash, except `source`.
@@ -314,7 +318,7 @@ pub struct World {
     /// `(shooter, shooter's owner, target, damage, splash)` fired this tick, applied together
     /// by `resolve_shots`. The owner travels with the shot because a shell's gun may be gone
     /// by the time it lands. Empty between ticks, so it needs no hash.
-    shots: Vec<(EntityId, PlayerId, EntityId, i32, bool)>,
+    pub(crate) shots: Vec<(EntityId, PlayerId, EntityId, i32, bool)>,
     /// Shells in flight, in firing order.
     pub(crate) shells: Vec<ShellInFlight>,
     /// Toxin clouds, in order of creation.
@@ -323,6 +327,8 @@ pub struct World {
     pub(crate) fields: Vec<PendingField>,
     /// Blasts still to go off, in order of setting off.
     pub(crate) blasts: Vec<PendingBlast>,
+    /// Unit abilities' traps lying in wait (`crate::ability::Trap`), in order of setting.
+    pub(crate) traps: Vec<crate::ability::Trap>,
     /// What each player sees and has explored (index = player). Updated every tick before
     /// units act, so targeting only ever uses what is visible at the start of the tick.
     pub(crate) visions: Vec<crate::fog::Vision>,
@@ -418,6 +424,7 @@ impl World {
             clouds: Vec::new(),
             fields: Vec::new(),
             blasts: Vec::new(),
+            traps: Vec::new(),
             visions: setup.players.iter().map(|_| crate::fog::Vision::new(setup.map.width, setup.map.height)).collect(),
             stats: vec![Stats::default(); setup.players.len()],
             checkpoints: Vec::new(),
@@ -503,7 +510,7 @@ impl World {
             revealed_until: None,
             cloaked_until: None,
             special_at: 0,
-            ability_at: 0,
+            ability_at: [0; crate::defs::MAX_ABILITIES],
             rally: None,
             route: Route::default(),
             vel: Vec2::ZERO,
@@ -921,6 +928,7 @@ impl World {
         self.land_blasts();
         self.land_fields();
         self.poison_clouds();
+        self.spring_traps();
         self.resolve_shots();
         self.resolve_bridge_hits();
         // After the shots, so a unit hit this tick has its quiet spell restart before it heals.
@@ -1240,6 +1248,9 @@ impl World {
                 {
                     return Err(Reject::DepotFull);
                 }
+                if self.rules.def(*def).unique && self.has_or_trains(player, *def) {
+                    return Err(Reject::LimitReached);
+                }
                 let item = Product::Unit(*def);
                 self.afford(player, item)?;
                 self.pay(player, item, 1);
@@ -1425,25 +1436,7 @@ impl World {
                 self.entities.get_mut(*producer).unwrap().rally = Some(at);
                 Ok(())
             }
-            CommandKind::Ability { units } => {
-                let tick = self.tick;
-                let ready: Vec<EntityId> = self
-                    .own_units(player, units, |d| d.ability.is_some())
-                    .map_err(|_| Reject::AbilityNotReady)?
-                    .into_iter()
-                    .filter(|&u| {
-                        let e = self.entities.get(u).unwrap();
-                        e.ability_at <= tick && e.inside.is_none() && !e.stunned() && e.decoy_until.is_none()
-                    })
-                    .collect();
-                if ready.is_empty() {
-                    return Err(Reject::AbilityNotReady);
-                }
-                for u in ready {
-                    self.use_ability(u);
-                }
-                Ok(())
-            }
+            CommandKind::Ability { units, slot, aim } => self.order_ability(player, units, *slot, *aim),
         }
     }
 
@@ -1520,7 +1513,7 @@ impl World {
     }
 
     /// The subset of `ids` that are live units owned by `player` and match `filter`.
-    fn own_units(
+    pub(crate) fn own_units(
         &self,
         player: PlayerId,
         ids: &[EntityId],
@@ -2073,6 +2066,7 @@ impl World {
                     _ => (pos, Order::Idle),
                 }
             }
+            Order::Cast { slot, aim } => self.cast_step(id, slot, aim, pos, speed),
             Order::Gather { pile, phase } => self.gather_step(id, pile, phase, pos, speed, radius, owner),
             // A target that slips back into stealth (no detector, no recent shot) is lost; one
             // that only walks into the fog is still chased.
@@ -2264,13 +2258,13 @@ impl World {
     /// and buildings, not neutral resources, not units inside something). Fog is not checked:
     /// an attack order, once given, chases its target through fog while it lives. Whether it
     /// may be given is `attackable`.
-    fn live_enemy(&self, owner: PlayerId, target: EntityId) -> Option<&Entity> {
+    pub(crate) fn live_enemy(&self, owner: PlayerId, target: EntityId) -> Option<&Entity> {
         self.entities.get(target).filter(|t| self.hostile(owner, t.owner) && t.hp > 0 && t.inside.is_none())
     }
 
     /// Whether `owner` may order an attack on `target`: a live enemy it sees now (a stealth
     /// unit only while detected or revealed), or an enemy building it remembers.
-    fn attackable(&self, owner: PlayerId, target: EntityId) -> bool {
+    pub(crate) fn attackable(&self, owner: PlayerId, target: EntityId) -> bool {
         let vision = &self.visions[owner.0 as usize];
         self.live_enemy(owner, target).is_some_and(|t| self.sees(owner, t) || vision.memory.contains_key(&target))
     }
@@ -2390,6 +2384,9 @@ impl World {
             None => {
                 let damage = w.damage_vs(armour) + self.garrison_bonus_vs(w.garrison_bonus, target);
                 self.shots.push((id, owner, target, if real { damage } else { 0 }, false));
+                if real && w.splash > Fx::ZERO {
+                    self.splash(id, owner, target, tpos, w);
+                }
             }
             Some(s) => {
                 let flight = (pos.distance(tpos) / s.speed).floor_int().max(1) as u32;
@@ -2419,10 +2416,12 @@ impl World {
     /// damage joins this tick's direct shots, so it applies together with them.
     fn land_shells(&mut self) {
         let tick = self.tick;
-        // A power's missiles leave their silo on a later tick than the order: shown on launch.
-        for s in self.shells.iter().filter(|s| s.fired == tick && s.shooter == POWER_SOURCE && s.from != s.at) {
-            let (from, at, lands, source) = (s.from, s.at, s.lands, s.source);
-            self.events.push(Event::Fired { shooter: POWER_SOURCE, from, at, lands, source });
+        // A power's missiles and an ability's later throws leave on a later tick than the
+        // order: shown as they go.
+        let delayed = |s: &&ShellInFlight| s.shooter == POWER_SOURCE || matches!(s.source, ShellSource::Ability { .. });
+        for s in self.shells.iter().filter(|s| s.fired == tick && delayed(s) && s.from != s.at) {
+            let (shooter, from, at, lands, source) = (s.shooter, s.from, s.at, s.lands, s.source);
+            self.events.push(Event::Fired { shooter, from, at, lands, source });
         }
         let (due, flying): (Vec<_>, Vec<_>) =
             core::mem::take(&mut self.shells).into_iter().partition(|s| s.lands <= tick);
@@ -2584,25 +2583,6 @@ impl World {
                 });
             }
         }
-    }
-
-    /// Unit `id` uses its ability now (`Def::ability`); it recharges from this tick.
-    fn use_ability(&mut self, id: EntityId) {
-        let tick = self.tick;
-        let e = self.entities.get(id).unwrap();
-        let Some(a) = self.rules.def(e.def).ability else { return };
-        let (owner, def, at) = (e.owner.unwrap(), e.def, e.pos);
-        let e = self.entities.get_mut(id).unwrap();
-        e.ability_at = tick + a.cooldown_ticks;
-        match a.kind {
-            crate::defs::AbilityKind::Boost(s) => e.add_status(s, tick),
-            crate::defs::AbilityKind::Detonate => {
-                // Its blast goes off as it is swept away (`cleanup`).
-                e.hp = 0;
-                self.stats[owner.0 as usize].units_lost += 1;
-            }
-        }
-        self.events.push(Event::AbilityUsed { player: owner, unit: id, def, at });
     }
 
     /// Statuses ending on the coming tick are dropped as this one closes, so between steps

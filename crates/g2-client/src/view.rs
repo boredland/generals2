@@ -207,6 +207,7 @@ impl Plugin for ViewPlugin {
                 crate::fx::face_camera,
                 age_wrecks,
                 sync_clouds,
+                sync_traps,
             )
                 .chain()
                 .in_set(ViewSet)
@@ -415,8 +416,8 @@ fn spawn_entity(commands: &mut Commands, assets: &Assets3d, sim: &Sim, e: &g2_si
                         Transform::from_xyz(0.0, 0.08, 0.0).with_scale(Vec3::new(r, 1.0, r)),
                     ));
                 }
-                // A squad is three soldiers in the procedural model's wedge.
-                let spots: &[Vec3] = if def.armour == g2_sim::Armour::Infantry {
+                // A squad is three soldiers in the procedural model's wedge; a hero stands alone.
+                let spots: &[Vec3] = if def.armour == g2_sim::Armour::Infantry && !def.unique {
                     &[Vec3::new(0.0, 0.0, 0.7), Vec3::new(-0.8, 0.0, -0.4), Vec3::new(0.8, 0.0, -0.4)]
                 } else {
                     &[Vec3::ZERO]
@@ -756,6 +757,42 @@ fn sync_clouds(
                 r * 2.0,
             )),
         ));
+    }
+}
+
+#[derive(Component)]
+struct TrapMark(g2_sim::Vec2);
+
+/// The local player's own traps lying in wait (a hero's flak trap): a low hazard-striped
+/// canister where each was set, so its owner knows the cover is there. Nobody else sees one.
+fn sync_traps(mut commands: Commands, sim: Res<Sim>, assets: Option<Res<Assets3d>>, drawn: Query<(Entity, &TrapMark)>) {
+    let Some(assets) = assets else { return };
+    let mine: Vec<_> = sim.world.traps().iter().filter(|t| t.owner == sim.local).collect();
+    if mine.len() * 2 == drawn.iter().count() && drawn.iter().all(|(_, m)| mine.iter().any(|t| t.at == m.0)) {
+        return;
+    }
+    for (e, _) in &drawn {
+        commands.entity(e).despawn();
+    }
+    let faction = Some(sim.world.player(sim.local).faction);
+    let (Some(hazard), Some(dark)) = (
+        assets.materials.get(&(faction, SlotKey::from(Slot::Hazard))),
+        assets.materials.get(&(faction, SlotKey::from(Slot::Dark))),
+    ) else {
+        return;
+    };
+    for t in mine {
+        let base = sim.to_world(t.at);
+        let parts = [(dark, Vec3::new(1.4, 0.5, 1.4), 0.25), (hazard, Vec3::new(1.0, 0.25, 1.0), 0.6)];
+        for (material, size, y) in parts {
+            commands.spawn((
+                crate::menu::MatchEntity,
+                TrapMark(t.at),
+                Mesh3d(assets.cylinder.clone()),
+                MeshMaterial3d(material.clone()),
+                Transform::from_translation(base + Vec3::Y * y).with_scale(size),
+            ));
+        }
     }
 }
 

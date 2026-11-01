@@ -83,10 +83,9 @@ fn weapon_lines(label: &str, w: Weapon) -> Vec<Line> {
     out
 }
 
-/// What a unit's special shot, ability and parting blast do, a line each: "R: Nitro, speed
+/// What a unit's special shot, abilities and parting blast do, a line each: "R: Nitro, speed
 /// 150% for 5 s, every 30 s".
 pub fn ability_lines(def: &g2_sim::Def) -> Vec<String> {
-    use g2_sim::defs::{AbilityKind, StatusKind};
     let mut out = Vec::new();
     if let Some(s) = def.special {
         let what = match s.blast {
@@ -100,21 +99,12 @@ pub fn ability_lines(def: &g2_sim::Def) -> Vec<String> {
             seconds(s.cooldown_ticks)
         ));
     }
-    if let Some(a) = def.ability {
-        let what = match a.kind {
-            AbilityKind::Boost(st) => {
-                let kind = match st.kind {
-                    StatusKind::Toughness => "damage taken",
-                    StatusKind::Damage => "damage",
-                    StatusKind::Speed => "speed",
-                    StatusKind::Sight => "sight",
-                    StatusKind::Stun => "stunned",
-                };
-                format!("{kind} {}% for {}, every {}", st.percent, seconds(st.ticks), seconds(a.cooldown_ticks))
-            }
-            AbilityKind::Detonate => "self-destruct".to_owned(),
-        };
-        out.push(format!("R: {}, {what}", a.name));
+    for (a, key) in def.abilities.iter().zip(crate::input::ABILITY_LABELS) {
+        let mut s = format!("{key}: {}, {}", a.name, ability_effect(a.kind));
+        if a.cooldown_ticks > 0 {
+            s += &format!(", every {}", seconds(a.cooldown_ticks));
+        }
+        out.push(s);
     }
     if let Some(b) = def.blast {
         let mut s = format!("Blows up for {} within {} when destroyed", b.damage, b.radius.to_f32().round());
@@ -124,6 +114,63 @@ pub fn ability_lines(def: &g2_sim::Def) -> Vec<String> {
         out.push(s);
     }
     out
+}
+
+/// What an ability does, in a few words: "speed 150% for 5 s", "50 shells of 100 within 10
+/// at range 50".
+fn ability_effect(kind: g2_sim::defs::AbilityKind) -> String {
+    use g2_sim::defs::{AbilityKind, StatusEffect, StatusKind};
+    let status = |st: StatusEffect| {
+        let kind = match st.kind {
+            StatusKind::Toughness => "damage taken",
+            StatusKind::Damage => "damage",
+            StatusKind::Speed => "speed",
+            StatusKind::Sight => "sight",
+            StatusKind::Stun => return format!("stunned for {}", seconds(st.ticks)),
+        };
+        format!("{kind} {}% for {}", st.percent, seconds(st.ticks))
+    };
+    let r = |f: g2_sim::Fx| f.to_f32().round();
+    match kind {
+        AbilityKind::Boost { statuses, radius, infantry, cloak_ticks } => {
+            let mut parts: Vec<String> = statuses.into_iter().flatten().map(status).collect();
+            if cloak_ticks > 0 {
+                parts.insert(0, format!("hidden for {}", seconds(cloak_ticks)));
+            }
+            let mut s = parts.join(", ");
+            if radius > g2_sim::Fx::ZERO {
+                let who = if infantry { "infantry" } else { "units" };
+                s += &format!(" (with own {who} within {})", r(radius));
+            }
+            s
+        }
+        AbilityKind::Detonate => "self-destruct".to_owned(),
+        AbilityKind::Throw { range, blast, shells, .. } => {
+            let mut s = format!("{shells} grenades of {} at range {}", blast.damage, r(range));
+            if blast.cloud_ticks > 0 {
+                s += &format!(", burning {} a second for {}", blast.cloud_damage, seconds(blast.cloud_ticks));
+            }
+            s
+        }
+        AbilityKind::Area { range, field } => {
+            let stun = field.enemies.iter().flatten().any(|&(k, _)| k == StatusKind::Stun);
+            let what =
+                if stun { format!("stuns enemies for {}", seconds(field.ticks)) } else { "an area effect".into() };
+            format!("{what} within {} at range {}", r(field.radius), r(range))
+        }
+        AbilityKind::Shot { weapon } => {
+            format!("one shot of {} (+{} vs heavy) at range {}", weapon.damage, weapon.bonus[2], r(weapon.range))
+        }
+        AbilityKind::Trap { range, radius, damage } => {
+            format!("hidden trap at range {}: {damage} to aircraft within {}, once", r(range), r(radius))
+        }
+        AbilityKind::Sacrifice { range, radius, blast } => format!(
+            "own infantry within {} of a point at range {} blow up for {} each",
+            r(radius),
+            r(range),
+            blast.damage
+        ),
+    }
 }
 
 /// The tooltip of build-grid `slot` for the local player and the selection.

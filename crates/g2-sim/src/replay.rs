@@ -2,7 +2,7 @@
 //! Binary, little-endian, versioned. The map is stored by name and resolved by the caller:
 //! "Crater Ridge" is built in; `<gen|zh>:<name>` is imported from the original game's map.
 
-use crate::command::{Command, CommandKind};
+use crate::command::{Aim, Command, CommandKind};
 use crate::defs::{DefId, Faction};
 use crate::entity::{EntityId, PlayerId};
 use crate::fixed::{Fx, Vec2};
@@ -17,8 +17,10 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// player's general rank (1 before), v12 the `Transform` and `Special` commands (tags 16, 17),
 /// v13 each player's team (0, alone, before), v14 the mission played (`MISSION_VERSION`), v15
 /// its difficulty (`DIFFICULTY_VERSION`; `Normal` before), v16 the `Ability` command (tag 19),
-/// v17 the `AttackBridge` and `RepairBridge` commands (tags 20, 21). Older replays still decode.
-pub const VERSION: u16 = 17;
+/// v17 the `AttackBridge` and `RepairBridge` commands (tags 20, 21), v18 the `Ability`
+/// command's slot and aim (tag 22; tag 19 still decodes, as the first slot used in place).
+/// Older replays still decode.
+pub const VERSION: u16 = 18;
 /// The first version with the mission field: a u16 after the players, `NO_MISSION` for none.
 /// Read only from this version on, so it composes with fields earlier versions add.
 const MISSION_VERSION: u16 = 14;
@@ -354,9 +356,21 @@ impl Writer {
                 self.id(*producer);
                 self.pos(*at);
             }
-            CommandKind::Ability { units } => {
-                self.u8(19);
+            CommandKind::Ability { units, slot, aim } => {
+                self.u8(22);
                 self.ids(units);
+                self.u8(*slot);
+                match aim {
+                    Aim::Here => self.u8(0),
+                    Aim::Point(p) => {
+                        self.u8(1);
+                        self.pos(*p);
+                    }
+                    Aim::Unit(t) => {
+                        self.u8(2);
+                        self.id(*t);
+                    }
+                }
             }
             CommandKind::AttackBridge { units, bridge } => {
                 self.u8(20);
@@ -449,9 +463,20 @@ impl Reader<'_> {
             16 => CommandKind::Transform { units: self.ids()? },
             17 => CommandKind::Special { units: self.ids()?, target: self.id()? },
             18 => CommandKind::SetRally { producer: self.id()?, at: self.pos()? },
-            19 => CommandKind::Ability { units: self.ids()? },
+            19 => CommandKind::Ability { units: self.ids()?, slot: 0, aim: Aim::Here },
             20 => CommandKind::AttackBridge { units: self.ids()?, bridge: self.u16()? },
             21 => CommandKind::RepairBridge { units: self.ids()?, bridge: self.u16()? },
+            22 => {
+                let units = self.ids()?;
+                let slot = self.u8()?;
+                let aim = match self.u8()? {
+                    0 => Aim::Here,
+                    1 => Aim::Point(self.pos()?),
+                    2 => Aim::Unit(self.id()?),
+                    t => return Err(DecodeError::BadTag(t)),
+                };
+                CommandKind::Ability { units, slot, aim }
+            }
             t => return Err(DecodeError::BadTag(t)),
         })
     }

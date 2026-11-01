@@ -1026,6 +1026,10 @@ fn derrick(p: &mut Vec<Part>, faction: Faction, r: f32) {
 pub fn unit(faction: Faction, def: &Def, r: f32) -> Vec<Part> {
     let mut p = Vec::new();
     let Class::Unit { constructor, collector, weapon, .. } = def.class else { return p };
+    if def.unique {
+        hero(&mut p, faction);
+        return p;
+    }
     if weapon.is_some() {
         combat_unit(&mut p, faction, def, r);
         return p;
@@ -1138,6 +1142,59 @@ fn soldier(p: &mut Vec<Part>, k: u8, feet: Vec3, body: Slot, head: Slot, launche
 
 /// Height of a soldier's hips: the top of his legs, which swing from there.
 pub const SOLDIER_HIP: f32 = 0.6;
+
+/// How much bigger than a squad's soldier a hero stands: one figure, not three, so it must
+/// read as a unit of its own at game zoom.
+pub const HERO_SCALE: f32 = 1.6;
+
+/// A faction's hero: one figure, `HERO_SCALE` times a soldier, with gear of its own. EU: a
+/// heavy machine gun, shoulder plates and a grenade bandolier; APA: a long rifle with a lit
+/// scope, a hood and a camouflage cape; GLA: no gun, a scarf over the head, satchel charges
+/// and a detonator in hand. Our own designs throughout.
+fn hero(p: &mut Vec<Part>, faction: Faction) {
+    let feet = Vec3::ZERO;
+    let on = |limb: Limb| Motion::Soldier { k: 0, feet, limb };
+    let mut f = Vec::new();
+    match faction {
+        Faction::Eu => {
+            soldier(&mut f, 0, feet, Slot::Hull, Slot::Team, None);
+            f.push(block(Slot::Dark, 0.3, 0.35, 0.72, 0.16, 0.18, 1.05).with(on(Limb::Rifle)));
+            f.push(block(Slot::Dark, 0.3, 0.2, 0.62, 0.1, 0.22, 0.14).with(on(Limb::Rifle)));
+            for x in [-0.33, 0.33] {
+                f.push(block(Slot::Team, x, 0.0, 1.12, 0.24, 0.12, 0.42).with(on(Limb::Body)));
+            }
+            f.push(block(Slot::Hazard, 0.0, 0.23, 0.9, 0.5, 0.1, 0.04).with(on(Limb::Body)));
+            f.push(block(Slot::Panel, 0.0, -0.33, 0.7, 0.46, 0.5, 0.26).with(on(Limb::Body)));
+            f.push(block(Slot::Glow, 0.0, 0.2, 1.3, 0.28, 0.07, 0.1).with(on(Limb::Body)));
+        }
+        Faction::Apa => {
+            soldier(&mut f, 0, feet, Slot::Dark, Slot::Panel, None);
+            f.push(block(Slot::Dark, 0.25, 0.45, 0.78, 0.08, 0.1, 1.4).with(on(Limb::Rifle)));
+            f.push(block(Slot::Glow, 0.25, 0.35, 0.86, 0.1, 0.1, 0.3).with(on(Limb::Rifle)));
+            f.push(block(Slot::Team, 0.0, 0.0, 1.38, 0.52, 0.08, 0.52).with(on(Limb::Body)));
+            f.push(block(Slot::Hull, 0.0, -0.2, 0.45, 0.62, 0.75, 0.14).with(on(Limb::Body)));
+            f.push(block(Slot::Team, 0.0, 0.2, 0.96, 0.46, 0.08, 0.06).with(on(Limb::Body)));
+        }
+        Faction::Gla => {
+            soldier(&mut f, 0, feet, Slot::Crate(1), Slot::Crate(3), None);
+            f.push(block(Slot::Team, 0.0, 0.0, 1.22, 0.56, 0.16, 0.5).with(on(Limb::Body)));
+            f.push(block(Slot::Team, 0.0, -0.3, 0.95, 0.18, 0.4, 0.06).with(on(Limb::Body)));
+            for x in [-0.32, 0.32] {
+                f.push(block(Slot::Crate(2), x, 0.05, 0.62, 0.18, 0.24, 0.3).with(on(Limb::Body)));
+            }
+            f.push(block(Slot::Dark, 0.0, -0.3, 0.68, 0.5, 0.36, 0.22).with(on(Limb::Body)));
+            f.push(block(Slot::Hazard, 0.32, 0.28, 0.72, 0.12, 0.2, 0.12).with(on(Limb::Rifle)));
+        }
+    }
+    // A team-coloured ring at its feet, wider than the figure, so it's found in a crowd.
+    f.push(cyl(Slot::Team, Vec3::new(0.0, 0.02, 0.0), Vec3::new(1.3, 0.04, 1.3)));
+    p.extend(f.into_iter().map(|mut part| {
+        part.at *= HERO_SCALE;
+        part.size *= HERO_SCALE;
+        part.motion = part.motion.scaled(HERO_SCALE);
+        part
+    }));
+}
 
 /// Helicopter: cockpit glazing, fuselage, tail boom with a fin and a tail rotor, stub wings
 /// with weapon pods, and a spinning main rotor. Built around its own origin (the unit is

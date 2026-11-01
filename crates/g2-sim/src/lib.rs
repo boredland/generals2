@@ -8,6 +8,7 @@
 //! The same setup plus the same command list must give the same state hash on every
 //! platform and build profile. `tests/determinism.rs` and the golden replay enforce that.
 
+pub mod ability;
 pub mod ai;
 pub mod bridge;
 pub mod command;

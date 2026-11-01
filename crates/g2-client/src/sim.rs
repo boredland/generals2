@@ -439,6 +439,16 @@ pub fn collect_shots(world: &g2_sim::World, hits: &mut Hits) {
             g2_sim::world::Event::FieldLanded { at, radius, hostile, .. } => {
                 hits.0.push(Shot::Field { at, radius, hostile })
             }
+            // A rally (a hero's status shared with the units around it) pulses over its reach
+            // as a buffing power does; the statuses then show on each unit (`fx::status_cues`).
+            g2_sim::world::Event::AbilityUsed { def, slot, at, .. } => {
+                if let Some(g2_sim::defs::AbilityKind::Boost { radius, .. }) =
+                    world.rules.def(def).abilities.get(slot as usize).map(|a| a.kind)
+                    && radius > g2_sim::Fx::ZERO
+                {
+                    hits.0.push(Shot::Field { at, radius, hostile: false })
+                }
+            }
             g2_sim::world::Event::BridgeHit { from, at, damage, .. } => {
                 let look = crate::fx::Look::Cannon { heavy: damage >= 80 };
                 hits.0.push(Shot::Hit {

@@ -98,6 +98,9 @@ pub mod ids {
     pub const EU_SPY_DRONE: DefId = DefId(80);
     pub const APA_SORTIE_FIGHTER: DefId = DefId(81);
     pub const GLA_TUNNEL: DefId = DefId(82);
+    pub const EU_COMMANDO: DefId = DefId(83);
+    pub const APA_COMMANDO: DefId = DefId(84);
+    pub const GLA_AGENT: DefId = DefId(85);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -328,7 +331,8 @@ const fn building(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -399,7 +403,8 @@ const fn unit(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -456,7 +461,8 @@ const fn soldier(
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -492,6 +498,7 @@ const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) 
         air_range: None,
         garrison_bonus: 0,
         suicidal: false,
+        splash: Fx::ZERO,
     }
 }
 
@@ -543,10 +550,20 @@ const fn with_lobbed_special(mut d: Def, name: &'static str, range: i64, blast: 
     d
 }
 
-/// `d` uses `ability` on command (the unit special key).
-const fn with_ability(mut d: Def, ability: Ability) -> Def {
-    d.ability = Some(ability);
+/// `d` uses `abilities` on command (the unit ability keys, in order).
+const fn with_abilities(mut d: Def, abilities: &'static [Ability]) -> Def {
+    d.abilities = abilities;
     d
+}
+
+/// A self status: `kind` at `percent` for `secs_` seconds on the unit alone.
+const fn boost(kind: StatusKind, percent: i32, secs_: u32) -> AbilityKind {
+    AbilityKind::Boost {
+        statuses: [Some(status(kind, percent, secs_)), None],
+        radius: Fx::ZERO,
+        infantry: false,
+        cloak_ticks: 0,
+    }
 }
 
 /// `d` sets off `blast` where it is destroyed.
@@ -652,7 +669,7 @@ const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3
 const HARVEST_AIR: CollectorSpec = CollectorSpec { capacity: 190, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 83] = [
+static DEFS: [Def; 86] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -673,7 +690,8 @@ static DEFS: [Def; 83] = [
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     },
     Def {
@@ -696,7 +714,8 @@ static DEFS: [Def; 83] = [
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     },
     // ---- European Union ------------------------------------------------------------------
@@ -710,7 +729,7 @@ static DEFS: [Def; 83] = [
         credits(1000),
         28,
         12,
-        &[EU_DOZER],
+        &[EU_DOZER, EU_COMMANDO],
     ),
     // src: Bulldozer hp 250, armour Heavy, land speed 14.
     with_armour(
@@ -767,7 +786,7 @@ static DEFS: [Def; 83] = [
         credits(1000),
         28,
         12,
-        &[APA_CRANE],
+        &[APA_CRANE, APA_COMMANDO],
     ),
     // src: Crane hp 280, $150, 11 s.
     unit(
@@ -808,7 +827,7 @@ static DEFS: [Def; 83] = [
         credits(1000),
         28,
         12,
-        &[GLA_WORKER],
+        &[GLA_WORKER, GLA_AGENT],
     ),
     // src: workers construct and gather supplies.
     unit(
@@ -992,7 +1011,7 @@ static DEFS: [Def; 83] = [
     // src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
     // placeholders: cheaper, faster and weaker than the Warlord. Black Market Nitro (the
     // alpha's gla_mediumcannonnitro, an instant ability with no numbers): `NITRO`.
-    with_ability(
+    with_abilities(
         ranked(
             soldier(
                 "GLA Scorpion Tank",
@@ -1008,7 +1027,7 @@ static DEFS: [Def; 83] = [
             72,
             92,
         ),
-        NITRO,
+        &[NITRO],
     ),
     // src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
     // cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders.
@@ -1341,7 +1360,7 @@ static DEFS: [Def; 83] = [
     // light), 30, 1.2 s, ground and air (`TargetType` 0). Radar Pulse (the wiki's Longbow
     // ability, "temporarily improves the sight range"; the alpha's eu_radarpulse, an instant
     // ability with no numbers): sight at 150% for 10 s, every 30 s, placeholders.
-    with_ability(
+    with_abilities(
         ranked(
             flying(soldier(
                 "EU Longbow",
@@ -1357,11 +1376,7 @@ static DEFS: [Def; 83] = [
             36,
             88,
         ),
-        Ability {
-            name: "Radar Pulse",
-            kind: AbilityKind::Boost(status(StatusKind::Sight, 150, 10)),
-            cooldown_ticks: secs(30),
-        },
+        &[Ability { name: "Radar Pulse", kind: boost(StatusKind::Sight, 150, 10), cooldown_ticks: secs(30) }],
     ),
     // Sniper Team (eu_elitesnipersoldiersquad): hp 240, $750, 13 s; sniper rifle 25 (+200 vs.
     // infantry), 50, 4 s; stealthed (the wiki's passive Camouflage).
@@ -1506,7 +1521,7 @@ static DEFS: [Def; 83] = [
     // ("Detonation") goes off however it dies. src: DamageRating 50, radius 20, a fire left
     // 5 s (`Persistence`) burning 10 a second (its DOT).
     with_blast(
-        with_ability(
+        with_abilities(
             ranked(
                 soldier(
                     "APA Dragon Tank",
@@ -1522,7 +1537,7 @@ static DEFS: [Def; 83] = [
                 72,
                 80,
             ),
-            Ability { name: "Ignition", kind: AbilityKind::Detonate, cooldown_ticks: 0 },
+            &[Ability { name: "Ignition", kind: AbilityKind::Detonate, cooldown_ticks: 0 }],
         ),
         clouding(blast(50, [0, 0, 0, 0], 20), 20, 10, 5),
     ),
@@ -1688,7 +1703,7 @@ static DEFS: [Def; 83] = [
     // 10: `g2-tools generals` measured Junkyard at 11 of 18 and Wild Dog at 7, against 16 and
     // 15 at 10 (8 gave 15 and 9). Black Market Nitro (gla_mediumcannonnitro, unlocked by an
     // upgrade in the alpha, here from the start): `NITRO`.
-    with_ability(
+    with_abilities(
         ranked(
             soldier(
                 "GLA Shrapnel Tank",
@@ -1704,7 +1719,7 @@ static DEFS: [Def; 83] = [
             72,
             80,
         ),
-        NITRO,
+        &[NITRO],
     ),
     // Toxin Tank (gu_mediumtoxintank): hp 625, $875, 17 s; toxin cannon 60 (+50 inf, +50
     // garrisoned), 35, 3 s. Replaces the Scorpion for its general.
@@ -1745,7 +1760,7 @@ static DEFS: [Def; 83] = [
     // charge, dying with it, and the charge also goes off when it is destroyed. Detonate (the
     // alpha's gla_bombtechnicaldetonate, instant) blows it where it stands.
     with_blast(
-        with_ability(
+        with_abilities(
             soldier(
                 "GLA Bomb Truck",
                 Faction::Gla,
@@ -1757,7 +1772,7 @@ static DEFS: [Def; 83] = [
                 Fx::from_int(2),
                 suicidal(weapon(185, [0, 0, 85, 0], 7, 10)),
             ),
-            Ability { name: "Detonate", kind: AbilityKind::Detonate, cooldown_ticks: 0 },
+            &[Ability { name: "Detonate", kind: AbilityKind::Detonate, cooldown_ticks: 0 }],
         ),
         blast(185, [0, 0, 85, 0], 13),
     ),
@@ -1778,6 +1793,67 @@ static DEFS: [Def; 83] = [
     // 5 s. The alpha's exit (gs_tunnelnetwork_exit, $300) is trained at an entrance; here
     // every tunnel is a full entrance.
     tunnel("GLA Tunnel Network", 500, credits(600), 30, 10, 10, 5),
+    // ---- Heroes: one per faction, trained at its command center, one at a time --------------
+    // src: the alpha's eu_commandosquad (built at es_cc): MaxHealth 510, $1950, BuildTime 24 s,
+    // MovementRate 14, ArmorRating 1 (our Infantry), EntityRadius 2; eu_commando's machine gun
+    // 50, range 30, RateOfFire 1.5 s, ground only, `RtsWeaponAbilitySphereDamage` radius 8;
+    // veterancy +45 hit points, RateOfFireChange -0.1. Its abilities: `EU_COMMANDO_ABILITIES`.
+    // The alpha has no build-limit field; one at a time is ours.
+    hero(with_abilities(
+        ranked(
+            soldier(
+                "EU Commando",
+                Faction::Eu,
+                510,
+                Armour::Infantry,
+                credits(1950),
+                secs(24),
+                14,
+                Fx::from_int(2),
+                splashing(weapon(50, [0, 0, 0, 0], 30, 15), 8),
+            ),
+            45,
+            90,
+        ),
+        EU_COMMANDO_ABILITIES,
+    )),
+    // src: the alpha's au_commandosquad (built at the APA command center): MaxHealth 610, $1800,
+    // BuildTime 24 s, MovementRate 14, ArmorRating 1, EntityRadius 2; au_commando's sniper
+    // rifle 100 (+42 vs infantry), range 50, RateOfFire 4.2 s, ground only; veterancy +45 hit
+    // points, RateOfFireChange -0.28. Abilities: `APA_COMMANDO_ABILITIES`.
+    hero(with_abilities(
+        ranked(
+            soldier(
+                "APA Commando",
+                Faction::Apa,
+                610,
+                Armour::Infantry,
+                credits(1800),
+                secs(24),
+                14,
+                Fx::from_int(2),
+                weapon(100, [42, 0, 0, 0], 50, 42),
+            ),
+            45,
+            72,
+        ),
+        APA_COMMANDO_ABILITIES,
+    )),
+    // src: the alpha's gu_commandosquad (built at gs_cc): MaxHealth 510, $1800, BuildTime 24 s,
+    // MovementRate 14, ArmorRating 1, EntityRadius 2; no weapon of its own (its weapon
+    // components belong to its abilities); veterancy +45 hit points. Abilities:
+    // `GLA_AGENT_ABILITIES`.
+    hero(with_abilities(
+        ranked(
+            with_armour(
+                unit("GLA Agent", Faction::Gla, 510, credits(1800), 24, 14, false, None, NONE),
+                Armour::Infantry,
+            ),
+            45,
+            100,
+        ),
+        GLA_AGENT_ABILITIES,
+    )),
 ];
 
 /// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
@@ -1973,7 +2049,8 @@ const fn civilian(name: &'static str, hp: i32, capacity: u32, radius: i64) -> De
         detection: Fx::ZERO,
         becomes: None,
         special: None,
-        ability: None,
+        abilities: &[],
+        unique: false,
         blast: None,
     }
 }
@@ -3324,11 +3401,150 @@ const fn thunderclap(stun_secs: u32) -> Power {
 
 /// Black Market Nitro, the GLA tanks' ability: speed at 150% for 5 s, every 30 s
 /// (placeholders: the alpha's ability holds only its name and an instant targeting type).
-const NITRO: Ability = Ability {
-    name: "Nitro",
-    kind: AbilityKind::Boost(StatusEffect { kind: StatusKind::Speed, percent: 150, ticks: secs(5) }),
-    cooldown_ticks: secs(30),
-};
+const NITRO: Ability = Ability { name: "Nitro", kind: boost(StatusKind::Speed, 150, 5), cooldown_ticks: secs(30) };
+
+// The heroes' abilities. src: each hero's `RtsUnitAbilityCasterData`: MaxMana 100, regaining 1
+// a second, so an ability recharges for its ManaCost in seconds; the numbers per ability are
+// in its comment. Names and descriptions are ours.
+
+/// `d` is a hero: one per player, standing or in training.
+const fn hero(mut d: Def) -> Def {
+    d.unique = true;
+    d
+}
+
+/// `w` also hits around its target, out to `radius` (the alpha's sphere damage).
+const fn splashing(mut w: Weapon, radius: i64) -> Weapon {
+    w.splash = Fx::from_int(radius);
+    w
+}
+
+/// A point-aimed area effect that stuns enemy units within `radius` for `secs_` seconds.
+const fn stun_field(radius: i64, secs_: u32) -> Field {
+    Field {
+        radius: Fx::from_int(radius),
+        delay_ticks: 0,
+        damage: 0,
+        hp: 0,
+        ranks: 0,
+        ticks: secs(secs_),
+        allies: [None, None],
+        enemies: [Some((StatusKind::Stun, 0)), None],
+        vehicles: false,
+    }
+}
+
+const EU_COMMANDO_ABILITIES: &[Ability] = &[
+    // src: eu_grenadestorm (RtsUnitAbilityCircle): ManaCost 50, Range 50, Radius 10; its
+    // GrenadeStormWeapon fires 50 grenades (RepeatFire 49) 0.1 s apart at InitialSpeed 45, each
+    // bursting for BlastDamage 100 within BlastRadius 5. Ours land on the point and on two
+    // rings around it, at half and the whole of its radius.
+    Ability {
+        name: "Grenade Volley",
+        kind: AbilityKind::Throw {
+            range: Fx::from_int(50),
+            blast: blast(100, [0, 0, 0, 0], 5),
+            shells: 50,
+            every_ticks: 3,
+            spread: Fx::from_int(10),
+            speed: per_sec(45),
+        },
+        cooldown_ticks: secs(50),
+    },
+    // src: eu_unstoppable (RtsUnitAbilityInstant): ManaCost 50; no amounts in its data (the
+    // wiki: tougher and hitting harder for a while). Half the damage taken and a quarter more
+    // dealt for 10 s are placeholders.
+    Ability {
+        name: "Unstoppable",
+        kind: AbilityKind::Boost {
+            statuses: [Some(status(StatusKind::Toughness, 50, 10)), Some(status(StatusKind::Damage, 125, 10))],
+            radius: Fx::ZERO,
+            infantry: false,
+            cloak_ticks: 0,
+        },
+        cooldown_ticks: secs(50),
+    },
+    // src: eu_leadership (RtsUnitAbilityInstant): ManaCost 28; no amounts in its data (the
+    // wiki: nearby infantry fight harder). A quarter more damage for own infantry within 30,
+    // the commando too, for 15 s, are placeholders.
+    Ability {
+        name: "Rally",
+        kind: AbilityKind::Boost {
+            statuses: [Some(status(StatusKind::Damage, 125, 15)), None],
+            radius: Fx::from_int(30),
+            infantry: true,
+            cloak_ticks: 0,
+        },
+        cooldown_ticks: secs(28),
+    },
+];
+
+const APA_COMMANDO_ABILITIES: &[Ability] = &[
+    // src: apa_antimaterialshot (RtsUnitAbilityUnitTarget): ManaCost 60, Range 50, DamageRating
+    // 1000, one shot at a chosen unit; ground targets, as its rifle.
+    Ability {
+        name: "Anti-Materiel Shot",
+        kind: AbilityKind::Shot { weapon: weapon(1000, [0, 0, 0, 0], 50, 10) },
+        cooldown_ticks: secs(60),
+    },
+    // src: the commando's EMP grenade (RtsUnitAbilityCircle): ManaCost 40, Range 40, Radius 15;
+    // its appliers stop movement and firing for Duration 5 s, on enemies (AffectsTeam 5).
+    Ability {
+        name: "EMP Grenade",
+        kind: AbilityKind::Area { range: Fx::from_int(40), field: stun_field(15, 5) },
+        cooldown_ticks: secs(40),
+    },
+    // src: apa_pyrogrenade (RtsUnitAbilityCircle): ManaCost 60, Range 50, DamageRating 40,
+    // Radius 5, a damage-over-time applier of 20 a second. Its Duration is 0 in the data; the
+    // burn's 5 s are a placeholder. Thrown at InitialSpeed 100.
+    Ability {
+        name: "Incendiary Grenade",
+        kind: AbilityKind::Throw {
+            range: Fx::from_int(50),
+            blast: clouding(blast(40, [0, 0, 0, 0], 5), 5, 20, 5),
+            shells: 1,
+            every_ticks: 0,
+            spread: Fx::ZERO,
+            speed: per_sec(100),
+        },
+        cooldown_ticks: secs(60),
+    },
+];
+
+const GLA_AGENT_ABILITIES: &[Ability] = &[
+    // src: gla_shadowagent (RtsUnitAbilityInstant): ManaCost 23; no amounts in its data (the
+    // wiki: camouflaged and faster for a while). Hidden and half again as fast for 10 s are
+    // placeholders.
+    Ability {
+        name: "Vanish",
+        kind: AbilityKind::Boost {
+            statuses: [Some(status(StatusKind::Speed, 150, 10)), None],
+            radius: Fx::ZERO,
+            infantry: false,
+            cloak_ticks: secs(10),
+        },
+        cooldown_ticks: secs(23),
+    },
+    // src: gla_commandoflaktrap (RtsUnitAbilityCircle): ManaCost 30, Range 50, DamageRating 125,
+    // Radius 15.
+    Ability {
+        name: "Flak Trap",
+        kind: AbilityKind::Trap { range: Fx::from_int(50), radius: Fx::from_int(15), damage: 125 },
+        cooldown_ticks: secs(30),
+    },
+    // src: gla_ultimatesacrifice (RtsUnitAbilityCircle): ManaCost 30, Range 75, Radius 30; the
+    // wiki: nearby GLA infantry blow themselves up. Each one's blast, 100 within 8, is a
+    // placeholder.
+    Ability {
+        name: "Last Stand",
+        kind: AbilityKind::Sacrifice {
+            range: Fx::from_int(75),
+            radius: Fx::from_int(30),
+            blast: blast(100, [0, 0, 0, 0], 8),
+        },
+        cooldown_ticks: secs(30),
+    },
+];
 
 // A faction's perk tables list every unit of its kind, the generals' own ones too: only a
 // player with that general can train them, so for anyone else those entries do nothing.
@@ -4408,6 +4624,9 @@ mod tests {
             (EU_SPY_DRONE, "EU Spy Drone"),
             (APA_SORTIE_FIGHTER, "APA Sortie Fighter"),
             (GLA_TUNNEL, "GLA Tunnel Network"),
+            (EU_COMMANDO, "EU Commando"),
+            (APA_COMMANDO, "APA Commando"),
+            (GLA_AGENT, "GLA Agent"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

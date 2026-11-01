@@ -35,14 +35,23 @@ pub struct Selection(pub Vec<EntityId>);
 #[derive(Resource, Default)]
 pub struct Placement(pub Option<DefId>);
 
-/// A power is armed, by slot (0 the general's, then support and perk powers), or the selected
-/// units' special shot (`SPECIAL`): the next left click on the ground uses the power there, on
-/// an enemy fires the special at it.
+/// A power is armed, by slot (0 the general's, then support and perk powers), the selected
+/// units' special shot (`SPECIAL`) or one of their aimed abilities (`ABILITY` plus its slot):
+/// the next left click on the ground uses the power or ability there, on an enemy fires the
+/// special or the ability's shot at it.
 #[derive(Resource, Default)]
 pub struct PowerAim(pub Option<u8>);
 
 /// `PowerAim` for the selection's special shot (R) rather than a power slot.
 pub const SPECIAL: u8 = u8::MAX;
+/// `PowerAim` for the selection's aimed ability in slot `n`: `ABILITY + n`.
+pub const ABILITY: u8 = 0xf0;
+
+/// The keys of a unit's ability slots (`Def::abilities`), in order: R, then F and C beside
+/// it, none of them a camera, power or command key.
+pub const ABILITY_KEYS: [KeyCode; g2_sim::defs::MAX_ABILITIES] = [KeyCode::KeyR, KeyCode::KeyF, KeyCode::KeyC];
+/// How the HUD and tooltips name them.
+pub const ABILITY_LABELS: [&str; g2_sim::defs::MAX_ABILITIES] = ["R", "F", "C"];
 
 /// The key that arms each power slot: room for a general's power, a faction's three support
 /// powers and the perk powers after them.
@@ -215,33 +224,29 @@ pub(crate) fn keyboard(
             sim.order(CommandKind::Transform { units: becoming });
         }
     }
-    // R: the selected units with a ready ability (Nitro, Radar Pulse, a self-destruct) use it at
-    // once; the special shot of those that have one is armed, and the next left click on an
-    // enemy fires it.
-    if keys.just_pressed(KeyCode::KeyR) {
-        let tick = sim.world.tick();
-        let mine = |e: &&g2_sim::Entity| e.owner == Some(sim.local);
-        let using: Vec<_> = sel
-            .0
-            .iter()
-            .copied()
-            .filter(|&id| {
-                sim.world
-                    .entity(id)
-                    .filter(mine)
-                    .is_some_and(|e| rules.def(e.def).ability.is_some() && e.ability_at <= tick)
-            })
-            .collect();
-        let ready = sel.0.iter().any(|&id| {
-            sim.world
-                .entity(id)
-                .filter(mine)
-                .is_some_and(|e| rules.def(e.def).special.is_some() && e.special_at <= tick)
-        });
-        if !using.is_empty() {
-            sim.order(CommandKind::Ability { units: using });
+    // R, F, C: the selected units with that ability slot ready use it, at once if it needs no
+    // aim, else it is armed and the next left click aims it. R also arms the special shot of
+    // those that have one; the next left click on an enemy fires it.
+    for (slot, key) in ABILITY_KEYS.into_iter().enumerate() {
+        if !keys.just_pressed(key) {
+            continue;
         }
-        if ready {
+        let (now, aimed) = ability_ready(&sim, &sel.0, slot as u8);
+        if !now.is_empty() {
+            sim.order(g2_sim::ability::in_place(now, slot as u8));
+        }
+        let special = slot == 0 && {
+            let tick = sim.world.tick();
+            sel.0.iter().any(|&id| {
+                sim.world.entity(id).is_some_and(|e| {
+                    e.owner == Some(sim.local) && rules.def(e.def).special.is_some() && e.special_at <= tick
+                })
+            })
+        };
+        if aimed {
+            aim.0 = Some(ABILITY + slot as u8);
+            placing.0 = None;
+        } else if special {
             aim.0 = Some(SPECIAL);
             placing.0 = None;
         }
@@ -260,6 +265,45 @@ pub(crate) fn keyboard(
     {
         sim.order(CommandKind::CancelTrain { producer });
     }
+}
+
+/// The selected own units whose ability `slot` is ready and used where they stand, and whether
+/// any has one ready there that must be aimed.
+fn ability_ready(sim: &Sim, sel: &[EntityId], slot: u8) -> (Vec<EntityId>, bool) {
+    use g2_sim::defs::AbilityAim;
+    let world = &sim.world;
+    let ready = sel.iter().filter_map(|&id| {
+        let e = world.entity(id).filter(|e| e.owner == Some(sim.local))?;
+        let a = world.rules.def(e.def).abilities.get(slot as usize)?;
+        (world.ability_wait(e, slot) == Some(0)).then_some((id, a.kind.aim()))
+    });
+    let (mut now, mut aimed) = (Vec::new(), false);
+    for (id, kind) in ready {
+        match kind {
+            AbilityAim::Here => now.push(id),
+            AbilityAim::Point(_) | AbilityAim::Unit(_) => aimed = true,
+        }
+    }
+    (now, aimed)
+}
+
+/// The command an armed ability (`ABILITY` + `slot`) gives for a left click at `here`: on an
+/// enemy under the cursor, at it, for units whose ability there shoots a unit; else at the
+/// ground.
+fn aimed_ability(sim: &Sim, sel: &[EntityId], slot: u8, here: g2_sim::Vec2) -> CommandKind {
+    use g2_sim::command::Aim;
+    use g2_sim::defs::AbilityAim;
+    let world = &sim.world;
+    let shoots = sel.iter().any(|&id| {
+        world
+            .entity(id)
+            .and_then(|e| world.rules.def(e.def).abilities.get(slot as usize))
+            .is_some_and(|a| matches!(a.kind.aim(), AbilityAim::Unit(_)))
+    });
+    let me = sim.local;
+    let enemy = shoots.then(|| pick(sim, here, |e| e.owner.is_some_and(|o| o != me))).flatten();
+    let aim = enemy.map_or(Aim::Point(here), Aim::Unit);
+    CommandKind::Ability { units: sel.to_vec(), slot, aim }
 }
 
 /// A left click on the HUD: a build-grid cell builds, trains or researches its slot, the minimap moves the
@@ -379,6 +423,9 @@ fn mouse(
                     let units = sel.0.clone();
                     sim.order(CommandKind::Special { units, target });
                 }
+            } else if slot >= ABILITY {
+                let order = aimed_ability(&sim, &sel.0, slot - ABILITY, here);
+                sim.order(order);
             } else {
                 sim.order(CommandKind::Power { slot, at: here });
             }
