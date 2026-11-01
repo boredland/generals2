@@ -1014,7 +1014,9 @@ fn grid_faces(
     let menu = build_menu(&sim, &sel);
     let held = mouse.is_some_and(|m| m.pressed(MouseButton::Left));
     let queue = sel.0.first().and_then(|&id| world.entity(id)).map_or(&[][..], |e| &e.queue[..]);
-    let usable = |i: usize| menu.get(i).is_some_and(|&slot| slot_cost(&sim, slot) <= credits);
+    // An upgrade being researched here is paid for: its button stays lit, whatever the credits.
+    let researching = |slot: Slot| matches!(slot, Slot::Upgrade(_)) && queue.iter().any(|p| slot.is(p.item));
+    let usable = |i: usize| menu.get(i).is_some_and(|&slot| researching(slot) || slot_cost(&sim, slot) <= credits);
     let mut states = [Face::Off; 9];
     for (button, cursor, mut img) in &mut faces {
         let slot = menu.get(button.0).copied();
@@ -1262,7 +1264,8 @@ impl Slot {
 
 /// What the selection can build, train or research right now, in grid order: a building's
 /// units first (with the local player's general's), then its upgrades not yet researched or
-/// queued anywhere.
+/// queued anywhere else. One queued at this building keeps its button until it is done, so
+/// the button shows its progress and a right click on it cancels it, as a unit's does.
 pub(crate) fn build_menu(sim: &Sim, sel: &Selection) -> Vec<Slot> {
     let world = &sim.world;
     let focus = sel.0.first().and_then(|&id| world.entity(id));
@@ -1274,10 +1277,16 @@ pub(crate) fn build_menu(sim: &Sim, sel: &Selection) -> Vec<Slot> {
         } else if d.is_constructor() {
             offers.collect()
         } else {
-            let research = d.researches.iter().filter(|&&u| !world.researched_or_queued(sim.local, u));
+            let research =
+                d.researches.iter().filter(|&&u| queued_here(e, u) || !world.researched_or_queued(sim.local, u));
             offers.chain(research.map(|&u| Slot::Upgrade(u))).collect()
         }
     })
+}
+
+/// Whether `upgrade` is in `building`'s own production queue.
+pub(crate) fn queued_here(building: &g2_sim::Entity, upgrade: g2_sim::defs::UpgradeId) -> bool {
+    building.queue.iter().any(|p| p.item == Product::Upgrade(upgrade))
 }
 
 /// What a slot costs the local player (a cancel pays back instead: 0 here).
@@ -1814,6 +1823,32 @@ mod tests {
         let pips = [0, 1, 20, 21, 99, 100, 140].map(|c| super::cargo_pips(c, 100));
         assert_eq!(pips, [0, 1, 1, 2, 5, 5, 5]);
         assert_eq!(super::cargo_pips(40, 40), 5, "a GLA worker's full 40-credit load");
+    }
+
+    /// An upgrade being researched keeps its build-grid button at the building researching
+    /// it, so the button shows its progress and a right click on it can cancel it; the button
+    /// goes once the research is done.
+    #[test]
+    fn a_researching_upgrade_keeps_its_button_until_done() {
+        use g2_rules::ids::*;
+        use g2_sim::CommandKind;
+        let (mut sim, _) = crate::select::tests::sim_with_units();
+        let barracks = sim.world.entities().find(|e| e.def == GLA_BARRACKS).unwrap().id;
+        let sel = crate::input::Selection(vec![barracks]);
+        let fuses = super::Slot::Upgrade(sim.world.rules.def(GLA_BARRACKS).researches[0]);
+        assert!(super::build_menu(&sim, &sel).contains(&fuses), "offered before");
+        let super::Slot::Upgrade(upgrade) = fuses else { unreachable!() };
+        sim.world.submit(sim.local, CommandKind::Research { producer: barracks, upgrade });
+        for _ in 0..=g2_sim::world::INPUT_DELAY + 30 {
+            sim.world.step();
+        }
+        let e = sim.world.entity(barracks).unwrap();
+        assert!(e.queue.first().is_some_and(|p| fuses.is(p.item) && p.progress_halves > 0), "researching");
+        assert!(super::build_menu(&sim, &sel).contains(&fuses), "still on the grid while researching");
+        while !sim.world.player(sim.local).upgrades.contains(&upgrade) {
+            sim.world.step();
+        }
+        assert!(!super::build_menu(&sim, &sel).contains(&fuses), "gone once researched");
     }
 
     /// A window resize rebuilds the HUD in place: after the first build and after each

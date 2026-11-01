@@ -241,7 +241,9 @@ pub fn lines(sim: &Sim, sel: &Selection, slot: Slot) -> Vec<Line> {
         // Answered above, before the price line.
         Slot::Cancel => {}
     }
-    if world.player(me).credits < cost {
+    // An upgrade being researched here is paid for already.
+    let paid = matches!(slot, Slot::Upgrade(u) if focus.is_some_and(|e| crate::hud::queued_here(e, u)));
+    if !paid && world.player(me).credits < cost {
         out.push(Line::Warn(format!("Not enough money: ${} short", cost - world.player(me).credits)));
     }
     let builds = focus.is_some_and(|e| rules.def(e.def).is_constructor());
