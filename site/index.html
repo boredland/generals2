@@ -140,7 +140,7 @@
 <main>
   <section class="hero">
     <video src="media/hero.webm" poster="media/hero-poster.jpg" autoplay muted loop playsinline aria-hidden="true"></video>
-    <img src="media/hero-poster.jpg" alt="APA and GLA armies fighting on Crater Ridge at 5:27, smoke and toxin over the field, the game's camera without its HUD">
+    <img src="media/hero-poster.jpg" alt="APA and GLA armies fighting on Crater Ridge at 6:01, smoke and toxin over the field, the game's camera without its HUD">
     <div class="veil"></div>
     <div class="copy">
       <h1>Open RTS <span class="glow">— hold the line.</span></h1>
@@ -167,28 +167,32 @@
     </div>
     <div class="card">
       <h3>Skirmish, your way</h3>
-      <p>Up to <b>8 players</b> (human or AI) on <b>85 original Generals and Zero Hour
-        maps</b> plus a built-in one, bridges included. Pick factions, generals, starting credits,
-        fog and seed in the setup screen, or play a four-mission <b>campaign</b>.</p>
+      <p>Up to <b>8 players</b> (human or AI, in teams if you like) on <b>85 original Generals and
+        Zero Hour maps</b> plus a built-in one, with bridges you can blow up and rebuild. Pick factions,
+        generals, teams, starting credits, fog and seed, or play an eight-mission <b>campaign</b> at
+        three difficulties.</p>
     </div>
     <div class="card">
       <h3>Together or against each other</h3>
-      <p>A <b>LAN lobby</b> finds games on your network; play head to head, or side by side in
-        <b>co-op Onslaught</b> against scheduled waves. Allies share vision and win together.</p>
+      <p>A <b>LAN lobby</b> finds games on your network, and hosting asks your router to forward the
+        port so a friend can join over the <b>internet</b>, with no server in between. Play head to
+        head, or side by side in <b>co-op Onslaught</b>. Allies share vision and win together.</p>
     </div>
     <div class="card">
       <h3>Two AI levels</h3>
-      <p><b>Easy</b> sends waves. <b>Normal</b> weighs every fight before it attacks, retreats
-        units that are losing, defends against raiders and expands when its supply runs low.
-        Across all 86 skirmish maps Normal beats Easy 1,401 to 143 (4 of 1,548 matches past 20 minutes).</p>
+      <p><b>Easy</b> sends waves and fires its strike powers. <b>Normal</b> weighs every fight before
+        it attacks, keeps its artillery behind the line, retreats units that are losing, pulls
+        constructors out of danger and fields its hero. Across all 86 skirmish maps Normal beats
+        Easy 1,389 to 158.</p>
     </div>
     <div class="card">
       <h3>Three factions</h3>
-      <p>EU, APA and GLA, each with its own economy shape, armour and general, combat units
-        from rifles to artillery and helicopters, a base defence, upgrades and veteran ranks.
-        Infantry garrison buildings; GLA rebels hide in stealth. Numbers come from the 2013
-        alpha's own data where the archive has it; the rest are placeholders tuned by measured
-        matches, so every faction wins 43–57% of them.</p>
+      <p>EU, APA and GLA, each with its own economy shape, armour and generals, combat units
+        from rifles to artillery and helicopters, a hero, a base defence, upgrades and veteran ranks.
+        Units have abilities (Nitro, self-destructs, grenades, stuns); GLA tunnels and hides. Numbers
+        come from the 2013 alpha's own data where the archive has it; the rest are placeholders
+        tuned by measured matches, so every faction wins 47–55% of them. The rules are plain data
+        files you can edit.</p>
     </div>
     <div class="card">
       <h3>Fog of war</h3>
@@ -204,8 +208,9 @@
     <div class="card">
       <h3>The field remembers</h3>
       <p>Tracers, shell arcs and blasts; damaged buildings smoke and burn, wrecks smoulder, tanks
-        leave tread marks and dust, and shells leave craters. All decoration only: the sim never
-        depends on a single pixel of it.</p>
+        leave tread marks and dust, and shells leave craters. Soldiers walk and fall, barrels lift
+        to their target, birds scatter from a fight and flags stream in the wind. All decoration
+        only: the sim never depends on a single pixel of it.</p>
     </div>
   </div>
 
@@ -216,10 +221,10 @@
     game draws its own procedural models and HUD instead.</p>
   <figure class="clip">
     <video src="media/gameplay.webm" poster="media/gameplay-poster.jpg" controls muted loop playsinline preload="metadata"></video>
-    <figcaption>Thirty seconds of play at real speed (APA against GLA, Normal AIs, 5:20 to 5:50 on
-      Crater Ridge, the busiest half minute of the match): the armies trade fire, burning wrecks
-      smoulder and shells leave craters. Rendered headless, one sim tick a frame
-      (<code>--frames 900</code>), the camera drifting after the fighting.</figcaption>
+    <figcaption>Thirty seconds of play at real speed (APA against GLA, Normal AIs, 5:55 to 6:25 on
+      Crater Ridge, the busiest half minute of the match, two seconds before the GLA wins): toxin
+      washes over the APA base, wrecks smoulder and shells leave craters. Rendered headless, one
+      sim tick a frame (<code>--frames 900</code>), the camera drifting after the fighting.</figcaption>
   </figure>
   <div class="shots">
     <figure>
@@ -227,16 +232,16 @@
       <figcaption>The main menu, laid out as Command &amp; Conquer: Generals&#39; own, over the frozen battlefield.</figcaption>
     </figure>
     <figure>
-      <img src="img/missions.png" alt="The Missions page: four missions down the left, First Light open and the rest locked, its briefing, map preview and objectives">
-      <figcaption>The campaign: four missions, each unlocked by winning the one before, with briefing, map and objectives.</figcaption>
+      <img src="img/missions.png" alt="The Missions page: eight missions down the left, First Light open and the rest locked, its briefing, map preview, objectives and a difficulty cell">
+      <figcaption>The campaign: eight missions at Easy, Normal or Hard, each unlocked by winning the one before, with briefing, map and objectives.</figcaption>
     </figure>
     <figure>
       <img src="img/lobby.png" alt="The LAN lobby: player name, the players and games lists, host port, side, and Host, Join and Direct Connect">
-      <figcaption>The LAN lobby, as Generals&#39;: games on your network show up in the list; host one, join one or connect to an address.</figcaption>
+      <figcaption>The LAN lobby, as Generals&#39;: games on your network show up in the list; host one (the router is asked to forward the port), join one or connect to an address.</figcaption>
     </figure>
     <figure>
-      <img src="img/setup.png" alt="The skirmish page: eight player rows with colour, faction and general, the map preview, starting cash, fog and seed">
-      <figcaption>The skirmish page, as Generals&#39;: up to eight players, factions, generals and AI levels, 86 maps, cash, fog.</figcaption>
+      <img src="img/setup.png" alt="The skirmish page: eight player rows with colour, faction or general, team, the map preview, starting cash, fog and seed">
+      <figcaption>The skirmish page, as Generals&#39;: up to eight players in teams, factions, generals and AI levels, 86 maps, cash, fog.</figcaption>
     </figure>
     <figure>
       <img src="img/generals.png" alt="The Generals screen: EU Bulldog at rank 1, its eight perks with prices and ranks">
@@ -276,7 +281,7 @@
       <b>Z</b> selects everything on screen, <b>X</b> every unit of the selected kinds, <b>V</b> jumps to the latest alert</td></tr>
     <tr><th>Camera</th><td>WASD / arrows / screen edge to pan, wheel zooms, Q/E rotates, click the minimap to jump</td></tr>
     <tr><th>Game</th><td>Space pauses, <b>+ / −</b> game speed, Esc opens the menu, F10 surrenders, <b>M</b> mutes</td></tr>
-    <tr><th>Extras</th><td><b>G</b> arms your general's power, <b>F1–F3</b> your faction's support powers (click to aim), <b>T</b> deploys artillery, <b>E</b> empties a garrison, <b>Tab</b> selects the next collector</td></tr>
+    <tr><th>Extras</th><td><b>G</b> arms your general's power, <b>F1–F6</b> your support powers (click to aim), <b>R / F / C</b> a unit's abilities, <b>T</b> deploys artillery, <b>E</b> empties a garrison, <b>Tab</b> selects the next collector</td></tr>
   </table>
 
   <h2 id="build">Build and run</h2>
@@ -298,17 +303,20 @@ cargo test --workspace</pre>
   <div class="grid">
     <div class="card">
       <h3>What is in</h3>
-      <p>Skirmish vs AI or another player over the network or a LAN lobby, co-op and solo Onslaught
-        modes of scheduled waves, a four-mission campaign, on 86 maps (85 original, one built in), walkable bridges, three
-        factions, fog, stealth, artillery, helicopters, garrisons, upgrades, veterancy, synthesized sound,
-        fourteen generals with their own units, modifiers, an active power that grows with rank and a perk tree you rank up by playing, airstrikes
-        and spy sorties flown by jets that anti-air can shoot down, replays, a deterministic core.</p>
+      <p>Skirmish vs AI or other players in teams, over a LAN or the internet, co-op and solo
+        Onslaught modes of scheduled waves, an eight-mission campaign with three difficulties, on 86
+        maps (85 original, one built in) with destructible bridges and hills that block fire, three
+        factions with a hero each, fog, stealth, tunnels, artillery, helicopters, garrisons,
+        upgrades, veterancy, unit abilities, synthesized sound, fourteen generals with their own
+        units, powers and a perk tree you rank up by playing, replays, moddable rules and a
+        deterministic core.</p>
     </div>
     <div class="card">
       <h3>What is not</h3>
-      <p>Internet play, units' special abilities, art of its own beyond procedural shapes and
-        textures; the alpha's music and voices only play from an imported copy. The balance is
-        measured, not designed: placeholders are tuned until the AIs' matches come out even.</p>
+      <p>A relay for players whose routers can't forward a port, the heroes' passive abilities,
+        art of its own beyond procedural shapes and textures; the alpha's music and voices only
+        play from an imported copy. The balance is measured, not designed: placeholders are tuned
+        until the AIs' matches come out even. Nobody has played it in a window yet.</p>
     </div>
     <div class="card">
       <h3>The 2013 alpha</h3>
