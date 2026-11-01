@@ -1369,8 +1369,13 @@ impl Ai {
     }
 }
 
-/// Credits `Normal` keeps over its hero's price before training it.
-const HERO_SURPLUS: i64 = 500;
+/// Credits `Normal` keeps over its hero's price before training it. Measured on the 33 maps
+/// (every faction pairing, both starts, Normal against Normal): at 500 the EU won 101 of 131
+/// non-mirror matches, the APA 54 and the GLA 42 (its agent is unarmed, and a hero bought
+/// that early is $1800-1950 not spent on the army); at 4000, with the balance pass's
+/// placeholder changes, 69, 59 and 68 of 130. With those changes 3000 left the GLA at 40%;
+/// without them 5000 left the APA at 29%.
+const HERO_SURPLUS: i64 = 4_000;
 
 /// Just outside a building of `radius` at `pos`, on the side facing `from`: not its centre, a
 /// blocked cell no route can end on.

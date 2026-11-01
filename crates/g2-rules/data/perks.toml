@@ -1141,13 +1141,15 @@ effects = [
     { unit = "gla_rpg", effect = "experience", percent = 200 },
 ]
 
+# 10% (20% before): `g2-tools generals` measured Kitbash at 13 of 18 at 20%, 12 at 10%
+# (Long Field at 110% instead kept 13).
 [[perk]]
 id = "kb_scrap_parts"
 name = "Scrap Parts"
-description = "Stealth Field comes online 20% faster after use."
+description = "Stealth Field comes online 10% faster after use."
 rank = 1
 price = 200
-power_tuning = { cooldown_percent = 80 }
+power_tuning = { cooldown_percent = 90 }
 
 [[perk]]
 id = "kb_long_field"

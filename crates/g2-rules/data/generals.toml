@@ -31,8 +31,9 @@ perks = [
 # After the EU general Salvo's "Suppressing fire" (an artillery strike called onto the
 # field): seven shells on and around the point, half a second apart after a 3 s delay.
 # Placeholder numbers. No bonus against buildings: with one it took half a command
-# center per use, a base-killer rather than a strike on an army. Shell damage 54 (90
-# before), tuned by `g2-tools generals`: Bulldog 13 of 18 at 90, 12 at 54.
+# center per use, a base-killer rather than a strike on an army. Shell damage 45 (90, then
+# 54), tuned by `g2-tools generals`: Bulldog 13 of 18 at 90, 12 at 54; once heroes came in,
+# 13 at 54 again, 12 at 45 (11 at 40).
 [general.power]
 name = "Artillery barrage"
 recharge = 240
@@ -40,7 +41,7 @@ kind = "barrage"
 shells = 7
 delay = 3
 every = 0.5
-damage = 54
+damage = 45
 bonus = { light = 20 }
 radius = 7
 # levels: more shells (placeholders; the general is ours).
@@ -52,7 +53,7 @@ kind = "barrage"
 shells = 7
 delay = 3
 every = 0.5
-damage = 54
+damage = 45
 bonus = { light = 20 }
 radius = 7
 
@@ -63,7 +64,7 @@ kind = "barrage"
 shells = 9
 delay = 3
 every = 0.5
-damage = 54
+damage = 45
 bonus = { light = 20 }
 radius = 7
 
@@ -186,8 +187,9 @@ count = 5
 # src: the EU air force general (the wiki's Daedalus, the alpha's EU_AirforceGeneral, icon EG_Airforce_01): Fox LRV in place of the APC, Longbow helicopters, the Sniper Team; power Air Raid (lvl01-03: 3 bombers, recharge 240 s, 1 s before activation).
 # Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
 # steps; the damage of every power is a placeholder (the alpha's are effect assets). Air
-# Raid's bombs at 84 and 105 (140 and 175 before): `g2-tools generals` measured Daedalus at
-# 13 of 18 before, 12 after.
+# Raid's bombs at 60 and 75 (140 and 175, then 84 and 105): `g2-tools generals` measured
+# Daedalus at 13 of 18 at 140/175, 12 at 84/105; once heroes came in, 13 at 84/105 again,
+# 11 at 60/75 (13 at 50/60).
 [[general]]
 id = "daedalus"
 name = "Daedalus"
@@ -217,7 +219,7 @@ jets = 3
 spread = 10
 bombs = 2
 spacing = 12
-damage = 84
+damage = 60
 radius = 10
 
 [[general.power_levels]]
@@ -229,7 +231,7 @@ jets = 3
 spread = 10
 bombs = 2
 spacing = 12
-damage = 105
+damage = 75
 radius = 10
 
 [[general.power_levels]]
@@ -241,7 +243,7 @@ jets = 4
 spread = 10
 bombs = 2
 spacing = 12
-damage = 105
+damage = 75
 radius = 10
 
 # src: the EU rapid assault general (the wiki's Mercury Red: Shock Troopers; the alpha's EU_RapidAssaultGeneral): Shock Troopers in place of the Recon Squad, the Assault APC in place of the APC, Longbows; power Bulwark (radius 25, recharge 180 s, no delay; its area persists 10 s and its effect asset holds no amount).

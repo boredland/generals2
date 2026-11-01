@@ -36,10 +36,13 @@ builds = ["eu_supply", "eu_power", "eu_derrick", "eu_barracks", "eu_factory", "e
 # src: EU harvester $450, 0:20, airborne collector (flying is not modelled yet); the
 # alpha's `EntityRadius` 4, the aircraft's.
 # src: the alpha's eu_harvester `RtsResourceHarvesterComponentData`: MaxResources 190 a trip
-# (the APA harvester's is 120, the GLA worker's 110). Load and unload times are still
-# the APA harvester's placeholders. On the 33 maps, at the APA harvester's 100 the EU won 55 of 132 at Easy
+# (the APA harvester's is 120, the GLA worker's 110). Load and unload times are
+# placeholders. On the 33 maps, at the APA harvester's 100 the EU won 55 of 132 at Easy
 # and 13 of 131 at Normal, at 190 63 and 74. The APA's 120 was measured too: Normal APA then
 # won 91 of 130 (64 at 100) and the GLA 40, so it keeps the APA harvester's 100 for now.
+# Load time 4 s (3 s, the APA harvester's, before): once heroes came in the Normal EU won
+# 83 of 129 at 3 s, 78 of 130 at 4 s (with the hero and Thunderfist changes of the same
+# pass), APA against EU 21-44 then 33-32.
 [[unit]]
 id = "eu_harvester"
 name = "EU Harvester"
@@ -50,7 +53,7 @@ cost = 450
 build_time = 20
 radius = 4
 speed = 24
-collector = { capacity = 190, load_time = 3, unload_time = 1 }
+collector = { capacity = 190, load_time = 4, unload_time = 1 }
 
 # ---- Asia-Pacific Alliance -----------------------------------------------------------
 # src: Crane hp 280, $150, 11 s.
@@ -197,7 +200,8 @@ range = 30
 cooldown = 1.2
 
 # src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
-# cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders.
+# cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders. Speed 8
+# (7 before): on the 33 maps Normal APA won 54 of 131 at 7, 64 of 129 at 8.
 [[unit]]
 id = "apa_thunderfist"
 name = "APA Thunderfist"
@@ -207,7 +211,7 @@ armour = "heavy"
 cost = 980
 build_time = 21.51
 radius = 3.5
-speed = 7
+speed = 8
 ranks = { health = 45, cooldown_percent = 80 }
 weapon = "thunderfist_cannon"
 
@@ -335,11 +339,12 @@ cooldown = 2.3
 # src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
 # (anti-air too). src: speed and guns from the alpha's au_mediumguntank: `MovementRate` 11;
 # GatlingGun_Ground 14 (+8 vs. infantry) every 0.5 s, and GatlingGun_Air 14 (+8 vs. light),
-# reaching 50. A unit has one weapon here, so it is one gun with both bonuses. Placeholder:
-# the ground range 32 (the alpha's 35 measured worse, before the rest of the balance pass:
-# Normal APA 74 of 126 wins against 66 of 120). On the 33 maps, with the placeholder before
-# it (10, +12 vs. infantry, every 0.4 s, speed 12), Normal APA won 52 of 131 (64 with these)
-# and the EU 81 (74).
+# reaching 50. A unit has one weapon here, so it is one gun with both bonuses. The ground
+# range is the alpha's 35 again (a placeholder 32 before: 35 measured worse in the first
+# balance pass, Normal APA 74 of 126 wins against 66 of 120; with heroes in, on the 33
+# maps Normal APA won 54 of 131 at 32 and 60 of 129 at 35). With the placeholder gun before
+# that (10, +12 vs. infantry, every 0.4 s, speed 12), Normal APA won 52 of 131 (64 with
+# these) and the EU 81 (74).
 [[unit]]
 id = "apa_gatling"
 name = "APA Gatling Tank"
@@ -355,7 +360,7 @@ ranks = { health = 60, cooldown_percent = 90 }
 [unit.weapon]
 damage = 14
 bonus = { infantry = 8, light = 8 }
-range = 32
+range = 35
 cooldown = 0.5
 targets = "both"
 air_range = 50
