@@ -137,17 +137,17 @@ Not yet:
 
 ![EU base at 3 minutes, in-game camera](docs/img/m1-eu-base-3min.png)
 
-![EU squads in the field at 3:45, under attack, beside a supply pile's dirt pad, scorched patches and roadside palms, in-game camera](docs/img/m3-eu-attacks-gla.png)
+![An EU base under fire at 3:45: a GLA vehicle in the field, smoke and wreckage by the supply center, in-game camera](docs/img/m3-eu-attacks-gla.png)
 
 ![APA vs GLA after 5 minutes, whole-map view](docs/img/m1-apa-vs-gla-5min.png)
 
-*Above, each under player 0's fog of war: an EU base at 3:00 (EU vs GLA AI, `--view base`); EU squads in the field at 3:45, under attack (`--view battle --ticks 6750`); and APA (red) vs GLA (sand) after 5 minutes of AI vs AI (`--view map`), where only the APA's explored ground is lit and the GLA base stays hidden. All rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150), in the game's own look (no alpha import), with the framed HUD: power and credits over the minimap, the support powers as tiles (F1-F3), the selection card and the build tray.*
+*Above, each under player 0's fog of war: an EU base at 3:00 (EU vs GLA AI, `--view base`); the same base under fire at 3:45, smoke and wreckage by its supply center (`--view battle --ticks 6750`); and APA (red) vs GLA (sand) after 5 minutes of AI vs AI (`--view map`), where only the APA's explored ground is lit and the GLA base stays hidden. All rendered headless with `--screenshot` on the integrated Radeon (RADV GFX1150), in the game's own look (no alpha import), with the framed HUD: power and credits over the minimap, the support powers as tiles (F1-F3), the selection card and the build tray.*
 
-![APA Thunderfist deployed in the field at 5:55](docs/img/m4-apa-thunderfist-deployed.png)
+![APA Thunderfist deployed in the field at 5:35, its infantry around it](docs/img/m4-apa-thunderfist-deployed.png)
 
-![GLA Toxin Artillery shelling an EU supply center at 3:29, the toxin pooled at its foot and smoke from the hits](docs/img/m4-gla-toxin-artillery.png)
+![A GLA Toxin Artillery shell bursting green beside an EU supply center at 3:05](docs/img/m4-gla-toxin-artillery.png)
 
-*Above: artillery. A deployed APA Thunderfist out in the field, ruts and scorches around it (EU vs APA, `--spectate --view at:146,225 --ticks 10651`), and a GLA Toxin Artillery shelling an EU supply center: the toxin pools green at its foot and the hits smoke (GLA vs EU, `--spectate --view battle --ticks 6277`).*
+*Above: artillery. A deployed APA Thunderfist with its infantry around it (EU vs APA, `--spectate --view at:165,171 --ticks 10051`), and a GLA Toxin Artillery shell bursting green beside an EU supply center (GLA vs EU, `--spectate --view at:214,260 --ticks 5571`).*
 
 ![Zero Hour's Tournament Desert, EU base at 3 minutes](docs/img/m2-zh-tournament-desert-base.png)
 
@@ -157,7 +157,7 @@ Not yet:
 
 **Verification status.**
 
-- The README frames were rendered on this host, and the mirror check passed for each (70/70, 71/71 and 70/70 entities for the first three, none misplaced; hidden enemies keep their model, hidden). The HUD totals match the sim for the same matches (Normal AIs, seed 1): EU at 5,400 ticks shows `$2215`, power 100/210; APA at 9,000 ticks shows `$485`, power 100/210. The same APA frame with `--reveal` shows the GLA base and its minimap dots; with fog it doesn't.
+- The README frames were rendered on this host, and the mirror check passed for each (69/69, 71/71 and 69/69 entities for the first three, none misplaced; hidden enemies keep their model, hidden). The HUD totals match the sim for the same matches (Normal AIs, seed 1): EU at 5,400 ticks shows `$1405`, power 100/210; APA at 9,000 ticks shows `$130`, power 100/210. The same APA frame with `--reveal` shows the GLA base and its minimap dots; with fog it doesn't.
 - Fog tests: an attack on an enemy never seen is rejected; once scouted, the building can be attacked from out of sight and the order holds through the fog until the tank fires (the test fails if memory isn't accepted, or if the order is dropped in the fog); scenery on unexplored ground stays hidden until a unit explores it; an enemy foundation raised on explored ground out of sight doesn't clear the scenery on it; an enemy command center destroyed out of sight keeps its model and the scenery clearing under it until our dozer sees the spot again (fails if ghosts are dropped). The headless mirror check allows a model with no sim entity only if the fog still remembers it.
 - Artillery tests (`crates/g2-rules/tests/artillery.rs`): a shell lands on the spot after distance over speed and misses a target that drove off (fails with instant shells); every enemy in the blast is hit and our own worker standing in it is not (fails if splash hits friends); no shot inside the minimum range; the Thunderfist deploys and packs up in its set-up time, can't move while deployed, and rejects `Deploy` for units that can't; it deploys on its own for a target beyond its cannon on an attack order and on an attack-move; AI matches with artillery replay to the same hash. The reference replay was re-recorded on purpose for artillery.
 - A test drives the real Bevy schedule without a renderer: orders between frames, a ×4 burst, then a saved replay. That replay verifies to the same final hash, which covers the client's command path end to end.
