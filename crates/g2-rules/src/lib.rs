@@ -1,17 +1,18 @@
-//! Definitions for the three factions and the built-in maps.
-//!
-//! Values marked `// src:` come from archived reference material, documented in notes kept
-//! outside this repository.
-//! Everything else is a placeholder chosen for playability and will be tuned.
+//! The rules of the three factions (the data files in `data/`, read by `data`), the campaign
+//! and the built-in map.
+use std::sync::OnceLock;
+
 use g2_sim::defs::Rules;
 use g2_sim::{Fx, MapDef, Vec2};
 
+pub mod data;
+#[cfg(test)]
 mod legacy;
 pub mod missions;
 
 /// Declares each id constant and `KEYS`, every constant's name with its id. The data files
-/// name things by these names in lower case (`EU_CC` is `eu_cc`); loading puts each at its id,
-/// so code that names one finds it, and appends what a mod adds after them.
+/// name entries by these names in lower case (`EU_CC` is `eu_cc`); loading puts each at its id,
+/// so code that names one finds it, and puts what a mod adds after them.
 macro_rules! keyed_ids {
     ($ty:ident { $($(#[$doc:meta])* $name:ident = $n:literal,)* }) => {
         $($(#[$doc])* pub const $name: $ty = $ty($n);)*
@@ -20,7 +21,7 @@ macro_rules! keyed_ids {
     };
 }
 
-/// Stable ids into `RULES.defs`; `tests::id_constants_match_table_order` keeps them in sync.
+/// Stable ids into `rules().defs`; `tests::id_constants_match_table_order` keeps them in sync.
 pub mod ids {
     use g2_sim::DefId;
     keyed_ids!(DefId {
@@ -113,7 +114,7 @@ pub mod ids {
     });
 }
 
-/// Stable ids into `RULES.upgrades`.
+/// Stable ids into `rules().upgrades`.
 pub mod upgrades {
     use g2_sim::defs::UpgradeId;
     keyed_ids!(UpgradeId {
@@ -129,7 +130,7 @@ pub mod upgrades {
     });
 }
 
-/// Stable ids into `RULES.generals`.
+/// Stable ids into `rules().generals`.
 pub mod generals {
     use g2_sim::defs::GeneralId;
     keyed_ids!(GeneralId {
@@ -150,7 +151,7 @@ pub mod generals {
     });
 }
 
-/// Stable ids into `RULES.perks`: eight per general, in each general's list order, then the
+/// Stable ids into `rules().perks`: eight per general, in each general's list order, then the
 /// perks that add a power (appended, so a saved profile's ids keep their meaning).
 pub mod perks {
     use g2_sim::defs::PerkId;
@@ -289,8 +290,18 @@ pub mod perks {
         JY_FAULTY_CONSTRUCTION = 116,
     });
 }
+static RULES: OnceLock<Result<Rules, data::LoadError>> = OnceLock::new();
+
+/// The rules: the data files embedded in the binary, or `G2_RULES_DIR`'s copies of them
+/// (`docs/RULES.md`), read once. A program checks them at startup with `try_rules`; after
+/// that this can't fail.
 pub fn rules() -> &'static Rules {
-    &legacy::RULES
+    try_rules().unwrap_or_else(|e| panic!("bad rules file: {e}"))
+}
+
+/// The rules, or what is wrong with a file `G2_RULES_DIR` gives.
+pub fn try_rules() -> Result<&'static Rules, &'static data::LoadError> {
+    RULES.get_or_init(|| data::load(std::env::var_os("G2_RULES_DIR").as_deref().map(std::path::Path::new))).as_ref()
 }
 
 /// Original two-player test map: mirrored bases, four supply piles, four oil wells.
@@ -319,7 +330,6 @@ pub fn map_by_name(name: &str) -> Option<MapDef> {
 mod tests {
     use super::*;
     use crate::ids::*;
-    use crate::legacy::*;
     use g2_sim::defs::GeneralId;
     use g2_sim::defs::{Armour, Class, DefId, Faction, Modifier, PerkId, PowerKind};
 
@@ -526,38 +536,44 @@ mod tests {
 
     /// A perk worded for all of a faction's infantry, vehicles or units also covers the units
     /// its generals add: a general's Leadership or Protector reaches the general's own units.
+    /// The faction-wide list of a wording is the longest of the faction's perks with it (some
+    /// generals' perks of the same wording cover only their own units).
     #[test]
     fn faction_wide_perks_cover_generals_units() {
         let r = rules();
         let infantry = |d: DefId| r.def(d).armour == Armour::Infantry;
-        let modifier_def = |m: &Modifier| match *m {
-            Modifier::Cost { def, .. } | Modifier::BuildTime { def, .. } => def,
+        let all = [Faction::Eu, Faction::Apa, Faction::Gla];
+        type Covers<'a> = &'a dyn Fn(DefId) -> bool;
+        let wordings: [(&str, &[Faction], Covers); 4] = [
+            ("Infantry take 10% less damage.", &all, &infantry),
+            ("Vehicles build 15% faster.", &all, &|u| !infantry(u) && !r.def(u).flies()),
+            ("Units gain double experience from kills.", &[Faction::Gla], &|_| true),
+            ("Units regain 2 hit points a second after 5 s without being hit.", &[Faction::Gla], &|_| true),
+        ];
+        let defs = |perk: &g2_sim::defs::Perk| -> Vec<DefId> {
+            perk.effects
+                .iter()
+                .map(|&(d, _)| d)
+                .chain(perk.modifiers.iter().map(|m| match *m {
+                    Modifier::Cost { def, .. } | Modifier::BuildTime { def, .. } => def,
+                }))
+                .collect()
         };
-        for g in r.generals {
-            for u in g.units.iter().map(|x| x.unit).filter(|&u| r.def(u).is_unit()) {
-                let tables: Vec<(&str, Vec<DefId>)> = match g.faction {
-                    Faction::Eu => vec![
-                        ("Protector", EU_INFANTRY_10.iter().map(|&(d, _)| d).collect()),
-                        ("Overtime", EU_VEHICLES_FAST.iter().map(modifier_def).collect()),
-                    ],
-                    Faction::Apa => vec![
-                        ("Protector", APA_INFANTRY_10.iter().map(|&(d, _)| d).collect()),
-                        ("Overtime", APA_VEHICLES_FAST.iter().map(modifier_def).collect()),
-                    ],
-                    Faction::Gla => vec![
-                        ("Protector", GLA_INFANTRY_10.iter().map(|&(d, _)| d).collect()),
-                        ("Overtime", GLA_VEHICLES_FAST.iter().map(modifier_def).collect()),
-                        ("Leadership", GLA_LEADERSHIP.iter().map(|&(d, _)| d).collect()),
-                        ("Scavenger", GLA_SCAVENGE.iter().map(|&(d, _)| d).collect()),
-                    ],
-                };
-                for (name, defs) in tables {
-                    let applies = match name {
-                        "Protector" => infantry(u),
-                        "Overtime" => !infantry(u) && !r.def(u).flies(),
-                        _ => true,
-                    };
-                    assert_eq!(defs.contains(&u), applies, "{}: {} in {name}", g.name, r.def(u).name);
+        for (wording, factions, applies) in wordings {
+            for &f in factions {
+                let list = r
+                    .generals
+                    .iter()
+                    .filter(|g| g.faction == f)
+                    .flat_map(|g| g.perks.iter().map(|&k| r.perk(k)))
+                    .filter(|p| p.description == wording)
+                    .map(defs)
+                    .max_by_key(Vec::len)
+                    .unwrap_or_else(|| panic!("{f:?}: no perk {wording:?}"));
+                for g in r.generals.iter().filter(|g| g.faction == f) {
+                    for u in g.units.iter().map(|x| x.unit).filter(|&u| r.def(u).is_unit()) {
+                        assert_eq!(list.contains(&u), applies(u), "{}: {} in {wording:?}", g.name, r.def(u).name);
+                    }
                 }
             }
         }
@@ -649,5 +665,29 @@ mod tests {
                 prev = lv;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod data_matches_legacy {
+    #[test]
+    fn parsed_tables_equal_the_const_tables() {
+        let parsed = crate::data::parse(crate::data::FILES).unwrap_or_else(|e| panic!("{e}"));
+        let old = &crate::legacy::RULES;
+        for (i, (a, b)) in parsed.defs.iter().zip(old.defs).enumerate() {
+            assert_eq!(a, b, "def {i}");
+        }
+        assert_eq!(parsed.defs.len(), old.defs.len());
+        assert_eq!(parsed.upgrades, old.upgrades);
+        for (i, (a, b)) in parsed.perks.iter().zip(old.perks).enumerate() {
+            assert_eq!(a, b, "perk {i}");
+        }
+        assert_eq!(parsed.perks.len(), old.perks.len());
+        for (i, (a, b)) in parsed.generals.iter().zip(old.generals).enumerate() {
+            assert_eq!(a, b, "general {i}");
+        }
+        assert_eq!(parsed.generals.len(), old.generals.len());
+        assert_eq!(parsed.support, old.support);
+        assert_eq!(g2_sim::net::build_id(&parsed), g2_sim::net::build_id(old));
     }
 }

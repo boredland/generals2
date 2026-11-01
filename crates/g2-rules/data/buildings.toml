@@ -1,0 +1,474 @@
+# Buildings, map features and the neutral civilian buildings. Ids are stable: the game refers
+# to many by name (`eu_cc`), and the order here is the order of the rest. Fields and units:
+# docs/RULES.md.
+#
+# Values marked `src:` come from archived reference material, documented in notes kept
+# outside this repository. Everything else is a placeholder chosen for playability and will
+# be tuned.
+#
+# A power plant's `power_radius` is 60; a building with no `armour` is `structure`. Civilian
+# buildings: infantry garrison them, firing out with the alpha's 8-unit range bonus.
+
+[[building]]
+id = "supply_pile"
+name = "Supply Pile"
+role = "supply_pile"
+hp = 1
+radius = 4
+
+[[building]]
+id = "oil_well"
+name = "Oil Well"
+role = "oil_well"
+hp = 1
+radius = 5
+
+# ---- European Union ------------------------------------------------------------------
+# src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
+[[building]]
+id = "eu_cc"
+name = "EU Command Center"
+faction = "eu"
+role = "command_center"
+power = 110
+power_radius = 60
+hp = 1751
+cost = 1000
+build_time = 28
+radius = 12
+produces = ["eu_dozer", "eu_commando"]
+
+# src: Supply center collector cap EU 3.
+[[building]]
+id = "eu_supply"
+name = "EU Supply Center"
+faction = "eu"
+role = "supply_center"
+collector_cap = 3
+power = -20
+hp = 1200
+cost = 800
+build_time = 20
+radius = 12
+produces = ["eu_harvester", "eu_dozer"]
+
+[[building]]
+id = "eu_power"
+name = "EU Power Plant"
+faction = "eu"
+role = "power_plant"
+power = 100
+power_radius = 60
+hp = 800
+cost = 600
+build_time = 15
+radius = 6
+
+[[building]]
+id = "eu_derrick"
+name = "EU Oil Derrick"
+faction = "eu"
+role = "oil_derrick"
+credits_per_second = 5
+power = -10
+hp = 600
+cost = 500
+build_time = 15
+radius = 6
+
+# ---- Asia-Pacific Alliance -----------------------------------------------------------
+[[building]]
+id = "apa_cc"
+name = "APA Command Center"
+faction = "apa"
+role = "command_center"
+power = 110
+power_radius = 60
+hp = 1751
+cost = 1000
+build_time = 28
+radius = 12
+produces = ["apa_crane", "apa_commando"]
+
+# src: Supply center collector cap APA 5.
+[[building]]
+id = "apa_supply"
+name = "APA Supply Center"
+faction = "apa"
+role = "supply_center"
+collector_cap = 5
+power = -20
+hp = 1200
+cost = 800
+build_time = 20
+radius = 12
+produces = ["apa_harvester", "apa_crane"]
+
+[[building]]
+id = "apa_power"
+name = "APA Power Plant"
+faction = "apa"
+role = "power_plant"
+power = 100
+power_radius = 60
+hp = 800
+cost = 600
+build_time = 15
+radius = 8
+
+[[building]]
+id = "apa_derrick"
+name = "APA Oil Derrick"
+faction = "apa"
+role = "oil_derrick"
+credits_per_second = 5
+power = -10
+hp = 600
+cost = 500
+build_time = 15
+radius = 6
+
+# ---- Global Liberation Army ----------------------------------------------------------
+# src: GLA command center gives 0 power; the GLA has no power grid.
+[[building]]
+id = "gla_cc"
+name = "GLA Command Center"
+faction = "gla"
+role = "command_center"
+hp = 1751
+cost = 1000
+build_time = 28
+radius = 12
+produces = ["gla_worker", "gla_agent"]
+
+# src: Supply center collector cap GLA 8.
+[[building]]
+id = "gla_stash"
+name = "GLA Supply Stash"
+faction = "gla"
+role = "supply_center"
+collector_cap = 8
+hp = 1000
+cost = 600
+build_time = 18
+radius = 10
+produces = ["gla_worker"]
+
+[[building]]
+id = "gla_derrick"
+name = "GLA Oil Derrick"
+faction = "gla"
+role = "oil_derrick"
+credits_per_second = 5
+hp = 500
+cost = 400
+build_time = 12
+radius = 6
+
+# ---- Combat ----------------------------------------------------------------------------
+# Barracks numbers are placeholders. War factories copy the GLA war factory card.
+# Researches: where the alpha's production data offers each upgrade.
+[[building]]
+id = "eu_barracks"
+name = "EU Barracks"
+faction = "eu"
+role = "factory"
+power = -10
+hp = 800
+cost = 500
+build_time = 15
+radius = 6
+produces = ["eu_recon", "eu_rockets"]
+researches = ["hollow_point"]
+
+[[building]]
+id = "eu_factory"
+name = "EU War Factory"
+faction = "eu"
+role = "factory"
+power = -20
+hp = 1000
+cost = 900
+build_time = 25
+radius = 10
+produces = ["eu_aegis", "eu_artillery", "eu_apc"]
+
+[[building]]
+id = "apa_barracks"
+name = "APA Barracks"
+faction = "apa"
+role = "factory"
+power = -10
+hp = 800
+cost = 500
+build_time = 15
+radius = 8
+produces = ["apa_red_guard", "apa_tank_hunter"]
+researches = ["population_control"]
+
+# The alpha researches Firestorm Shells at the advanced war factory, which isn't modelled.
+[[building]]
+id = "apa_factory"
+name = "APA War Factory"
+faction = "apa"
+role = "factory"
+power = -20
+hp = 1000
+cost = 900
+build_time = 25
+radius = 12
+produces = ["apa_warlord", "apa_thunderfist", "apa_gatling"]
+researches = ["firestorm_shells"]
+
+[[building]]
+id = "gla_barracks"
+name = "GLA Barracks"
+faction = "gla"
+role = "factory"
+hp = 800
+cost = 500
+build_time = 15
+radius = 10
+produces = ["gla_rabble", "gla_rpg"]
+researches = ["shortened_fuses"]
+
+# src: GLA war factory hp 1000, $900, 25 s.
+[[building]]
+id = "gla_factory"
+name = "GLA War Factory"
+faction = "gla"
+role = "factory"
+hp = 1000
+cost = 900
+build_time = 25
+radius = 12
+produces = ["gla_tank", "gla_toxin_artillery", "gla_technical", "gla_toxin_chopper"]
+
+# ---- Tech buildings ----------------------------------------------------------------------
+# src: the alpha's blueprints: EU tech lab (es_techstructurea) hp 750, $750, 20 s, 30 power;
+# advanced tech lab (es_techstructureb) hp 750, $1000, 25 s, 30 power; GLA salvage bay
+# (gs_techstructureb) hp 750, $800, 20 s.
+[[building]]
+id = "eu_tech_lab"
+name = "EU Tech Lab"
+faction = "eu"
+role = "lab"
+power = -30
+hp = 750
+cost = 750
+build_time = 20
+radius = 10
+researches = ["hightech_alloys", "improved_ballistics", "senior_warfighter"]
+
+[[building]]
+id = "eu_advanced_lab"
+name = "EU Advanced Tech Lab"
+faction = "eu"
+role = "lab"
+power = -30
+hp = 750
+cost = 1000
+build_time = 25
+radius = 12
+researches = ["high_explosives"]
+
+[[building]]
+id = "gla_salvage_bay"
+name = "GLA Salvage Bay"
+faction = "gla"
+role = "lab"
+hp = 750
+cost = 800
+build_time = 20
+radius = 10
+researches = ["scrap_repair"]
+
+# ---- Aircraft ----------------------------------------------------------------------------
+# src: the alpha's airfields (es_airfield, as_airfield): hp 750, $1200, 34 s, 30 power. The
+# GLA has none; its helicopter comes from its war factory (card: Toxin Chopper "produced:
+# GLA war factory").
+[[building]]
+id = "eu_airfield"
+name = "EU Airfield"
+faction = "eu"
+role = "factory"
+power = -30
+hp = 750
+cost = 1200
+build_time = 34
+radius = 12
+produces = ["eu_valkyrie"]
+
+[[building]]
+id = "apa_airfield"
+name = "APA Airfield"
+faction = "apa"
+role = "factory"
+power = -30
+hp = 750
+cost = 1200
+build_time = 34
+radius = 12
+produces = ["apa_mantis"]
+
+# ---- Civilian buildings -----------------------------------------------------------------
+# src: the alpha's civilian buildings (afri_cb_*), by their display name: shanty (hp 300,
+# room for 1; 600, 2; 800, 3), town house (600, 2; 800, 3; 1200, 4) and urban block (1200
+# and 1700, 4), all firing out with an 8-unit range bonus. One row per size class, each the
+# class's middle size. Footprints: the map's buildings (from the original Generals / Zero
+# Hour maps) take the largest class that fits inside their own footprint; smaller ones
+# stay scenery.
+[[building]]
+id = "shanty"
+name = "Shanty"
+role = "civilian"
+hp = 600
+radius = 2
+garrison = { capacity = 2, fires = true, range_bonus = 8 }
+
+[[building]]
+id = "town_house"
+name = "Town House"
+role = "civilian"
+hp = 800
+radius = 3
+garrison = { capacity = 3, fires = true, range_bonus = 8 }
+
+[[building]]
+id = "urban_block"
+name = "Urban Block"
+role = "civilian"
+hp = 1200
+radius = 5
+garrison = { capacity = 4, fires = true, range_bonus = 8 }
+
+# ---- Base defences ------------------------------------------------------------------
+# src: the alpha's base defences, each the first ground turret its builder lists: EU
+# es_basedefensegun (autocannon 26, +8 vs. infantry, every 0.8 s, range 57, ground only;
+# hp 450, $450, 18 s, 20 power; detects stealth within 50), APA as_basedefenseflame
+# (flamethrower 44, +20 vs. infantry and +60 vs. garrisoned buildings, every 2 s, range 45;
+# hp 500, $500, 18 s, 20 power; detects within 40), GLA gs_basedefenserocket, the wiki's
+# Rocket Site (RPG 40, +28 vs. heavy, every 2.3 s, range 47 against the ground and 57
+# against aircraft, where the alpha fires a heavier second rocket; hp 400, $300, 18 s;
+# detects within 45). Ranges count from the edge, as a garrison's do. The EU and APA names
+# and every footprint are placeholders.
+[[building]]
+id = "eu_gun_turret"
+name = "EU Gun Turret"
+faction = "eu"
+role = "defense"
+power = -20
+hp = 450
+cost = 450
+build_time = 18
+radius = 2
+detection = 50
+
+[building.weapon]
+damage = 26
+bonus = { infantry = 8 }
+range = 57
+cooldown = 0.8
+
+[[building]]
+id = "apa_flame_turret"
+name = "APA Flame Turret"
+faction = "apa"
+role = "defense"
+power = -20
+hp = 500
+cost = 500
+build_time = 18
+radius = 2
+detection = 40
+
+[building.weapon]
+damage = 44
+bonus = { infantry = 20 }
+range = 45
+cooldown = 2
+garrison_bonus = 60
+
+[[building]]
+id = "gla_rocket_site"
+name = "GLA Rocket Site"
+faction = "gla"
+role = "defense"
+hp = 400
+cost = 300
+build_time = 18
+radius = 4
+detection = 45
+
+[building.weapon]
+damage = 40
+bonus = { heavy = 28 }
+range = 47
+cooldown = 2.3
+targets = "both"
+air_range = 57
+
+# ---- Superweapons --------------------------------------------------------------------
+# src: the alpha's gs_scudstorm: MaxHealth 1500, $4000, BuildTime 60 s, built by the
+# Worker (the wiki's Dirty Scud Storm); it launches GLA_PlayerAbility_DirtyScudStorm. No
+# power draw (GLA has none). Footprint is a placeholder.
+[[building]]
+id = "gla_scud_storm"
+name = "GLA Scud Storm"
+faction = "gla"
+role = "superweapon"
+hp = 1500
+cost = 4000
+build_time = 60
+radius = 16
+
+# ---- Generals' units ------------------------------------------------------------------
+# Railgun turret (es_basedefenserailgun): hp 500, $575, 18 s, 20 power; railgun 100 (+100
+# garrisoned), 50, 2.5 s, ground only; no stealth detection (the alpha's range 0). Replaces
+# the Gun Turret for its generals.
+[[building]]
+id = "eu_railgun_turret"
+name = "EU Railgun Turret"
+faction = "eu"
+role = "defense"
+power = -20
+hp = 500
+cost = 575
+build_time = 18
+radius = 2
+
+[building.weapon]
+damage = 100
+range = 50
+cooldown = 2.5
+garrison_bonus = 100
+
+# Battle Bunker (gu_battlebus_bunker, a structure blueprint): what the Battle Bus becomes.
+# hp 525, room for four squads who fire out with an 8-unit range bonus, and die with it
+# (`DieWithGarrison`); it can't move. Never built (its 45 s build time and $750 cost are
+# unused). Radius 4: the bus's `EntityRadius` 3.5, rounded up.
+[[building]]
+id = "gla_battle_bunker"
+name = "GLA Battle Bunker"
+faction = "gla"
+role = "bunker"
+hp = 525
+radius = 4
+garrison = { capacity = 4, fires = true, range_bonus = 8 }
+
+# src: the alpha's gs_tunnelnetwork_entrance (built by the Worker): MaxHealth 500, $600,
+# BuildTime 30 s, build grid half-extent 10. Its garrison numbers aren't in its data (its
+# `RtsTunnelAccessComponentData` holds only a rally distance), so they are Zero Hour's
+# (EA's GPL INI, reference only): `MaxTunnelCapacity` 10 for the network, `TimeForFullHeal`
+# 5 s. The alpha's exit (gs_tunnelnetwork_exit, $300) is trained at an entrance; here
+# every tunnel is a full entrance.
+[[building]]
+id = "gla_tunnel"
+name = "GLA Tunnel Network"
+faction = "gla"
+role = "tunnel"
+hp = 500
+cost = 600
+build_time = 30
+radius = 10
+garrison = { capacity = 10, heal_time = 5 }

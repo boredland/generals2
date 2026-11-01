@@ -8,6 +8,8 @@ publish.workspace = true
 
 [dependencies]
 g2-sim.workspace = true
+# The TOML reader only: no serde. `DeTable` keeps every value's place in the file for errors.
+toml = { version = "1.1", default-features = false, features = ["std", "parse"] }
 
 [lints]
 workspace = true

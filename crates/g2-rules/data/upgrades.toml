@@ -1,0 +1,131 @@
+# Every upgrade's research site, cost and time come from the alpha's production data
+# (`RtsProductionComponentData.ResearchableUpgrades`) and which units it touches from the
+# units' `RtsUpgradeableData`. What it does comes from the archived cards; how much, where
+# neither says, from Zero Hour 1.04's INI data for the matching upgrade.
+#
+# Zero Hour's player weapon upgrades are all +25% damage (96 of 97 `PLAYER_UPGRADE` bonuses in
+# its `Weapon.ini`, e.g. AP Bullets, Uranium Shells): the 125s below.
+
+# src: alpha eu_structarmor, tech lab, $750, 25 s; card: "improves the armor of EU
+# buildings". Zero Hour's Fortified Structure: structures take 75% damage
+# (`GLAUpgradedStructureArmor`, DEFAULT 75% vs 100%).
+[[upgrade]]
+id = "hightech_alloys"
+name = "Hightech Alloys"
+cost = 750
+research_time = 25
+effects = [
+    { unit = "eu_cc", effect = "toughness", percent = 75 },
+    { unit = "eu_supply", effect = "toughness", percent = 75 },
+    { unit = "eu_power", effect = "toughness", percent = 75 },
+    { unit = "eu_derrick", effect = "toughness", percent = 75 },
+    { unit = "eu_barracks", effect = "toughness", percent = 75 },
+    { unit = "eu_factory", effect = "toughness", percent = 75 },
+    { unit = "eu_tech_lab", effect = "toughness", percent = 75 },
+    { unit = "eu_advanced_lab", effect = "toughness", percent = 75 },
+]
+
+# src: alpha eu_infattack, tech lab, $1000, 25 s, on rifle and rocket squads; card: "increases
+# the attack damage". Zero Hour: +25%.
+[[upgrade]]
+id = "improved_ballistics"
+name = "Improved Ballistics"
+cost = 1000
+research_time = 25
+effects = [
+    { unit = "eu_recon", effect = "damage", percent = 125 },
+    { unit = "eu_rockets", effect = "damage", percent = 125 },
+]
+
+# src: alpha eu_infarmor, tech lab, $1000, 25 s, on rifle and rocket squads; card: "improves
+# the armor". Zero Hour's general armour upgrade (Fortified Structure, as Hightech Alloys):
+# 75% damage taken. Its infantry armour upgrades only resist poison, which isn't modelled.
+[[upgrade]]
+id = "senior_warfighter"
+name = "Senior Warfighter"
+cost = 1000
+research_time = 25
+effects = [
+    { unit = "eu_recon", effect = "toughness", percent = 75 },
+    { unit = "eu_rockets", effect = "toughness", percent = 75 },
+]
+
+# src: alpha eu_vehdmg ("Advanced Ordinance"), advanced tech lab, $1250, 25 s, on the
+# tank, rocket vehicle and APC; card "High Explosives": "increases damage of all vehicles".
+# Zero Hour: +25%. The EU Howitzer stands in for the rocket vehicle.
+[[upgrade]]
+id = "high_explosives"
+name = "High Explosives"
+cost = 1250
+research_time = 25
+effects = [
+    { unit = "eu_aegis", effect = "damage", percent = 125 },
+    { unit = "eu_artillery", effect = "damage", percent = 125 },
+    { unit = "eu_apc", effect = "damage", percent = 125 },
+]
+
+# src: alpha eu_rifleammo, EU barracks, $750, 22 s, on the rifle squad; card: "increases the
+# attack damage dealt to enemy infantry". Zero Hour: +25%, against infantry only.
+[[upgrade]]
+id = "hollow_point"
+name = "Hollow Point Ammo"
+cost = 750
+research_time = 22
+effects = [
+    { unit = "eu_recon", effect = "damage", percent = 125, against = "infantry" },
+]
+
+# src: alpha apa_populationcontrolupgrade, APA barracks, $750, 15 s, on rifle and rocket
+# squads; card: "adds an additional infantryman to all squads". Red Guard squads are 3,
+# Tank Hunters 2 (cards): one squad entity gains a man's share of hit points and fire,
+# 4/3 and 3/2.
+[[upgrade]]
+id = "population_control"
+name = "Population Control"
+cost = 750
+research_time = 15
+effects = [
+    { unit = "apa_red_guard", effect = "health", add = 60 },
+    { unit = "apa_red_guard", effect = "damage", percent = 133 },
+    { unit = "apa_tank_hunter", effect = "health", add = 90 },
+    { unit = "apa_tank_hunter", effect = "damage", percent = 150 },
+]
+
+# src: alpha gla_shortenedfusesupgrade, GLA barracks, $750, 20 s, on the rocket squad; card
+# (Insurgent): "make ... fire faster". Zero Hour's fire-rate bonuses are +25% (Nationalism,
+# `RATE_OF_FIRE 125%`): 80% of the time between shots.
+[[upgrade]]
+id = "shortened_fuses"
+name = "Shortened Fuses"
+cost = 750
+research_time = 20
+effects = [
+    { unit = "gla_rpg", effect = "cooldown", percent = 80 },
+]
+
+# src: alpha gla_scraprepair, salvage bay, $1000, 22 s, on the Scorpion, Toxin Artillery and
+# Technical; card: "allows GLA vehicles to self-repair when not in combat". Zero Hour's Junk
+# Repair: 2 hp a second (`AutoHealBehavior`), here after 3 s without a hit (`BaseRegenDelay`).
+[[upgrade]]
+id = "scrap_repair"
+name = "Scrap Repair"
+cost = 1000
+research_time = 22
+effects = [
+    { unit = "gla_tank", effect = "repair", hp = 2, calm = 3 },
+    { unit = "gla_toxin_artillery", effect = "repair", hp = 2, calm = 3 },
+    { unit = "gla_technical", effect = "repair", hp = 2, calm = 3 },
+]
+
+# src: alpha apa_firestormshells, $750, 45 s, on the Thunderfist; card: "equips the Thunderfist
+# with firestorm artillery shells". The fire left behind isn't modelled; Zero Hour's Black
+# Napalm (the Inferno cannon's upgrade) raises its fire field's damage by half (5 to 7.5),
+# so the howitzer's shells do 150%.
+[[upgrade]]
+id = "firestorm_shells"
+name = "Firestorm Shells"
+cost = 750
+research_time = 45
+effects = [
+    { unit = "apa_thunderfist", effect = "shell_damage", percent = 150 },
+]

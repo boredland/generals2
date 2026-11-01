@@ -1,0 +1,1085 @@
+# Units, one entity per squad, with the squad's card values. Ids are stable: the game refers
+# to many by name (`eu_recon`). Fields and units: docs/RULES.md.
+#
+# Values marked `src:` come from archived reference material, documented in notes kept
+# outside this repository. Everything else is a placeholder chosen for playability and will
+# be tuned.
+#
+# `radius` is the alpha blueprint's `EntityRadius` (2 for infantry and light vehicles, 3.5 for
+# tanks, 4 for aircraft). Without a sourced armour class, unarmed vehicles are `light` and GLA
+# workers `infantry` (placeholders). Support aircraft (no cost, no build time) fly one pass
+# for a power, never built, worth the usual 1 experience to whoever shoots one down.
+
+# The alpha's rules for every unit that earns ranks: 1 experience per kill (buildings grant
+# none), ranks at 3, 6 and 10, rank 2 regenerating 5 hit points a second while idle. A unit's
+# `ranks` gives its rank-1 hit points (`health`) and its rank-3 fire interval in percent
+# (`cooldown_percent`), from the alpha unit's own `RtsVeterancyComponentData` (the interval
+# cut as a share of that unit's main weapon interval, since some of our guns are stand-ins
+# with other intervals).
+ranks = { at = [3, 6, 10], idle_regen = 5 }
+
+# ---- European Union ------------------------------------------------------------------
+# src: Bulldozer hp 250, armour Heavy, land speed 14.
+[[unit]]
+id = "eu_dozer"
+name = "EU Bulldozer"
+faction = "eu"
+hp = 250
+armour = "heavy"
+cost = 500
+build_time = 12
+radius = 2
+speed = 14
+constructor = true
+builds = ["eu_supply", "eu_power", "eu_derrick", "eu_barracks", "eu_factory", "eu_tech_lab", "eu_advanced_lab", "eu_airfield", "eu_gun_turret"]
+
+# src: EU harvester $450, 0:20, airborne collector (flying is not modelled yet); the
+# alpha's `EntityRadius` 4, the aircraft's.
+# src: the alpha's eu_harvester `RtsResourceHarvesterComponentData`: MaxResources 190 a trip
+# (the APA harvester's is 120, the GLA worker's 110). Load and unload times are still
+# the APA harvester's placeholders. On the 33 maps, at the APA harvester's 100 the EU won 55 of 132 at Easy
+# and 13 of 131 at Normal, at 190 63 and 74. The APA's 120 was measured too: Normal APA then
+# won 91 of 130 (64 at 100) and the GLA 40, so it keeps the APA harvester's 100 for now.
+[[unit]]
+id = "eu_harvester"
+name = "EU Harvester"
+faction = "eu"
+hp = 300
+armour = "light"
+cost = 450
+build_time = 20
+radius = 4
+speed = 24
+collector = { capacity = 190, load_time = 3, unload_time = 1 }
+
+# ---- Asia-Pacific Alliance -----------------------------------------------------------
+# src: Crane hp 280, $150, 11 s.
+[[unit]]
+id = "apa_crane"
+name = "APA Crane"
+faction = "apa"
+hp = 280
+armour = "light"
+cost = 150
+build_time = 11
+radius = 2
+speed = 13
+constructor = true
+builds = ["apa_supply", "apa_power", "apa_derrick", "apa_barracks", "apa_factory", "apa_airfield", "apa_flame_turret"]
+
+# src: APA harvester $300, 0:19.
+[[unit]]
+id = "apa_harvester"
+name = "APA Harvester"
+faction = "apa"
+hp = 350
+armour = "light"
+cost = 300
+build_time = 19
+radius = 2
+speed = 18
+collector = { capacity = 100, load_time = 3, unload_time = 1 }
+
+# ---- Global Liberation Army ----------------------------------------------------------
+# src: workers construct and gather supplies.
+[[unit]]
+id = "gla_worker"
+name = "GLA Worker"
+faction = "gla"
+hp = 120
+armour = "infantry"
+cost = 200
+build_time = 8
+radius = 2
+speed = 16
+constructor = true
+collector = { capacity = 40, load_time = 2, unload_time = 1 }
+builds = ["gla_stash", "gla_derrick", "gla_barracks", "gla_factory", "gla_salvage_bay", "gla_rocket_site", "gla_tunnel", "gla_scud_storm"]
+
+# ---- Combat ----------------------------------------------------------------------------
+# Ranks: each unit's rank-1 health and rank-3 fire interval come from the alpha
+# unit it stands for (EU Howitzer: the rocket vehicle).
+# src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
+[[unit]]
+id = "eu_recon"
+name = "EU Recon Squad"
+faction = "eu"
+hp = 200
+armour = "infantry"
+cost = 150
+build_time = 6.27
+radius = 2
+speed = 9
+ranks = { health = 21, cooldown_percent = 93 }
+weapon = "rifles"
+
+# src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
+[[unit]]
+id = "eu_aegis"
+name = "EU Aegis Tank"
+faction = "eu"
+hp = 660
+armour = "heavy"
+cost = 990
+build_time = 24.44
+radius = 3.5
+speed = 9
+ranks = { health = 90, cooldown_percent = 92 }
+weapon = "tank_gun"
+
+# src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
+[[unit]]
+id = "apa_red_guard"
+name = "APA Red Guard"
+faction = "apa"
+hp = 180
+armour = "infantry"
+cost = 150
+build_time = 6.27
+radius = 2
+speed = 9
+ranks = { health = 12, cooldown_percent = 94 }
+weapon = "rifles"
+
+# src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
+[[unit]]
+id = "apa_warlord"
+name = "APA Warlord Tank"
+faction = "apa"
+hp = 610
+armour = "heavy"
+cost = 990
+build_time = 24.44
+radius = 3.5
+speed = 9
+ranks = { health = 68, cooldown_percent = 93 }
+weapon = "tank_gun"
+
+# src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
+[[unit]]
+id = "gla_rabble"
+name = "GLA Rabble Squad"
+faction = "gla"
+hp = 160
+armour = "infantry"
+cost = 120
+build_time = 6
+radius = 2
+speed = 10
+ranks = { health = 30, cooldown_percent = 94 }
+
+[unit.weapon]
+damage = 12
+bonus = { infantry = 4, light = 4 }
+range = 20
+cooldown = 1
+
+# src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
+# placeholders: cheaper, faster and weaker than the Warlord. Black Market Nitro (the
+# alpha's gla_mediumcannonnitro, an instant ability with no numbers): the `nitro` ability.
+[[unit]]
+id = "gla_tank"
+name = "GLA Scorpion Tank"
+faction = "gla"
+hp = 420
+armour = "light"
+cost = 700
+build_time = 18
+radius = 3.5
+speed = 11
+ranks = { health = 72, cooldown_percent = 92 }
+abilities = ["nitro"]
+
+[unit.weapon]
+damage = 30
+bonus = { light = 15 }
+range = 30
+cooldown = 1.2
+
+# src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
+# cannon and deploys for a howitzer. Speed and set-up time (3 s) are placeholders.
+[[unit]]
+id = "apa_thunderfist"
+name = "APA Thunderfist"
+faction = "apa"
+hp = 600
+armour = "heavy"
+cost = 980
+build_time = 21.51
+radius = 3.5
+speed = 7
+ranks = { health = 45, cooldown_percent = 80 }
+weapon = "thunderfist_cannon"
+
+[unit.deploy]
+time = 3
+weapon = "howitzer"
+
+# src: Toxin Artillery hp 950, $1000, 30.11 s, GLA war factory, anti-ground artillery.
+# Weapon, armour (Light, like the Scorpion) and speed are placeholders; it fires on the move.
+[[unit]]
+id = "gla_toxin_artillery"
+name = "GLA Toxin Artillery"
+faction = "gla"
+hp = 950
+armour = "light"
+cost = 1000
+build_time = 30.11
+radius = 3.5
+speed = 7
+ranks = { health = 105, cooldown_percent = 95 }
+weapon = "toxin_shell"
+
+# Placeholder throughout: no EU artillery card is archived. Fires on the move.
+[[unit]]
+id = "eu_artillery"
+name = "EU Howitzer"
+faction = "eu"
+hp = 550
+armour = "heavy"
+cost = 950
+build_time = 24
+radius = 2
+speed = 7
+ranks = { health = 39, cooldown_percent = 93 }
+weapon = "eu_shell"
+
+# ---- Anti-armour infantry and fast vehicles ----------------------------------------------
+# src: Rocket Squad hp 180, $300, 16.29 s, EU barracks, anti-armour. Weapon and speed:
+# the `rockets` weapon, a placeholder. The alpha's squad also fires up at aircraft, reaching 40 there
+# (its "Anti-air Attack" spec) against 30 on the ground.
+[[unit]]
+id = "eu_rockets"
+name = "EU Rocket Squad"
+faction = "eu"
+hp = 180
+armour = "infantry"
+cost = 300
+build_time = 16.29
+radius = 2
+speed = 8
+ranks = { health = 18, cooldown_percent = 93 }
+weapon = "rockets"
+
+# src: Tank Hunter, APA barracks, anti-armour rocket infantry; the card has no numbers.
+# src: hp 200 and build time 12 s from the alpha's au_rocketsoldiersquad (`MaxHealth`,
+# `BuildTime`); its rocket launcher (`RocketLauncher`): 45 (+90 vs. heavy), range 30, every
+# 2.5 s, ground only. Cost and speed: placeholders, the EU Rocket Squad's. On the 33 maps,
+# with the EU Rocket Squad's 180 hp and 16.29 s, the APA won 43 of 131 at Easy (63 with
+# these); with the old the `rockets` weapon, 78 at Easy and 71 of 132 at Normal (63 and 64).
+[[unit]]
+id = "apa_tank_hunter"
+name = "APA Tank Hunter"
+faction = "apa"
+hp = 200
+armour = "infantry"
+cost = 300
+build_time = 12
+radius = 2
+speed = 8
+ranks = { health = 18, cooldown_percent = 91 }
+
+[unit.weapon]
+damage = 45
+bonus = { heavy = 90 }
+range = 30
+cooldown = 2.5
+
+# Placeholder throughout: no GLA anti-armour infantry is archived. A Rabble-priced squad
+# with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks. The
+# alpha's RPG targets ground and air alike (`TargetType` 0), at the same reach.
+# src: stealthed, the alpha's passive `GLA_RocketSoldier_Stealth`, unlocked from the start.
+[[unit]]
+id = "gla_rpg"
+name = "GLA RPG Squad"
+faction = "gla"
+hp = 150
+armour = "infantry"
+cost = 250
+build_time = 14
+radius = 2
+speed = 9
+stealth = true
+ranks = { health = 14, cooldown_percent = 93 }
+
+[unit.weapon]
+damage = 40
+bonus = { heavy = 60 }
+range = 26
+cooldown = 2
+targets = "both"
+air_range = 26
+
+# src: Armored Personnel Carrier hp 390, Light, $435, 14.66 s, EU war factory; machine gun
+# 46, cooldown 2.25, range 45; land speed 19. Carries two infantry squads who can't fire
+# from inside (the alpha's `RtsGarrisonComponentData`: capacity 2, no attack from garrison).
+# The repair turret is not modelled.
+[[unit]]
+id = "eu_apc"
+name = "EU APC"
+faction = "eu"
+hp = 390
+armour = "light"
+cost = 435
+build_time = 14.66
+radius = 2
+speed = 19
+ranks = { health = 54, cooldown_percent = 93 }
+garrison = { capacity = 2 }
+
+[unit.weapon]
+damage = 46
+range = 45
+cooldown = 2.3
+
+# src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
+# (anti-air too). src: speed and guns from the alpha's au_mediumguntank: `MovementRate` 11;
+# GatlingGun_Ground 14 (+8 vs. infantry) every 0.5 s, and GatlingGun_Air 14 (+8 vs. light),
+# reaching 50. A unit has one weapon here, so it is one gun with both bonuses. Placeholder:
+# the ground range 32 (the alpha's 35 measured worse, before the rest of the balance pass:
+# Normal APA 74 of 126 wins against 66 of 120). On the 33 maps, with the placeholder before
+# it (10, +12 vs. infantry, every 0.4 s, speed 12), Normal APA won 52 of 131 (64 with these)
+# and the EU 81 (74).
+[[unit]]
+id = "apa_gatling"
+name = "APA Gatling Tank"
+faction = "apa"
+hp = 490
+armour = "light"
+cost = 660
+build_time = 23.3
+radius = 3.5
+speed = 11
+ranks = { health = 60, cooldown_percent = 90 }
+
+[unit.weapon]
+damage = 14
+bonus = { infantry = 8, light = 8 }
+range = 32
+cooldown = 0.5
+targets = "both"
+air_range = 50
+
+# src: Technical, GLA light utility vehicle with a 12.7 mm machine gun; the card has no
+# numbers. Placeholder: the cheapest, fastest vehicle in the game, fragile.
+[[unit]]
+id = "gla_technical"
+name = "GLA Technical"
+faction = "gla"
+hp = 280
+armour = "light"
+cost = 400
+build_time = 10
+radius = 2
+speed = 17
+ranks = { health = 23, cooldown_percent = 93 }
+
+[unit.weapon]
+damage = 14
+bonus = { infantry = 6 }
+range = 30
+cooldown = 0.6
+
+# ---- Aircraft ----------------------------------------------------------------------------
+# src: the alpha's helicopters, `RtsMovementComponentData` and weapon specs. EU heavy rocket
+# helo (the Valkyrie; card hp 621, $1250, 32.58 s): speed 12, rockets 120 every 6 s at 60,
+# ground only. APA light gun helo (the Mantis; card hp 322): speed 16, machine gun 42 (+28
+# anti-armour) every 1.125 s at 35, ground only, $950, 24 s. GLA light chemical helo (the
+# Toxin Chopper): speed 19, toxin missiles 26 (+12 vs infantry) every 1.125 s at 30, ground
+# and air, hp 220, $750, 24 s. A card's number where it gives one, else the alpha's. No
+# source gives an armour class: Light. Ranks: rank-1 health +90 / +39 / +27 and a rank-3
+# interval of 93% (the alpha's -0.4 / -0.075 / -0.075 s).
+[[unit]]
+id = "eu_valkyrie"
+name = "EU Valkyrie"
+faction = "eu"
+hp = 621
+armour = "light"
+cost = 1250
+build_time = 32.58
+radius = 4
+speed = 12
+flies = true
+ranks = { health = 90, cooldown_percent = 93 }
+
+[unit.weapon]
+damage = 120
+range = 60
+cooldown = 6
+
+[[unit]]
+id = "apa_mantis"
+name = "APA Mantis"
+faction = "apa"
+hp = 322
+armour = "light"
+cost = 950
+build_time = 24
+radius = 4
+speed = 16
+flies = true
+ranks = { health = 39, cooldown_percent = 93 }
+
+[unit.weapon]
+damage = 42
+bonus = { heavy = 28 }
+range = 35
+cooldown = 1.1
+
+[[unit]]
+id = "gla_toxin_chopper"
+name = "GLA Toxin Chopper"
+faction = "gla"
+hp = 220
+armour = "light"
+cost = 750
+build_time = 24
+radius = 4
+speed = 19
+flies = true
+ranks = { health = 27, cooldown_percent = 93 }
+
+[unit.weapon]
+damage = 26
+bonus = { infantry = 12 }
+range = 30
+cooldown = 1.1
+targets = "both"
+air_range = 30
+
+# ---- Support jets --------------------------------------------------------------------
+# Delivery aircraft for the factions' support powers: never built or ordered, they fly one
+# pass and leave (the wiki: "It cannot be built nor directly controlled in-game"). src: the
+# alpha's eu_airbomber (MaxHealth 300, ArmorRating 4) for the Air Raid and the Fuel Air
+# Bomb, au_airbomber (400, armour 0) for Carpet Bombing, au_airfighter_spysortie2 (90,
+# armour 0) for Spy Sorties. Armour 4 and 0 map to our Heavy and Light. Speed is a
+# placeholder: fast enough to cross a map in a few seconds, slow enough for anti-air to
+# get a few shots in.
+[[unit]]
+id = "eu_bomber"
+name = "EU Bomber"
+faction = "eu"
+hp = 300
+armour = "heavy"
+radius = 2
+speed = 45
+flies = true
+
+[[unit]]
+id = "apa_bomber"
+name = "APA Bomber"
+faction = "apa"
+hp = 400
+armour = "light"
+radius = 2
+speed = 45
+flies = true
+
+[[unit]]
+id = "apa_fighter"
+name = "APA Fighter"
+faction = "apa"
+hp = 90
+armour = "light"
+radius = 2
+speed = 45
+flies = true
+
+# ---- Generals' units ------------------------------------------------------------------
+# Units a general's factories add or swap in (the alpha's `StaticData/Generals/*` `Units`
+# lists). src: each unit's own alpha blueprint: MaxHealth, Cost, BuildTime, the main
+# weapon's DamageRating, DamageTypes bonuses (type 0 vs. infantry, 1 light, 2 heavy, 3
+# structure, 4 garrisoned), Range and RateOfFire, and the veterancy's rank-1 health and
+# rank-3 fire-rate cut. ArmorRating 0-2 is our Infantry for squads and Light for vehicles,
+# 3-5 Light, 6+ Heavy. Speeds are placeholders by class (infantry 9, tanks 10, light
+# vehicles 16, helicopters 12). Wiki names where the archive has them.
+# Fox LRV (eu_lightreconvehicle): hp 300, $450, 12 s; machine gun 16 (+12 inf), 30, 0.98 s;
+# carries one squad (`Capacity` 1, can't fire out).
+[[unit]]
+id = "eu_fox"
+name = "EU Fox LRV"
+faction = "eu"
+hp = 300
+armour = "light"
+cost = 450
+build_time = 12
+radius = 2
+speed = 16
+ranks = { health = 54, cooldown_percent = 85 }
+garrison = { capacity = 1 }
+
+[unit.weapon]
+damage = 16
+bonus = { infantry = 12 }
+range = 30
+cooldown = 1
+
+# Longbow (eu_lightrockethelo): hp 240 (the wiki's card 410), $850, 24 s; rockets 36 (+16
+# light), 30, 1.2 s, ground and air (`TargetType` 0). Radar Pulse (the wiki's Longbow
+# ability, "temporarily improves the sight range"; the alpha's eu_radarpulse, an instant
+# ability with no numbers): sight at 150% for 10 s, every 30 s, placeholders.
+[[unit]]
+id = "eu_longbow"
+name = "EU Longbow"
+faction = "eu"
+hp = 240
+armour = "light"
+cost = 850
+build_time = 24
+radius = 4
+speed = 12
+flies = true
+ranks = { health = 36, cooldown_percent = 88 }
+abilities = ["radar_pulse"]
+
+[unit.weapon]
+damage = 36
+bonus = { light = 16 }
+range = 30
+cooldown = 1.2
+targets = "both"
+air_range = 30
+
+# Sniper Team (eu_elitesnipersoldiersquad): hp 240, $750, 13 s; sniper rifle 25 (+200 vs.
+# infantry), 50, 4 s; stealthed (the wiki's passive Camouflage).
+[[unit]]
+id = "eu_snipers"
+name = "EU Sniper Team"
+faction = "eu"
+hp = 240
+armour = "infantry"
+cost = 750
+build_time = 13
+radius = 2
+speed = 9
+stealth = true
+ranks = { health = 14, cooldown_percent = 83 }
+
+[unit.weapon]
+damage = 25
+bonus = { infantry = 200 }
+range = 50
+cooldown = 4
+
+# Assault APC (eu_apcassault): hp 440, $600, 13 s; machine gun 28, 32, 1.5 s; carries two.
+[[unit]]
+id = "eu_assault_apc"
+name = "EU Assault APC"
+faction = "eu"
+hp = 440
+armour = "light"
+cost = 600
+build_time = 13
+radius = 2
+speed = 17
+ranks = { health = 54, cooldown_percent = 85 }
+garrison = { capacity = 2 }
+
+[unit.weapon]
+damage = 28
+range = 32
+cooldown = 1.5
+
+# Shock Troopers (eu_shocktroopersquad): hp 240, $375, 10 s; two guns of 23, 25, every 1.2 s
+# and 1.05 s. A unit has one weapon here, so it is both together: 49 (23 + 23 × 1.2 / 1.05)
+# every 1.2 s. Replaces the Recon Squad for its generals.
+[[unit]]
+id = "eu_shock_troopers"
+name = "EU Shock Troopers"
+faction = "eu"
+hp = 240
+armour = "infantry"
+cost = 375
+build_time = 10
+radius = 2
+speed = 10
+ranks = { health = 21, cooldown_percent = 94 }
+
+[unit.weapon]
+damage = 49
+range = 25
+cooldown = 1.2
+
+# Heavy Assault Laser (eu_heavylasertank): hp 600 (the wiki's 1000), $1200, 22 s; laser
+# 110, 35, 3 s. A direct-fire gun stands in for the beam.
+[[unit]]
+id = "eu_laser_tank"
+name = "EU Heavy Assault Laser"
+faction = "eu"
+hp = 600
+armour = "light"
+cost = 1200
+build_time = 22
+radius = 3.5
+speed = 9
+ranks = { health = 72, cooldown_percent = 80 }
+
+[unit.weapon]
+damage = 110
+range = 35
+cooldown = 3
+
+# Railgun Tank (eu_heavyrailguntank_exp): hp 900, $1250, 22 s; railgun 280 (+80 heavy,
+# +120 garrisoned), 50, 4 s. Speed 6, a placeholder below the class's 8: with the
+# Plasma Bomb below, `g2-tools generals` measured Cleaver at 12 of 18 against 18 at 8.
+[[unit]]
+id = "eu_railgun_tank"
+name = "EU Railgun Tank"
+faction = "eu"
+hp = 900
+armour = "heavy"
+cost = 1250
+build_time = 22
+radius = 3.5
+speed = 6
+ranks = { health = 72, cooldown_percent = 80 }
+
+[unit.weapon]
+damage = 280
+bonus = { heavy = 80 }
+range = 50
+cooldown = 4
+garrison_bonus = 120
+
+# Inferno Squad (au_eliteflamesoldiersquad): hp 330, $500, 13 s; flamethrower 50 (+65
+# inf, +30 structure, +80 garrisoned), 25, 3.15 s.
+[[unit]]
+id = "apa_inferno"
+name = "APA Inferno Squad"
+faction = "apa"
+hp = 330
+armour = "infantry"
+cost = 500
+build_time = 13
+radius = 2
+speed = 9
+ranks = { health = 42, cooldown_percent = 79 }
+
+[unit.weapon]
+damage = 50
+bonus = { infantry = 65, structure = 30 }
+range = 25
+cooldown = 3.2
+garrison_bonus = 80
+
+# Napalm Mortar Squad (au_elitenapalmsoldiersquad): hp 160 (the wiki's 205), $700, 14 s;
+# napalm 40 (+55 inf, +30 structure, +80 garrisoned), 50, 4.15 s, lobbed as a shell.
+[[unit]]
+id = "apa_napalm_mortar"
+name = "APA Napalm Mortar Squad"
+faction = "apa"
+hp = 160
+armour = "infantry"
+cost = 700
+build_time = 14
+radius = 2
+speed = 8
+ranks = { health = 42, cooldown_percent = 79 }
+
+[unit.weapon]
+damage = 40
+bonus = { infantry = 55, structure = 30 }
+range = 50
+cooldown = 4.2
+shell = { radius = 5, speed = 40, min_range = 12 }
+garrison_bonus = 80
+
+# Dragon Tank (au_mediumflametank): hp 575, $800, 16 s; flamethrower 65 (+95 garrisoned),
+# 30, 3.15 s. Ignition (the wiki's: "self-destructs and triggers a firestorm"; the alpha's
+# apa_fataldetonation, instant): it blows up at once, and the same `PartingShot` weapon
+# ("Detonation") goes off however it dies. src: DamageRating 50, radius 20, a fire left
+# 5 s (`Persistence`) burning 10 a second (its DOT).
+[[unit]]
+id = "apa_dragon"
+name = "APA Dragon Tank"
+faction = "apa"
+hp = 575
+armour = "light"
+cost = 800
+build_time = 16
+radius = 3.5
+speed = 10
+ranks = { health = 72, cooldown_percent = 80 }
+abilities = ["ignition"]
+
+[unit.weapon]
+damage = 65
+range = 30
+cooldown = 3.2
+garrison_bonus = 95
+
+[unit.blast]
+damage = 50
+radius = 20
+cloud = { radius = 20, damage = 10, duration = 5 }
+
+# Rocket Tank (au_mediumrockettank): hp 580 (the wiki's 480), $950, 20 s; rockets 45 (+33
+# light), 35, 2 s, ground and air.
+[[unit]]
+id = "apa_rocket_tank"
+name = "APA Rocket Tank"
+faction = "apa"
+hp = 580
+armour = "light"
+cost = 950
+build_time = 20
+radius = 3.5
+speed = 10
+ranks = { health = 54, cooldown_percent = 85 }
+
+[unit.weapon]
+damage = 45
+bonus = { light = 33 }
+range = 35
+cooldown = 2
+targets = "both"
+air_range = 35
+
+# Saboteurs (au_saboteursquad): hp 325, $700, 12 s; sticky grenades 100 (+88 heavy), 18,
+# 3 s; stealthed (the wiki's Camouflage).
+[[unit]]
+id = "apa_saboteurs"
+name = "APA Saboteurs"
+faction = "apa"
+hp = 325
+armour = "infantry"
+cost = 700
+build_time = 12
+radius = 2
+speed = 10
+stealth = true
+ranks = { health = 54, cooldown_percent = 85 }
+
+[unit.weapon]
+damage = 100
+bonus = { heavy = 88 }
+range = 18
+cooldown = 3
+
+# Sunstorm (au_heavynukeartillery): hp 600, $1550, 24 s; on the move 60 (+20 inf), 30,
+# 2 s; deployed, the nuclear howitzer 215, 65, 5 s. Shell speed and set-up: Thunderfist's.
+# Nuclear Fission (the wiki's passive; the alpha's `PartingShot` "CoreBreach"): src:
+# DamageRating 50, radius 20, a radiation field left 7 s (`Persistence`) at 10 a second.
+# Uranium Pile Eject (apa_uraniumpilelauncher, range 55): the alpha plants a stake that
+# blows 100 (+75 heavy) within 10 when an enemy steps up; here the rod bursts where it
+# lands, with a radiation cloud (radius 10, 10 a second for 10 s) and a 30 s recharge,
+# placeholders.
+[[unit]]
+id = "apa_sunstorm"
+name = "APA Sunstorm"
+faction = "apa"
+hp = 600
+armour = "light"
+cost = 1550
+build_time = 24
+radius = 2
+speed = 7
+ranks = { health = 45, cooldown_percent = 67 }
+
+[unit.weapon]
+damage = 60
+bonus = { infantry = 20 }
+range = 30
+cooldown = 2
+
+[unit.deploy]
+time = 3
+
+[unit.deploy.weapon]
+damage = 215
+range = 65
+cooldown = 5
+shell = { radius = 8, speed = 40, min_range = 20 }
+
+[unit.special]
+name = "Uranium Pile Eject"
+cooldown = 30
+weapon = { damage = 100, bonus = { heavy = 75 }, range = 55, cooldown = 1 }
+
+[unit.special.blast]
+damage = 100
+bonus = { heavy = 75 }
+radius = 10
+cloud = { radius = 10, damage = 10, duration = 10 }
+
+[unit.blast]
+damage = 50
+radius = 20
+cloud = { radius = 20, damage = 10, duration = 7 }
+
+# Shadow Tank (au_mediumstealthtank): hp 545, $1075, 17 s; cannon 85 (+30 light), 35,
+# 2.5 s; stealthed (the wiki's passive stealth). Particle Accelerator (the alpha's
+# APA_ParticleAccelerator, a unit-targeted ability): one aimed shot, 300 damage at range 50;
+# the wiki: it "temporarily disables the cloaking shield", as the cannon's 2.5 s
+# `StealthDisableOnFire` does. Placeholder: the 20 s recharge (the data has no cooldown:
+# `ManaCost` and `MaxMana` are 0, and the ability asset, staticdata/abilitydata/apa/
+# apa_particleaccelerator, holds only its name and targeting).
+[[unit]]
+id = "apa_shadow_tank"
+name = "APA Shadow Tank"
+faction = "apa"
+hp = 545
+armour = "light"
+cost = 1075
+build_time = 17
+radius = 3.5
+speed = 10
+stealth = true
+ranks = { health = 72, cooldown_percent = 80 }
+
+[unit.weapon]
+damage = 85
+bonus = { light = 30 }
+range = 35
+cooldown = 2.5
+
+[unit.special]
+name = "Particle Accelerator"
+cooldown = 20
+weapon = { damage = 300, range = 50, cooldown = 0 }
+
+# Urban Assault Squad (au_urbanassaulttroopersquad): hp 300, $375, 10 s; shotguns 44, 20,
+# 2 s. Replaces the Red Guard for its generals.
+[[unit]]
+id = "apa_urban_assault"
+name = "APA Urban Assault Squad"
+faction = "apa"
+hp = 300
+armour = "infantry"
+cost = 375
+build_time = 10
+radius = 2
+speed = 9
+ranks = { health = 12, cooldown_percent = 95 }
+
+[unit.weapon]
+damage = 44
+range = 20
+cooldown = 2
+
+# Battle Bus (gu_battlebus): hp 525, $750, 14 s, unarmed; carries four squads who can't
+# fire out. Its two unlocked abilities are the passive GLA_BattleBusBunker (the wiki: it
+# "can deploy into a bunker when destroyed") and the instant GLA_InstantBunker ("manually
+# ordered to deploy into one"): both make it the Battle Bunker, at once (no set-up time in
+# the data) and for good (no ability turns it back).
+[[unit]]
+id = "gla_battle_bus"
+name = "GLA Battle Bus"
+faction = "gla"
+hp = 525
+armour = "light"
+cost = 750
+build_time = 14
+radius = 3.5
+speed = 15
+ranks = { health = 54, cooldown_percent = 100 }
+garrison = { capacity = 4 }
+becomes = "gla_battle_bunker"
+
+# Black Market Artillery (gu_heavyrocketartillery): hp 750 (the wiki's 850), $1250, 24 s;
+# rockets 70, 60, 1.75 s, lobbed as shells. The alpha's also fire at aircraft (`TargetType`
+# 0; the wiki: "anti-aircraft"); a unit here has one weapon and shells can't hit the air.
+# Speed 6, a placeholder below the class's 8 (the Thunderfist's 7 is the slowest sourced
+# gun): with Junkyard's other changes, `g2-tools generals` measured it at 15 of 18 at 8, 11
+# at 6.
+[[unit]]
+id = "gla_black_market_artillery"
+name = "GLA Black Market Artillery"
+faction = "gla"
+hp = 750
+armour = "light"
+cost = 1250
+build_time = 24
+radius = 3.5
+speed = 6
+ranks = { health = 105, cooldown_percent = 89 }
+
+[unit.weapon]
+damage = 70
+range = 60
+cooldown = 1.8
+shell = { radius = 6, speed = 50, min_range = 15 }
+
+# Shrapnel Tank (gu_heavyshrapneltank): hp 650, $1000, 16 s; cannon 60 (+35 heavy), 35,
+# 2.1 s. Replaces the Scorpion for its generals. Speed 7, a placeholder below the class's
+# 10: `g2-tools generals` measured Junkyard at 11 of 18 and Wild Dog at 7, against 16 and
+# 15 at 10 (8 gave 15 and 9). Black Market Nitro (gla_mediumcannonnitro, unlocked by an
+# upgrade in the alpha, here from the start): the `nitro` ability.
+[[unit]]
+id = "gla_shrapnel_tank"
+name = "GLA Shrapnel Tank"
+faction = "gla"
+hp = 650
+armour = "light"
+cost = 1000
+build_time = 16
+radius = 3.5
+speed = 7
+ranks = { health = 72, cooldown_percent = 80 }
+abilities = ["nitro"]
+
+[unit.weapon]
+damage = 60
+bonus = { heavy = 35 }
+range = 35
+cooldown = 2.1
+
+# Toxin Tank (gu_mediumtoxintank): hp 625, $875, 17 s; toxin cannon 60 (+50 inf, +50
+# garrisoned), 35, 3 s. Replaces the Scorpion for its general.
+[[unit]]
+id = "gla_toxin_tank"
+name = "GLA Toxin Tank"
+faction = "gla"
+hp = 625
+armour = "light"
+cost = 875
+build_time = 17
+radius = 3.5
+speed = 10
+ranks = { health = 54, cooldown_percent = 85 }
+
+[unit.weapon]
+damage = 60
+bonus = { infantry = 50 }
+range = 35
+cooldown = 3
+garrison_bonus = 50
+
+# Mobile Chemist (gu_lightchemicalvehicle): hp 200, $550, 12 s; submachine gun 11 (+11
+# inf), 32, 1.2 s. Its healing isn't modelled. Replaces the Technical.
+[[unit]]
+id = "gla_mobile_chemist"
+name = "GLA Mobile Chemist"
+faction = "gla"
+hp = 200
+armour = "light"
+cost = 550
+build_time = 12
+radius = 2
+speed = 16
+ranks = { health = 23, cooldown_percent = 94 }
+
+[unit.weapon]
+damage = 11
+bonus = { infantry = 11 }
+range = 32
+cooldown = 1.2
+
+# Bomb Truck (gu_lightbombvehicle): hp 160, $400, 13 s; high explosives 185 (+85 heavy),
+# 7, 1 s, `Suicidal` and a `PartingShot` bursting within 13: it drives up and blows its
+# charge, dying with it, and the charge also goes off when it is destroyed. Detonate (the
+# alpha's gla_bombtechnicaldetonate, instant) blows it where it stands.
+[[unit]]
+id = "gla_bomb_truck"
+name = "GLA Bomb Truck"
+faction = "gla"
+hp = 160
+armour = "light"
+cost = 400
+build_time = 13
+radius = 2
+speed = 16
+abilities = ["detonate"]
+
+[unit.weapon]
+damage = 185
+bonus = { heavy = 85 }
+range = 7
+cooldown = 1
+suicidal = true
+
+[unit.blast]
+damage = 185
+bonus = { heavy = 85 }
+radius = 13
+
+# Two more support aircraft, after the rest so earlier ids keep their meaning. src: the
+# alpha's eu_spydrone (MaxHealth 80, ArmorRating 0) for the UAV Spy Drone and
+# au_airfighter_sortie2 (400, armour 0) for the Sortie.
+[[unit]]
+id = "eu_spy_drone"
+name = "EU Spy Drone"
+faction = "eu"
+hp = 80
+armour = "light"
+radius = 2
+speed = 45
+flies = true
+
+[[unit]]
+id = "apa_sortie_fighter"
+name = "APA Sortie Fighter"
+faction = "apa"
+hp = 400
+armour = "light"
+radius = 2
+speed = 45
+flies = true
+
+# ---- Heroes: one per faction, trained at its command center, one at a time --------------
+# src: the alpha's eu_commandosquad (built at es_cc): MaxHealth 510, $1950, BuildTime 24 s,
+# MovementRate 14, ArmorRating 1 (our Infantry), EntityRadius 2; eu_commando's machine gun
+# 50, range 30, RateOfFire 1.5 s, ground only, `RtsWeaponAbilitySphereDamage` radius 8;
+# veterancy +45 hit points, RateOfFireChange -0.1. Its abilities: abilities.toml.
+# The alpha has no build-limit field; one at a time is ours.
+[[unit]]
+id = "eu_commando"
+name = "EU Commando"
+faction = "eu"
+hp = 510
+armour = "infantry"
+cost = 1950
+build_time = 24
+radius = 2
+speed = 14
+unique = true
+ranks = { health = 45, cooldown_percent = 90 }
+abilities = ["grenade_volley", "unstoppable", "rally"]
+
+[unit.weapon]
+damage = 50
+range = 30
+cooldown = 1.5
+splash = 8
+
+# src: the alpha's au_commandosquad (built at the APA command center): MaxHealth 610, $1800,
+# BuildTime 24 s, MovementRate 14, ArmorRating 1, EntityRadius 2; au_commando's sniper
+# rifle 100 (+42 vs infantry), range 50, RateOfFire 4.2 s, ground only; veterancy +45 hit
+# points, RateOfFireChange -0.28. Abilities: abilities.toml.
+[[unit]]
+id = "apa_commando"
+name = "APA Commando"
+faction = "apa"
+hp = 610
+armour = "infantry"
+cost = 1800
+build_time = 24
+radius = 2
+speed = 14
+unique = true
+ranks = { health = 45, cooldown_percent = 72 }
+abilities = ["anti_materiel_shot", "emp_grenade", "incendiary_grenade"]
+
+[unit.weapon]
+damage = 100
+bonus = { infantry = 42 }
+range = 50
+cooldown = 4.2
+
+# src: the alpha's gu_commandosquad (built at gs_cc): MaxHealth 510, $1800, BuildTime 24 s,
+# MovementRate 14, ArmorRating 1, EntityRadius 2; no weapon of its own (its weapon
+# components belong to its abilities); veterancy +45 hit points. Abilities:
+# abilities.toml.
+[[unit]]
+id = "gla_agent"
+name = "GLA Agent"
+faction = "gla"
+hp = 510
+armour = "infantry"
+cost = 1800
+build_time = 24
+radius = 2
+speed = 14
+unique = true
+ranks = { health = 45, cooldown_percent = 100 }
+abilities = ["vanish", "flak_trap", "last_stand"]

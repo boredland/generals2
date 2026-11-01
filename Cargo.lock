@@ -2552,6 +2552,7 @@ name = "g2-rules"
 version = "0.1.0"
 dependencies = [
  "g2-sim",
+ "toml",
 ]
 
 [[package]]

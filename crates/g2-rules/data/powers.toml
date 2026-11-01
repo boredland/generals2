@@ -1,0 +1,119 @@
+# Every faction's support powers, in slot order (slot 1 first): the powers each faction's
+# `*_PlayerPowerContainer` lists that are not a general's `_lvl` power. src: the alpha's
+# `RtsPlayer*Ability` assets:
+# - EU_PlayerAbility_AirRaid: 3 bombers, 320 base damage in a 25 radius (the AOE's 20, full
+#   damage to 75% of it), recharge 360 s, 4 s before activation.
+# - EU_PlayerAbility_FuelAirBomb: 600 damage in a 35 radius, recharge 420 s, 3.5 s.
+# - EU_PlayerAbility_UAVSpyDrone: radius 30, recharge 90 s, no delay, aimed into the fog
+#   (`ShroudBlocksActivation` false), `Duration` 15 s.
+# - APA_PlayerAbility_CarpetBombing: radius 35, recharge 420 s, 3.5 s; no damage figure (its
+#   bomb's projectile has BlastDamage 100, radius 5: the value every projectile in the build
+#   carries, the bombers' and the Neutron Bomb's too, so not a figure of this power).
+# - APA_PlayerAbility_SpySorties: radius 30, recharge 90 s, no delay, `ShroudBlocksActivation`
+#   false (aimed into the fog).
+# - GLA_PlayerAbility_Sabotage (`TargetingType` 1, `AllowedTargets` 1: aimed at one enemy
+#   object): recharge 120 s, no delay; no damage figure.
+#
+# The first use waits one recharge, as the generals' powers do. How the alpha splits a strike
+# into bombs isn't archived: the bomb counts and spacing are ours, chosen so each strike's
+# total over its area matches the alpha's figure. Carpet Bombing's and Sabotage's damage are
+# placeholders. A new power goes after its faction's others, so their keys stay.
+
+[[support]]
+faction = "eu"
+name = "Air Raid"
+recharge = 360
+kind = "airstrike"
+aircraft = "eu_bomber"
+jets = 3
+spread = 10
+bombs = 2
+spacing = 12
+damage = 160
+radius = 10
+
+[[support]]
+faction = "eu"
+name = "Fuel Air Bomb"
+recharge = 420
+kind = "airstrike"
+aircraft = "eu_bomber"
+jets = 1
+bombs = 1
+damage = 600
+radius = 35
+
+# A flyover, like Spy Sorties: the alpha's drone hovers over the point for its 15 s
+# `Duration` instead, which our recon pass does not model.
+[[support]]
+faction = "eu"
+name = "UAV Spy Drone"
+recharge = 90
+blind = true
+kind = "recon"
+aircraft = "eu_spy_drone"
+
+[[support]]
+faction = "apa"
+name = "Carpet Bombing"
+recharge = 420
+kind = "airstrike"
+aircraft = "apa_bomber"
+jets = 1
+bombs = 7
+spacing = 10
+damage = 150
+radius = 8
+
+[[support]]
+faction = "apa"
+name = "Spy Sorties"
+recharge = 90
+blind = true
+kind = "recon"
+aircraft = "apa_fighter"
+
+# src: GLA_PlayerAbility_DirtyScudStorm (RtsPlayerSuperweaponAbility): MainDamage 2000 over
+# radius 65, eight missiles 0.1 s apart (its weapon container), launched 6 s after the
+# order, a toxic cloud of 20 damage a second for 9 s, recharge 420 s, aimed into the fog
+# (`ShroudBlocksActivation` false). The 2000 is split over the eight missiles (250 each,
+# radius 22, spread around the point to cover the 65); missile speed 60 is the projectile's
+# `InitialSpeed`.
+[[support]]
+faction = "gla"
+name = "Scud Storm"
+recharge = 420
+blind = true
+requires = "gla_scud_storm"
+kind = "missiles"
+missiles = 8
+delay = 6
+every = 0.1
+speed = 60
+spread = 30
+damage = 250
+radius = 22
+cloud = { radius = 65, damage = 20, duration = 9 }
+
+# src: GLA_PlayerAbility_GPSScrambler: radius 50, recharge 90 s, 0.5 s delay, aimed into
+# the fog; its sphere effect hides the player's units in the area (an awareness change).
+# The alpha's effect lasts 4 s after leaving the sphere; ours lasts a flat 20 s, a
+# placeholder long enough to cross open ground.
+[[support]]
+faction = "gla"
+name = "GPS Scrambler"
+recharge = 90
+blind = true
+kind = "cloak"
+radius = 50
+duration = 20
+
+# The wiki: it "booby trap[s] an enemy or neutral building ... heavy damage". 600 is a
+# placeholder: an oil derrick at once, three quarters of a power plant, a third of a
+# command center. Neutral buildings are not targets here (they have no owner to hurt).
+[[support]]
+faction = "gla"
+name = "Sabotage"
+recharge = 120
+kind = "sabotage"
+damage = 600

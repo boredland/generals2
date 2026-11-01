@@ -12,7 +12,7 @@ flowchart LR
 ```
 
 - **g2-sim** owns all game state and has no dependencies. It is a plain struct world, not an ECS: entities live in a generational arena and are iterated in index order, which makes iteration order part of the spec instead of an accident.
-- **g2-rules** is data: `static DEFS` and the built-in map. `g2-rules/tests` holds the behaviour tests, because they need real definitions.
+- **g2-rules** is data: the rules files in `data/` (`docs/RULES.md`), parsed once into the sim's `Rules` by `data.rs`, the campaign and the built-in map. `g2-rules/tests` holds the behaviour tests, because they need real definitions.
 - **g2-client** mirrors sim entities into Bevy entities for rendering and turns input into `CommandKind`s. Bevy's ECS never holds authoritative state.
 - **g2-tools** runs replays and benchmarks headless.
 

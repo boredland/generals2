@@ -25,6 +25,10 @@ use g2_sim::{
 };
 
 fn main() -> ExitCode {
+    if let Err(e) = g2_rules::try_rules() {
+        eprintln!("bad rules file: {e}");
+        return ExitCode::FAILURE;
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let result = match args.first().map(String::as_str) {
         Some("verify") => verify(&args[1..]),

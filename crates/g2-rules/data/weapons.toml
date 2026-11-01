@@ -1,0 +1,69 @@
+# Named weapons, shared by several units (`weapon = "rifles"`); a unit with a weapon of its
+# own writes it in place. Fields and units: docs/RULES.md. The bonus is extra damage per
+# armour class, the way the archived cards state it ("40 (Bonus: 30 vs. Light)").
+
+# src: Red Guard (APA basic infantry): 13 (+2 vs. infantry), cooldown 0.9, range 25. Recon
+# squad and Rabble squad have no weapon card; they reuse it as a placeholder.
+[rifles]
+damage = 13
+bonus = { infantry = 2 }
+range = 25
+cooldown = 0.9
+
+# src: Warlord tank: 40 (bonus 30 vs. Light), cooldown 1.50, range 35. Placeholder for Aegis.
+[tank_gun]
+damage = 40
+bonus = { light = 30 }
+range = 35
+cooldown = 1.5
+
+# src: Thunderfist undeployed cannon 40 (+30 vs. light units), cooldown 1.65, range 30.
+[thunderfist_cannon]
+damage = 40
+bonus = { light = 30 }
+range = 30
+cooldown = 1.6
+
+# src: Thunderfist deployed howitzer 100 (+30 vs. light units, +100 vs. garrisoned buildings),
+# cooldown 4, range 65. Blast radius 6, shell speed 40/s and minimum range 20: placeholders,
+# after the way Zero Hour's artillery (Inferno cannon: radius 15, minimum range 50 of 300) is
+# shaped.
+[howitzer]
+damage = 100
+bonus = { light = 30 }
+range = 65
+cooldown = 4
+shell = { radius = 6, speed = 40, min_range = 20 }
+garrison_bonus = 100
+
+# Placeholder: GLA Toxin Artillery's "tri-artillery cannon" has no numbers on its card, and
+# its toxin damage over time is not modelled. A lighter, faster-firing shell than the howitzer.
+[toxin_shell]
+damage = 45
+bonus = { infantry = 15 }
+range = 55
+cooldown = 2.5
+shell = { radius = 8, speed = 40, min_range = 15 }
+
+# Placeholder: the EU has no artillery card in the archive (only the general Salvo's artillery
+# strike). A mid-weight shell between the other two. Its damage, 40 (70 before), is tuned by
+# measurement: Easy against Easy and Normal against Normal, every pairing from both starts on
+# Crater Ridge and the 32 imported 2-player maps (the "33 maps" below), with every other
+# change of the balance pass in, the EU won 91 of 132 and 94 of 128 at 70, 63 and 74 at 40.
+[eu_shell]
+damage = 40
+bonus = { light = 20, structure = 40 }
+range = 60
+cooldown = 3
+shell = { radius = 6, speed = 45, min_range = 18 }
+
+# Placeholder: the rocket squads' cards say "anti-armor" but give no weapon numbers. A heavy
+# rocket every 2 s with a little more than a rifle's reach: per credit it does about twice a
+# rifle squad's damage to tanks and two thirds of it to infantry.
+[rockets]
+damage = 45
+bonus = { light = 10, heavy = 75, structure = 10 }
+range = 30
+cooldown = 2
+targets = "both"
+air_range = 40

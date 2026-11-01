@@ -1,0 +1,125 @@
+# Unit abilities, used on command (a unit's `abilities`, in key order: R, F, C). The heroes'
+# abilities: src: each hero's `RtsUnitAbilityCasterData`: MaxMana 100, regaining 1 a second,
+# so an ability recharges for its ManaCost in seconds; the numbers per ability are in its
+# comment. Names and descriptions are ours.
+
+# Black Market Nitro, the GLA tanks' ability: speed at 150% for 5 s, every 30 s
+# (placeholders: the alpha's ability holds only its name and an instant targeting type).
+[nitro]
+name = "Nitro"
+kind = "boost"
+statuses = [{ status = "speed", percent = 150, duration = 5 }]
+cooldown = 30
+
+[radar_pulse]
+name = "Radar Pulse"
+kind = "boost"
+statuses = [{ status = "sight", percent = 150, duration = 10 }]
+cooldown = 30
+
+[ignition]
+name = "Ignition"
+kind = "detonate"
+cooldown = 0
+
+[detonate]
+name = "Detonate"
+kind = "detonate"
+cooldown = 0
+
+# src: eu_grenadestorm (RtsUnitAbilityCircle): ManaCost 50, Range 50, Radius 10; its
+# GrenadeStormWeapon fires 50 grenades (RepeatFire 49) 0.1 s apart at InitialSpeed 45, each
+# bursting for BlastDamage 100 within BlastRadius 5. Ours land on the point and on two
+# rings around it, at half and the whole of its radius.
+[grenade_volley]
+name = "Grenade Volley"
+kind = "throw"
+range = 50
+shells = 50
+every = 0.1
+spread = 10
+speed = 45
+blast = { damage = 100, radius = 5 }
+cooldown = 50
+
+# src: eu_unstoppable (RtsUnitAbilityInstant): ManaCost 50; no amounts in its data (the
+# wiki: tougher and hitting harder for a while). Half the damage taken and a quarter more
+# dealt for 10 s are placeholders.
+[unstoppable]
+name = "Unstoppable"
+kind = "boost"
+statuses = [{ status = "toughness", percent = 50, duration = 10 }, { status = "damage", percent = 125, duration = 10 }]
+cooldown = 50
+
+# src: eu_leadership (RtsUnitAbilityInstant): ManaCost 28; no amounts in its data (the
+# wiki: nearby infantry fight harder). A quarter more damage for own infantry within 30,
+# the commando too, for 15 s, are placeholders.
+[rally]
+name = "Rally"
+kind = "boost"
+statuses = [{ status = "damage", percent = 125, duration = 15 }]
+radius = 30
+infantry = true
+cooldown = 28
+
+# src: apa_antimaterialshot (RtsUnitAbilityUnitTarget): ManaCost 60, Range 50, DamageRating
+# 1000, one shot at a chosen unit; ground targets, as its rifle.
+[anti_materiel_shot]
+name = "Anti-Materiel Shot"
+kind = "shot"
+weapon = { damage = 1000, range = 50, cooldown = 1 }
+cooldown = 60
+
+# src: the commando's EMP grenade (RtsUnitAbilityCircle): ManaCost 40, Range 40, Radius 15;
+# its appliers stop movement and firing for Duration 5 s, on enemies (AffectsTeam 5).
+[emp_grenade]
+name = "EMP Grenade"
+kind = "area"
+range = 40
+field = { radius = 15, duration = 5, enemies = [{ status = "stun" }] }
+cooldown = 40
+
+# src: apa_pyrogrenade (RtsUnitAbilityCircle): ManaCost 60, Range 50, DamageRating 40,
+# Radius 5, a damage-over-time applier of 20 a second. Its Duration is 0 in the data; the
+# burn's 5 s are a placeholder. Thrown at InitialSpeed 100.
+[incendiary_grenade]
+name = "Incendiary Grenade"
+kind = "throw"
+range = 50
+shells = 1
+every = 0
+spread = 0
+speed = 100
+blast = { damage = 40, radius = 5, cloud = { radius = 5, damage = 20, duration = 5 } }
+cooldown = 60
+
+# src: gla_shadowagent (RtsUnitAbilityInstant): ManaCost 23; no amounts in its data (the
+# wiki: camouflaged and faster for a while). Hidden and half again as fast for 10 s are
+# placeholders.
+[vanish]
+name = "Vanish"
+kind = "boost"
+statuses = [{ status = "speed", percent = 150, duration = 10 }]
+cloak = 10
+cooldown = 23
+
+# src: gla_commandoflaktrap (RtsUnitAbilityCircle): ManaCost 30, Range 50, DamageRating 125,
+# Radius 15.
+[flak_trap]
+name = "Flak Trap"
+kind = "trap"
+range = 50
+radius = 15
+damage = 125
+cooldown = 30
+
+# src: gla_ultimatesacrifice (RtsUnitAbilityCircle): ManaCost 30, Range 75, Radius 30; the
+# wiki: nearby GLA infantry blow themselves up. Each one's blast, 100 within 8, is a
+# placeholder.
+[last_stand]
+name = "Last Stand"
+kind = "sacrifice"
+range = 75
+radius = 30
+blast = { damage = 100, radius = 8 }
+cooldown = 30

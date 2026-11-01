@@ -1,0 +1,799 @@
+# One general per faction for now, to exercise generals-as-data. The names are documented G2
+# generals; what each changed is not, so these economy modifiers are
+# placeholders in the spirit of pre-release sub-general designs (e.g. a supply doctrine:
+# cheaper supply trucks, faster builds). Each has one active power, modelled on support
+# powers the archive documents for other generals of the same side (numbers placeholders).
+#
+# Each general's `power` is its rank-1 power; `power_levels` its levels from general ranks 3
+# and 5. `units` adds units at a factory or constructor (`at`), in place of `replaces` where
+# given. `perks` lists the perks the general may slot, cheapest rank first.
+
+[[general]]
+id = "bulldog"
+name = "Bulldog"
+faction = "eu"
+modifiers = [
+    { unit = "eu_harvester", cost_percent = 80 },
+    { unit = "eu_harvester", build_time_percent = 85 },
+    { unit = "eu_power", cost_percent = 120 },
+]
+perks = [
+    "bd_double_shifts",
+    "bd_heavy_payload",
+    "bd_protector_i",
+    "bd_protector_ii",
+    "bd_factory_overtime",
+    "bd_insourced",
+    "bd_aerodynamics_i",
+    "bd_aerodynamics_ii",
+]
+
+# After the EU general Salvo's "Suppressing fire" (an artillery strike called onto the
+# field): seven shells on and around the point, half a second apart after a 3 s delay.
+# Placeholder numbers. No bonus against buildings: with one it took half a command
+# center per use, a base-killer rather than a strike on an army. Shell damage 54 (90
+# before), tuned by `g2-tools generals`: Bulldog 13 of 18 at 90, 12 at 54.
+[general.power]
+name = "Artillery barrage"
+recharge = 240
+kind = "barrage"
+shells = 7
+delay = 3
+every = 0.5
+damage = 54
+bonus = { light = 20 }
+radius = 7
+# levels: more shells (placeholders; the general is ours).
+
+[[general.power_levels]]
+name = "Artillery barrage"
+recharge = 240
+kind = "barrage"
+shells = 7
+delay = 3
+every = 0.5
+damage = 54
+bonus = { light = 20 }
+radius = 7
+
+[[general.power_levels]]
+name = "Artillery barrage"
+recharge = 240
+kind = "barrage"
+shells = 9
+delay = 3
+every = 0.5
+damage = 54
+bonus = { light = 20 }
+radius = 7
+
+[[general]]
+id = "taskmaster"
+name = "Taskmaster"
+faction = "apa"
+modifiers = [
+    { unit = "apa_supply", build_time_percent = 75 },
+    { unit = "apa_derrick", build_time_percent = 75 },
+    { unit = "apa_harvester", cost_percent = 115 },
+]
+units = [
+    { unit = "apa_inferno", at = "apa_barracks" },
+    { unit = "apa_saboteurs", at = "apa_barracks" },
+]
+perks = [
+    "tm_spy_efficiency",
+    "tm_logistics",
+    "tm_protector_i",
+    "tm_protector_ii",
+    "tm_factory_overtime",
+    "tm_vulcan_barrels",
+    "tm_kanban",
+    "tm_command_i",
+    "tm_offshore",
+]
+
+# src: the alpha's global Supply Drop (Global_PlayerAbility_SupplyDrop_Lvl01-03, in every
+# faction's power list; the wiki: a crate "that heals nearby units, grants veterancy and
+# temporarily buffs attack power"): 2 s before activation, radius 30, then 40; damage
+# at 115%, 115% and 125% for 30 s (`RtsDamageRatingChangeApplier`); recharge 180 s. Its
+# heal is 15/25/35 hp a second for 5 s while idle; here 400, 400 and 500 at once, and
+# one veterancy rank, placeholders.
+[general.power]
+name = "Supply Drop"
+recharge = 180
+kind = "field"
+radius = 30
+delay = 2
+hp = 400
+ranks = 1
+duration = 30
+allies = [{ status = "damage", percent = 115 }]
+
+[[general.power_levels]]
+name = "Supply Drop"
+recharge = 180
+kind = "field"
+radius = 40
+delay = 2
+hp = 400
+ranks = 1
+duration = 30
+allies = [{ status = "damage", percent = 115 }]
+
+[[general.power_levels]]
+name = "Supply Drop"
+recharge = 180
+kind = "field"
+radius = 40
+delay = 2
+hp = 500
+ranks = 1
+duration = 30
+allies = [{ status = "damage", percent = 125 }]
+
+[[general]]
+id = "junkyard"
+name = "Junkyard"
+faction = "gla"
+# Workers at 90% (a placeholder; 75% before) and the ambush at 3, 4 and 5 squads (4, 5
+# and 6 before), with the Shrapnel Tank and the Black Market Artillery slowed:
+# `g2-tools generals` measured Junkyard at 11 of 18, from 15 with the slower units alone.
+modifiers = [
+    { unit = "gla_worker", cost_percent = 90 },
+    { unit = "gla_stash", build_time_percent = 125 },
+]
+units = [
+    { unit = "gla_battle_bus", at = "gla_factory" },
+    { unit = "gla_black_market_artillery", at = "gla_factory" },
+    { unit = "gla_shrapnel_tank", replaces = "gla_tank", at = "gla_factory" },
+]
+perks = [
+    "jy_discipline",
+    "jy_scavenger",
+    "jy_leverage",
+    "jy_insourced",
+    "jy_protector_i",
+    "jy_protector_ii",
+    "jy_factory_overtime",
+    "jy_leadership",
+    "jy_faulty_construction",
+]
+
+# After the GLA general Muerta's "Ambush" (rebel soldiers from hidden tunnels): three
+# RPG squads appear at the point.
+[general.power]
+name = "Ambush"
+recharge = 240
+kind = "ambush"
+unit = "gla_rpg"
+count = 3
+# units: the alpha's GLA_JunkyardGeneral (Battle Bus, Black Market Artillery, the Shrapnel Tank in place of the Scorpion); levels: more squads (placeholders).
+
+[[general.power_levels]]
+name = "Ambush"
+recharge = 240
+kind = "ambush"
+unit = "gla_rpg"
+count = 4
+
+[[general.power_levels]]
+name = "Ambush"
+recharge = 240
+kind = "ambush"
+unit = "gla_rpg"
+count = 5
+
+# src: the EU air force general (the wiki's Daedalus, the alpha's EU_AirforceGeneral, icon EG_Airforce_01): Fox LRV in place of the APC, Longbow helicopters, the Sniper Team; power Air Raid (lvl01-03: 3 bombers, recharge 240 s, 1 s before activation).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets). Air
+# Raid's bombs at 84 and 105 (140 and 175 before): `g2-tools generals` measured Daedalus at
+# 13 of 18 before, 12 after.
+[[general]]
+id = "daedalus"
+name = "Daedalus"
+faction = "eu"
+units = [
+    { unit = "eu_fox", replaces = "eu_apc", at = "eu_factory" },
+    { unit = "eu_longbow", at = "eu_airfield" },
+    { unit = "eu_snipers", at = "eu_barracks" },
+]
+perks = [
+    "dd_tailwind",
+    "dd_heavy_bombs",
+    "dd_protector_i",
+    "dd_protector_ii",
+    "dd_kanban",
+    "dd_aerodynamics_i",
+    "dd_aerodynamics_ii",
+    "dd_insourced",
+]
+
+[general.power]
+name = "Air Raid"
+recharge = 240
+kind = "airstrike"
+aircraft = "eu_bomber"
+jets = 3
+spread = 10
+bombs = 2
+spacing = 12
+damage = 84
+radius = 10
+
+[[general.power_levels]]
+name = "Air Raid"
+recharge = 240
+kind = "airstrike"
+aircraft = "eu_bomber"
+jets = 3
+spread = 10
+bombs = 2
+spacing = 12
+damage = 105
+radius = 10
+
+[[general.power_levels]]
+name = "Air Raid"
+recharge = 240
+kind = "airstrike"
+aircraft = "eu_bomber"
+jets = 4
+spread = 10
+bombs = 2
+spacing = 12
+damage = 105
+radius = 10
+
+# src: the EU rapid assault general (the wiki's Mercury Red: Shock Troopers; the alpha's EU_RapidAssaultGeneral): Shock Troopers in place of the Recon Squad, the Assault APC in place of the APC, Longbows; power Bulwark (radius 25, recharge 180 s, no delay; its area persists 10 s and its effect asset holds no amount).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+# Bulwark (the wiki: "inspires friendly units, reducing the damage they receive for a short
+# duration"): own units within 25 take 75%, 70% and 65% damage (placeholders) for the
+# area's 10 s.
+[[general]]
+id = "mercury_red"
+name = "Mercury Red"
+faction = "eu"
+units = [
+    { unit = "eu_shock_troopers", replaces = "eu_recon", at = "eu_barracks" },
+    { unit = "eu_assault_apc", replaces = "eu_apc", at = "eu_factory" },
+    { unit = "eu_longbow", at = "eu_airfield" },
+]
+perks = [
+    "mr_double_time",
+    "mr_field_medics",
+    "mr_protector_i",
+    "mr_protector_ii",
+    "mr_rapid_deployment",
+    "mr_factory_overtime",
+    "mr_insourced",
+    "mr_leadership",
+    "mr_strike_team",
+]
+
+[general.power]
+name = "Bulwark"
+recharge = 180
+kind = "field"
+radius = 25
+duration = 10
+allies = [{ status = "toughness", percent = 75 }]
+
+[[general.power_levels]]
+name = "Bulwark"
+recharge = 180
+kind = "field"
+radius = 25
+duration = 10
+allies = [{ status = "toughness", percent = 70 }]
+
+[[general.power_levels]]
+name = "Bulwark"
+recharge = 180
+kind = "field"
+radius = 25
+duration = 10
+allies = [{ status = "toughness", percent = 65 }]
+
+# src: the EU experimental weapons general (the wiki's Cutting Edge: Heavy Assault Laser; the alpha's EU_LaserGeneral): the Assault APC in place of the APC, the Heavy Assault Laser, the Railgun Turret in place of the Gun Turret, Longbows, Shock Troopers in place of the Recon Squad; power Skylance (an orbital strike, radius 18, recharge 240 s, 300 base damage from lvl02).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+[[general]]
+id = "cutting_edge"
+name = "Cutting Edge"
+faction = "eu"
+units = [
+    { unit = "eu_assault_apc", replaces = "eu_apc", at = "eu_factory" },
+    { unit = "eu_laser_tank", at = "eu_factory" },
+    { unit = "eu_railgun_turret", replaces = "eu_gun_turret", at = "eu_dozer" },
+    { unit = "eu_longbow", at = "eu_airfield" },
+    { unit = "eu_shock_troopers", replaces = "eu_recon", at = "eu_barracks" },
+]
+perks = [
+    "ce_capacitors",
+    "ce_focusing",
+    "ce_protector_i",
+    "ce_protector_ii",
+    "ce_factory_overtime",
+    "ce_reinforced",
+    "ce_insourced",
+    "ce_overcharge",
+]
+
+[general.power]
+name = "Skylance"
+recharge = 240
+kind = "barrage"
+shells = 1
+delay = 3
+every = 0.1
+damage = 240
+radius = 18
+
+[[general.power_levels]]
+name = "Skylance"
+recharge = 240
+kind = "barrage"
+shells = 1
+delay = 3
+every = 0.1
+damage = 300
+radius = 18
+
+[[general.power_levels]]
+name = "Skylance"
+recharge = 240
+kind = "barrage"
+shells = 2
+delay = 3
+every = 0.5
+damage = 300
+radius = 18
+
+# src: the EU railgun general (the wiki's Cleaver: Railgun Squad; the alpha's EU_ScienceGeneral, icon EG_Railgun_01): Fox LRV, the Assault APC in place of the APC, Longbows, the Railgun Turret in place of the Gun Turret, the Railgun Tank; power Plasma Bomb (radius 25/30/35, recharge 240 s, 2.5 s).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets; the
+# Plasma Bomb's `Damage` is 0 and its projectile's blast the build-wide default). The
+# Plasma Bomb at 100 (200 before), with the Railgun Tank slowed: `g2-tools generals`
+# measured Cleaver at 18 of 18 with neither, 15 with the slower tank alone, 12 with both.
+# The Experimental Drop perk adds the alpha's Deploy Experimental Railgun.
+[[general]]
+id = "cleaver"
+name = "Cleaver"
+faction = "eu"
+units = [
+    { unit = "eu_fox", at = "eu_factory" },
+    { unit = "eu_assault_apc", replaces = "eu_apc", at = "eu_factory" },
+    { unit = "eu_longbow", at = "eu_airfield" },
+    { unit = "eu_railgun_turret", replaces = "eu_gun_turret", at = "eu_dozer" },
+    { unit = "eu_railgun_tank", at = "eu_factory" },
+]
+perks = [
+    "cl_coolant",
+    "cl_plasma_core",
+    "cl_protector_i",
+    "cl_protector_ii",
+    "cl_factory_overtime",
+    "cl_insourced",
+    "cl_heavy_plating",
+    "cl_slugs",
+    "cl_railgun_drop",
+]
+
+[general.power]
+name = "Plasma Bomb"
+recharge = 240
+kind = "barrage"
+shells = 1
+delay = 2.5
+every = 0.1
+damage = 100
+radius = 25
+
+[[general.power_levels]]
+name = "Plasma Bomb"
+recharge = 240
+kind = "barrage"
+shells = 1
+delay = 2.5
+every = 0.1
+damage = 100
+radius = 30
+
+[[general.power_levels]]
+name = "Plasma Bomb"
+recharge = 240
+kind = "barrage"
+shells = 1
+delay = 2.5
+every = 0.1
+damage = 100
+radius = 35
+
+# src: the APA flame general (the wiki's Inferno: Dragon Tank, Inferno Squad, Napalm Mortar Squad, Medium Rocket Tank; the alpha's APA_FlameGeneral): the Napalm Mortar Squad, the Dragon Tank in place of the Warlord, the Rocket Tank in place of the Gatling Tank; power Inferno Artillery (radius 20/20/25, recharge 240 s, 3 s).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+[[general]]
+id = "inferno"
+name = "Inferno"
+faction = "apa"
+units = [
+    { unit = "apa_napalm_mortar", at = "apa_barracks" },
+    { unit = "apa_dragon", replaces = "apa_warlord", at = "apa_factory" },
+    { unit = "apa_rocket_tank", replaces = "apa_gatling", at = "apa_factory" },
+]
+perks = [
+    "in_double_shifts",
+    "in_infernal_diesel",
+    "in_protector_i",
+    "in_protector_ii",
+    "in_factory_overtime",
+    "in_wildfire",
+    "in_insourced",
+    "in_leadership",
+]
+
+# Shell damage 140, then 170 (placeholders, twice the first guess of 70 and 85, the
+# bonus kept): `g2-tools generals` measured Inferno at 7 of 18 against 6.
+[general.power]
+name = "Inferno Artillery"
+recharge = 240
+kind = "barrage"
+shells = 6
+delay = 3
+every = 0.5
+damage = 140
+bonus = { infantry = 30 }
+radius = 7
+
+[[general.power_levels]]
+name = "Inferno Artillery"
+recharge = 240
+kind = "barrage"
+shells = 6
+delay = 3
+every = 0.5
+damage = 170
+bonus = { infantry = 30 }
+radius = 7
+
+[[general.power_levels]]
+name = "Inferno Artillery"
+recharge = 240
+kind = "barrage"
+shells = 8
+delay = 3
+every = 0.5
+damage = 170
+bonus = { infantry = 30 }
+radius = 9
+
+# src: the APA rocket general (the wiki's Red Arrow: Rocket Soldier, Tank Hunter; the alpha's APA_RocketGeneral): the Rocket Tank in place of the Gatling Tank, the Napalm Mortar Squad; power Thunderclap (100 damage, radius 20, recharge 240 s, 5 s before activation, the same at every level).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+# Thunderclap (the wiki: "a shockwave that disables unit movement in the affected area"):
+# one blast of 100 over 20 that stuns enemy units for 3, 4 and 5 s (placeholders; the
+# projectile's own `HasStunEffect` is false, so the stun is the wiki's).
+[[general]]
+id = "red_arrow"
+name = "Red Arrow"
+faction = "apa"
+units = [
+    { unit = "apa_rocket_tank", replaces = "apa_gatling", at = "apa_factory" },
+    { unit = "apa_napalm_mortar", at = "apa_barracks" },
+]
+perks = [
+    "ra_salvo_timing",
+    "ra_warheads",
+    "ra_protector_i",
+    "ra_protector_ii",
+    "ra_tank_hunters",
+    "ra_factory_overtime",
+    "ra_insourced",
+    "ra_guidance",
+]
+
+[general.power]
+name = "Thunderclap"
+recharge = 240
+kind = "field"
+radius = 20
+delay = 5
+damage = 100
+duration = 3
+enemies = [{ status = "stun" }]
+
+[[general.power_levels]]
+name = "Thunderclap"
+recharge = 240
+kind = "field"
+radius = 20
+delay = 5
+damage = 100
+duration = 4
+enemies = [{ status = "stun" }]
+
+[[general.power_levels]]
+name = "Thunderclap"
+recharge = 240
+kind = "field"
+radius = 20
+delay = 5
+damage = 100
+duration = 5
+enemies = [{ status = "stun" }]
+
+# src: the APA nuclear general (the wiki's 1000 Suns: Sunstorm, Shadow Tank; the alpha's APA_AtomicGeneral): the Rocket Tank, the Sunstorm in place of the Thunderfist, the Shadow Tank; power Neutron Bomb (radius 20, recharge 240 s, 2 s before activation).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+# The Neutron Bomb is a bomb and a radiation cloud (the wiki: "contaminates a large area
+# with radiation ... damage over time for as long as they remain in the area"), as the
+# Toxin Bomb's. src: its weapon drops one bomb from 45 above the point at speed 60
+# (APA_PlayerAbility_NeutronBomb_Weapon_Lvl01-03), under a second; ours flies in from the
+# start as fast as the Toxin Bomb's. Its radiation emitter lives 8 s at lvl01 and 15 s at
+# lvl02/03 (em_apa_neutronbomb_radiation, _level2, _level3), the cloud's duration here.
+# Its `Damage` is 0: the blast (200/250/300) and the cloud's 12 a second are placeholders,
+# about the old blast's total (260/325/400, +100 on infantry) for a unit that stays.
+[[general]]
+id = "thousand_suns"
+name = "1000 Suns"
+faction = "apa"
+units = [
+    { unit = "apa_rocket_tank", at = "apa_factory" },
+    { unit = "apa_sunstorm", replaces = "apa_thunderfist", at = "apa_factory" },
+    { unit = "apa_shadow_tank", at = "apa_factory" },
+]
+perks = [
+    "ts_fission",
+    "ts_enriched",
+    "ts_protector_i",
+    "ts_protector_ii",
+    "ts_factory_overtime",
+    "ts_uranium",
+    "ts_insourced",
+    "ts_leadership",
+]
+
+[general.power]
+name = "Neutron Bomb"
+recharge = 240
+kind = "missiles"
+missiles = 1
+delay = 2
+every = "1 tick"
+speed = 120
+spread = 0
+damage = 200
+radius = 20
+cloud = { radius = 20, damage = 12, duration = 8 }
+
+[[general.power_levels]]
+name = "Neutron Bomb"
+recharge = 240
+kind = "missiles"
+missiles = 1
+delay = 2
+every = "1 tick"
+speed = 120
+spread = 0
+damage = 250
+radius = 20
+cloud = { radius = 20, damage = 12, duration = 15 }
+
+[[general.power_levels]]
+name = "Neutron Bomb"
+recharge = 240
+kind = "missiles"
+missiles = 1
+delay = 2
+every = "1 tick"
+speed = 120
+spread = 0
+damage = 300
+radius = 20
+cloud = { radius = 20, damage = 12, duration = 15 }
+
+# src: the APA espionage general (the wiki's Blackjack: Saboteurs, Shadow Tank, Urban Assault Squad; the alpha's APA_EspionageGeneral): the Urban Assault Squad in place of the Red Guard, the Dragon Tank, the Shadow Tank in place of the Warlord, the Saboteurs; power Misdirection (radius 15, recharge 240 s; holographic copies of the units there, per the wiki's list of powers: how long they last is a placeholder, the alpha's asset holds only the radius).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+[[general]]
+id = "blackjack"
+name = "Blackjack"
+faction = "apa"
+units = [
+    { unit = "apa_urban_assault", replaces = "apa_red_guard", at = "apa_barracks" },
+    { unit = "apa_dragon", at = "apa_factory" },
+    { unit = "apa_shadow_tank", replaces = "apa_warlord", at = "apa_factory" },
+    { unit = "apa_saboteurs", at = "apa_barracks" },
+]
+perks = [
+    "bj_quick_hands",
+    "bj_deep_cover",
+    "bj_protector_i",
+    "bj_protector_ii",
+    "bj_population",
+    "bj_factory_overtime",
+    "bj_sticky",
+    "bj_leadership",
+    "bj_sortie",
+]
+
+[general.power]
+name = "Misdirection"
+recharge = 240
+kind = "decoys"
+radius = 15
+duration = 20
+
+[[general.power_levels]]
+name = "Misdirection"
+recharge = 240
+kind = "decoys"
+radius = 15
+duration = 25
+
+[[general.power_levels]]
+name = "Misdirection"
+recharge = 240
+kind = "decoys"
+radius = 20
+duration = 30
+
+# src: the GLA toxin general (the wiki's Dr. Thrax: Mobile Chemist, Toxin Tank; the alpha's GLA_ToxinGeneral): the Toxin Tank in place of the Scorpion, the Mobile Chemist in place of the Technical, the Bomb Truck; power Toxin Bomb (radius 20/25/30, recharge 240 s): a toxin cloud.
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+# src: DelayBeforeActivation 0.5 s at lvl01, 0 at lvl02/03 (a tick here).
+[[general]]
+id = "thrax"
+name = "Thrax"
+faction = "gla"
+units = [
+    { unit = "gla_toxin_tank", replaces = "gla_tank", at = "gla_factory" },
+    { unit = "gla_mobile_chemist", replaces = "gla_technical", at = "gla_factory" },
+    { unit = "gla_bomb_truck", at = "gla_factory" },
+]
+perks = [
+    "tx_catalyst",
+    "tx_concentrate",
+    "tx_protector_i",
+    "tx_protector_ii",
+    "tx_factory_overtime",
+    "tx_anthrax",
+    "tx_insourced",
+    "tx_leadership",
+]
+
+[general.power]
+name = "Toxin Bomb"
+recharge = 240
+kind = "missiles"
+missiles = 1
+delay = 0.5
+every = "1 tick"
+speed = 120
+spread = 0
+damage = 60
+radius = 20
+cloud = { radius = 20, damage = 15, duration = 9 }
+
+[[general.power_levels]]
+name = "Toxin Bomb"
+recharge = 240
+kind = "missiles"
+missiles = 1
+delay = "1 tick"
+every = "1 tick"
+speed = 120
+spread = 0
+damage = 60
+radius = 25
+cloud = { radius = 25, damage = 15, duration = 9 }
+
+[[general.power_levels]]
+name = "Toxin Bomb"
+recharge = 240
+kind = "missiles"
+missiles = 1
+delay = "1 tick"
+every = "1 tick"
+speed = 120
+spread = 0
+damage = 60
+radius = 30
+cloud = { radius = 30, damage = 15, duration = 9 }
+
+# src: the GLA marauder general (the wiki's Wild Dog: Marauder Mk. II; the alpha's GLA_MarauderGeneral): the Shrapnel Tank in place of the Scorpion; power Mass RPG Strike (radius 35, recharge 240 s, 1 s).
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+[[general]]
+id = "wild_dog"
+name = "Wild Dog"
+faction = "gla"
+units = [
+    { unit = "gla_shrapnel_tank", replaces = "gla_tank", at = "gla_factory" },
+]
+perks = [
+    "wd_quick_reload",
+    "wd_shaped_charges",
+    "wd_protector_i",
+    "wd_protector_ii",
+    "wd_factory_overtime",
+    "wd_junk_armor",
+    "wd_insourced",
+    "wd_leadership",
+]
+
+[general.power]
+name = "Mass RPG Strike"
+recharge = 240
+kind = "barrage"
+shells = 10
+delay = 1
+every = 0.2
+damage = 60
+bonus = { heavy = 40 }
+radius = 5
+
+[[general.power_levels]]
+name = "Mass RPG Strike"
+recharge = 240
+kind = "barrage"
+shells = 13
+delay = 1
+every = 0.2
+damage = 60
+bonus = { heavy = 40 }
+radius = 5
+
+[[general.power_levels]]
+name = "Mass RPG Strike"
+recharge = 240
+kind = "barrage"
+shells = 16
+delay = 1
+every = 0.2
+damage = 60
+bonus = { heavy = 40 }
+radius = 5
+
+# src: the GLA engineer general (the alpha's GLA_EngineerGeneral; the wiki lists Kitbash among the GLA generals, the name a guess from the role): the Black Market Artillery; power Stealth Field (radius 25, recharge 240 s): a cloak over the point.
+# Levels 2 and 3 use the alpha's lvl02/03 numbers where they differ, else placeholder
+# steps; the damage of every power is a placeholder (the alpha's are effect assets).
+[[general]]
+id = "kitbash"
+name = "Kitbash"
+faction = "gla"
+units = [
+    { unit = "gla_black_market_artillery", at = "gla_factory" },
+]
+perks = [
+    "kb_scrap_parts",
+    "kb_long_field",
+    "kb_protector_i",
+    "kb_protector_ii",
+    "kb_factory_overtime",
+    "kb_junk_repair",
+    "kb_insourced",
+    "kb_leadership",
+]
+
+[general.power]
+name = "Stealth Field"
+recharge = 240
+kind = "cloak"
+radius = 25
+duration = 20
+
+[[general.power_levels]]
+name = "Stealth Field"
+recharge = 240
+kind = "cloak"
+radius = 25
+duration = 25
+
+[[general.power_levels]]
+name = "Stealth Field"
+recharge = 240
+kind = "cloak"
+radius = 30
+duration = 30

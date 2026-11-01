@@ -1,0 +1,1338 @@
+# The generals' perks (the alpha's Perks 3.0, October 2013: ranks 1-5, one slot per rank,
+# "about eight or nine perks ... unique per General", additive on the normal game, bought and
+# promoted with experience earned on that general). The names and what they act on are the
+# alpha's Perks 2.0 tooltips from the developer walkthrough (archive/videos/official,
+# 22:06-23:40), matched to what our units and powers can do: "Double Shifts" ('Carpet Bomb'
+# comes online faster after use) tunes our general's power the same way. Every percentage,
+# rank and price is a placeholder, of the size of a Zero Hour upgrade (10-25%).
+#
+# Eight per general, in each general's list order, then the perks that add a power
+# (appended, so a saved profile's ids keep their meaning). A faction's perk lists name every
+# unit of its kind, the generals' own ones too: only a player with that general can train
+# them, so for anyone else those entries do nothing. A kill is 1 experience, so only whole
+# multiples of experience change anything.
+
+# ---- Bulldog (EU) ----
+[[perk]]
+id = "bd_double_shifts"
+name = "Double Shifts"
+description = "The artillery barrage comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "bd_heavy_payload"
+name = "Heavy Payload"
+description = "Barrage shells deal 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "bd_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "eu_recon", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+    { unit = "eu_snipers", effect = "toughness", percent = 90 },
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "bd_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "bd_protector_i"
+effects = [
+    { unit = "eu_recon", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+    { unit = "eu_snipers", effect = "toughness", percent = 90 },
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "bd_factory_overtime"
+name = "Factory Overtime"
+description = "Vehicles build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "eu_aegis", build_time_percent = 85 },
+    { unit = "eu_artillery", build_time_percent = 85 },
+    { unit = "eu_apc", build_time_percent = 85 },
+    { unit = "eu_fox", build_time_percent = 85 },
+    { unit = "eu_assault_apc", build_time_percent = 85 },
+    { unit = "eu_laser_tank", build_time_percent = 85 },
+    { unit = "eu_railgun_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "bd_insourced"
+name = "Insourced"
+description = "Tanks cost 10% less."
+rank = 3
+price = 800
+modifiers = [
+    { unit = "eu_aegis", cost_percent = 90 },
+]
+
+[[perk]]
+id = "bd_aerodynamics_i"
+name = "Aerodynamics I"
+description = "Aircraft gain 15% more hit points."
+rank = 4
+price = 1000
+effects = [
+    { unit = "eu_valkyrie", effect = "health", add = 93 },
+]
+
+[[perk]]
+id = "bd_aerodynamics_ii"
+name = "Aerodynamics II"
+description = "Aircraft gain a further 15% more hit points."
+rank = 5
+price = 1500
+requires = "bd_aerodynamics_i"
+effects = [
+    { unit = "eu_valkyrie", effect = "health", add = 93 },
+]
+
+# ---- Taskmaster (APA) ----
+[[perk]]
+id = "tm_spy_efficiency"
+name = "Spy Efficiency"
+description = "The field repair comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "tm_logistics"
+name = "Logistics"
+description = "Supply Drop restores 25% more hit points, and its buff lasts 25% longer."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 125 }
+
+[[perk]]
+id = "tm_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_inferno", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "tm_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "tm_protector_i"
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_inferno", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "tm_factory_overtime"
+name = "Factory Overtime"
+description = "Vehicles build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "apa_warlord", build_time_percent = 85 },
+    { unit = "apa_thunderfist", build_time_percent = 85 },
+    { unit = "apa_gatling", build_time_percent = 85 },
+    { unit = "apa_dragon", build_time_percent = 85 },
+    { unit = "apa_rocket_tank", build_time_percent = 85 },
+    { unit = "apa_sunstorm", build_time_percent = 85 },
+    { unit = "apa_shadow_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "tm_vulcan_barrels"
+name = "Vulcan Barrels"
+description = "The Gatling Tank deals 20% more damage."
+rank = 3
+price = 800
+effects = [
+    { unit = "apa_gatling", effect = "damage", percent = 120 },
+]
+
+[[perk]]
+id = "tm_kanban"
+name = "Kanban"
+description = "Aircraft build 20% faster."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "apa_mantis", build_time_percent = 80 },
+]
+
+[[perk]]
+id = "tm_command_i"
+name = "Command I"
+description = "The command center takes 25% less damage."
+rank = 5
+price = 1500
+effects = [
+    { unit = "apa_cc", effect = "toughness", percent = 75 },
+]
+
+# ---- Junkyard (GLA) ----
+[[perk]]
+id = "jy_discipline"
+name = "Discipline"
+description = "The ambush comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "jy_scavenger"
+name = "Scavenger"
+description = "Units regain 2 hit points a second after 5 s without being hit."
+rank = 3
+price = 800
+effects = [
+    { unit = "gla_rabble", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_rpg", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_tank", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_toxin_artillery", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_technical", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_toxin_chopper", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_battle_bus", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_black_market_artillery", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_shrapnel_tank", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_toxin_tank", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_mobile_chemist", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_bomb_truck", effect = "repair", hp = 2, calm = 5 },
+]
+
+[[perk]]
+id = "jy_leverage"
+name = "Leverage"
+description = "The ambush brings 50% more squads."
+rank = 4
+price = 1000
+power_tuning = { strength_percent = 150 }
+
+[[perk]]
+id = "jy_insourced"
+name = "Insourced"
+description = "Tanks cost 10% less."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "gla_tank", cost_percent = 90 },
+]
+
+[[perk]]
+id = "jy_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "jy_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "jy_protector_i"
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "jy_factory_overtime"
+name = "Factory Overtime"
+description = "Vehicles build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "gla_tank", build_time_percent = 85 },
+    { unit = "gla_toxin_artillery", build_time_percent = 85 },
+    { unit = "gla_technical", build_time_percent = 85 },
+    { unit = "gla_battle_bus", build_time_percent = 85 },
+    { unit = "gla_black_market_artillery", build_time_percent = 85 },
+    { unit = "gla_shrapnel_tank", build_time_percent = 85 },
+    { unit = "gla_toxin_tank", build_time_percent = 85 },
+    { unit = "gla_mobile_chemist", build_time_percent = 85 },
+    { unit = "gla_bomb_truck", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "jy_leadership"
+name = "Leadership"
+description = "Units gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "gla_rabble", effect = "experience", percent = 200 },
+    { unit = "gla_rpg", effect = "experience", percent = 200 },
+    { unit = "gla_tank", effect = "experience", percent = 200 },
+    { unit = "gla_toxin_artillery", effect = "experience", percent = 200 },
+    { unit = "gla_technical", effect = "experience", percent = 200 },
+    { unit = "gla_toxin_chopper", effect = "experience", percent = 200 },
+    { unit = "gla_battle_bus", effect = "experience", percent = 200 },
+    { unit = "gla_black_market_artillery", effect = "experience", percent = 200 },
+    { unit = "gla_shrapnel_tank", effect = "experience", percent = 200 },
+    { unit = "gla_toxin_tank", effect = "experience", percent = 200 },
+    { unit = "gla_mobile_chemist", effect = "experience", percent = 200 },
+    { unit = "gla_bomb_truck", effect = "experience", percent = 200 },
+]
+
+[[perk]]
+id = "dd_tailwind"
+name = "Tailwind"
+description = "Air Raid comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "dd_heavy_bombs"
+name = "Heavy Bombs"
+description = "Air Raid bombs deal 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "dd_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "eu_recon", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+    { unit = "eu_snipers", effect = "toughness", percent = 90 },
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "dd_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "dd_protector_i"
+effects = [
+    { unit = "eu_recon", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+    { unit = "eu_snipers", effect = "toughness", percent = 90 },
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "dd_kanban"
+name = "Kanban"
+description = "Longbows build 20% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "eu_longbow", build_time_percent = 80 },
+]
+
+[[perk]]
+id = "dd_aerodynamics_i"
+name = "Aerodynamics I"
+description = "Aircraft gain 15% more hit points."
+rank = 3
+price = 800
+effects = [
+    { unit = "eu_valkyrie", effect = "health", add = 93 },
+    { unit = "eu_longbow", effect = "health", add = 36 },
+]
+
+[[perk]]
+id = "dd_aerodynamics_ii"
+name = "Aerodynamics II"
+description = "Aircraft gain a further 15% more hit points."
+rank = 4
+price = 1000
+requires = "dd_aerodynamics_i"
+effects = [
+    { unit = "eu_valkyrie", effect = "health", add = 93 },
+    { unit = "eu_longbow", effect = "health", add = 36 },
+]
+
+[[perk]]
+id = "dd_insourced"
+name = "Insourced"
+description = "Fox LRVs cost 10% less."
+rank = 5
+price = 1500
+modifiers = [
+    { unit = "eu_fox", cost_percent = 90 },
+]
+
+[[perk]]
+id = "mr_double_time"
+name = "Double Time"
+description = "Bulwark comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "mr_field_medics"
+name = "Field Medics"
+description = "Bulwark's shield lasts 25% longer."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 125 }
+
+[[perk]]
+id = "mr_protector_i"
+name = "Protector I"
+description = "Shock Troopers take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "mr_protector_ii"
+name = "Protector II"
+description = "Shock Troopers take a further 10% less damage."
+rank = 3
+price = 800
+requires = "mr_protector_i"
+effects = [
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "mr_rapid_deployment"
+name = "Rapid Deployment"
+description = "Shock Troopers build 20% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "eu_shock_troopers", build_time_percent = 80 },
+]
+
+[[perk]]
+id = "mr_factory_overtime"
+name = "Factory Overtime"
+description = "Assault APCs build 15% faster."
+rank = 3
+price = 800
+modifiers = [
+    { unit = "eu_assault_apc", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "mr_insourced"
+name = "Insourced"
+description = "Tanks cost 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "eu_aegis", cost_percent = 90 },
+]
+
+[[perk]]
+id = "mr_leadership"
+name = "Leadership"
+description = "Infantry gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "eu_shock_troopers", effect = "experience", percent = 200 },
+    { unit = "eu_rockets", effect = "experience", percent = 200 },
+]
+
+[[perk]]
+id = "ce_capacitors"
+name = "Capacitors"
+description = "Skylance comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "ce_focusing"
+name = "Focusing Optics"
+description = "Skylance deals 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "ce_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "ce_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "ce_protector_i"
+effects = [
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "ce_factory_overtime"
+name = "Factory Overtime"
+description = "Heavy Assault Lasers build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "eu_laser_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "ce_reinforced"
+name = "Reinforced Turrets"
+description = "Railgun Turrets take 25% less damage."
+rank = 3
+price = 800
+effects = [
+    { unit = "eu_railgun_turret", effect = "toughness", percent = 75 },
+]
+
+[[perk]]
+id = "ce_insourced"
+name = "Insourced"
+description = "Heavy Assault Lasers cost 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "eu_laser_tank", cost_percent = 90 },
+]
+
+[[perk]]
+id = "ce_overcharge"
+name = "Overcharge"
+description = "Heavy Assault Lasers deal 20% more damage."
+rank = 5
+price = 1500
+effects = [
+    { unit = "eu_laser_tank", effect = "damage", percent = 120 },
+]
+
+[[perk]]
+id = "cl_coolant"
+name = "Coolant"
+description = "Plasma Bomb comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "cl_plasma_core"
+name = "Plasma Core"
+description = "Plasma Bomb deals 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "cl_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "eu_recon", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+    { unit = "eu_snipers", effect = "toughness", percent = 90 },
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "cl_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "cl_protector_i"
+effects = [
+    { unit = "eu_recon", effect = "toughness", percent = 90 },
+    { unit = "eu_rockets", effect = "toughness", percent = 90 },
+    { unit = "eu_snipers", effect = "toughness", percent = 90 },
+    { unit = "eu_shock_troopers", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "cl_factory_overtime"
+name = "Factory Overtime"
+description = "Railgun Tanks build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "eu_railgun_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "cl_insourced"
+name = "Insourced"
+description = "Railgun Tanks cost 10% less."
+rank = 3
+price = 800
+modifiers = [
+    { unit = "eu_railgun_tank", cost_percent = 90 },
+]
+
+[[perk]]
+id = "cl_heavy_plating"
+name = "Heavy Plating"
+description = "Railgun Tanks take 10% less damage."
+rank = 4
+price = 1000
+effects = [
+    { unit = "eu_railgun_tank", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "cl_slugs"
+name = "Depleted Slugs"
+description = "Railguns deal 20% more damage."
+rank = 5
+price = 1500
+effects = [
+    { unit = "eu_railgun_tank", effect = "damage", percent = 120 },
+    { unit = "eu_railgun_turret", effect = "damage", percent = 120 },
+]
+
+[[perk]]
+id = "in_double_shifts"
+name = "Double Shifts"
+description = "Inferno Artillery comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "in_infernal_diesel"
+name = "Infernal Diesel"
+description = "Inferno Artillery deals 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "in_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "in_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "in_protector_i"
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "in_factory_overtime"
+name = "Factory Overtime"
+description = "Dragon Tanks build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "apa_dragon", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "in_wildfire"
+name = "Wildfire"
+description = "Dragon Tanks deal 20% more damage."
+rank = 3
+price = 800
+effects = [
+    { unit = "apa_dragon", effect = "damage", percent = 120 },
+]
+
+[[perk]]
+id = "in_insourced"
+name = "Insourced"
+description = "Rocket Tanks cost 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "apa_rocket_tank", cost_percent = 90 },
+]
+
+[[perk]]
+id = "in_leadership"
+name = "Leadership"
+description = "Units gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "apa_dragon", effect = "experience", percent = 200 },
+    { unit = "apa_rocket_tank", effect = "experience", percent = 200 },
+    { unit = "apa_napalm_mortar", effect = "experience", percent = 200 },
+]
+
+[[perk]]
+id = "ra_salvo_timing"
+name = "Salvo Timing"
+description = "Thunderclap comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "ra_warheads"
+name = "Heavy Warheads"
+description = "Thunderclap hits 20% harder and stuns 20% longer."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "ra_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_inferno", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "ra_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "ra_protector_i"
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_inferno", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "ra_tank_hunters"
+name = "Tank Hunters"
+description = "Tank Hunters build 20% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "apa_tank_hunter", build_time_percent = 80 },
+]
+
+[[perk]]
+id = "ra_factory_overtime"
+name = "Factory Overtime"
+description = "Rocket Tanks build 15% faster."
+rank = 3
+price = 800
+modifiers = [
+    { unit = "apa_rocket_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "ra_insourced"
+name = "Insourced"
+description = "Rocket Tanks cost 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "apa_rocket_tank", cost_percent = 90 },
+]
+
+[[perk]]
+id = "ra_guidance"
+name = "Guidance"
+description = "Rocket units deal 20% more damage."
+rank = 5
+price = 1500
+effects = [
+    { unit = "apa_tank_hunter", effect = "damage", percent = 120 },
+    { unit = "apa_rocket_tank", effect = "damage", percent = 120 },
+]
+
+[[perk]]
+id = "ts_fission"
+name = "Fission"
+description = "Neutron Bomb comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "ts_enriched"
+name = "Enriched Core"
+description = "Neutron Bomb deals 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "ts_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_inferno", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "ts_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "ts_protector_i"
+effects = [
+    { unit = "apa_red_guard", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_inferno", effect = "toughness", percent = 90 },
+    { unit = "apa_napalm_mortar", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "ts_factory_overtime"
+name = "Factory Overtime"
+description = "Shadow Tanks build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "apa_shadow_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "ts_uranium"
+name = "Uranium Shells"
+description = "Sunstorms deal 20% more damage."
+rank = 3
+price = 800
+effects = [
+    { unit = "apa_sunstorm", effect = "shell_damage", percent = 120 },
+]
+
+[[perk]]
+id = "ts_insourced"
+name = "Insourced"
+description = "Sunstorms cost 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "apa_sunstorm", cost_percent = 90 },
+]
+
+[[perk]]
+id = "ts_leadership"
+name = "Leadership"
+description = "Tanks gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "apa_shadow_tank", effect = "experience", percent = 200 },
+    { unit = "apa_rocket_tank", effect = "experience", percent = 200 },
+    { unit = "apa_sunstorm", effect = "experience", percent = 200 },
+]
+
+[[perk]]
+id = "bj_quick_hands"
+name = "Quick Hands"
+description = "Misdirection comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "bj_deep_cover"
+name = "Deep Cover"
+description = "Misdirection's holograms last 25% longer."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 125 }
+
+[[perk]]
+id = "bj_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "bj_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "bj_protector_i"
+effects = [
+    { unit = "apa_urban_assault", effect = "toughness", percent = 90 },
+    { unit = "apa_tank_hunter", effect = "toughness", percent = 90 },
+    { unit = "apa_saboteurs", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "bj_population"
+name = "Population Control"
+description = "Saboteurs cost 10% less."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "apa_saboteurs", cost_percent = 90 },
+]
+
+[[perk]]
+id = "bj_factory_overtime"
+name = "Factory Overtime"
+description = "Shadow Tanks build 15% faster."
+rank = 3
+price = 800
+modifiers = [
+    { unit = "apa_shadow_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "bj_sticky"
+name = "Sticky Charges"
+description = "Saboteurs deal 20% more damage."
+rank = 4
+price = 1000
+effects = [
+    { unit = "apa_saboteurs", effect = "damage", percent = 120 },
+]
+
+[[perk]]
+id = "bj_leadership"
+name = "Leadership"
+description = "Units gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "apa_urban_assault", effect = "experience", percent = 200 },
+    { unit = "apa_shadow_tank", effect = "experience", percent = 200 },
+    { unit = "apa_saboteurs", effect = "experience", percent = 200 },
+]
+
+[[perk]]
+id = "tx_catalyst"
+name = "Catalyst"
+description = "Toxin Bomb comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "tx_concentrate"
+name = "Concentrate"
+description = "Toxin Bomb deals 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "tx_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "tx_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "tx_protector_i"
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "tx_factory_overtime"
+name = "Factory Overtime"
+description = "Toxin Tanks build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "gla_toxin_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "tx_anthrax"
+name = "Anthrax Beta"
+description = "Toxin Tanks deal 20% more damage."
+rank = 3
+price = 800
+effects = [
+    { unit = "gla_toxin_tank", effect = "damage", percent = 120 },
+]
+
+[[perk]]
+id = "tx_insourced"
+name = "Insourced"
+description = "Toxin Tanks cost 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "gla_toxin_tank", cost_percent = 90 },
+]
+
+[[perk]]
+id = "tx_leadership"
+name = "Leadership"
+description = "Units gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "gla_toxin_tank", effect = "experience", percent = 200 },
+    { unit = "gla_mobile_chemist", effect = "experience", percent = 200 },
+    { unit = "gla_rpg", effect = "experience", percent = 200 },
+]
+
+[[perk]]
+id = "wd_quick_reload"
+name = "Quick Reload"
+description = "Mass RPG Strike comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "wd_shaped_charges"
+name = "Shaped Charges"
+description = "Mass RPG Strike deals 20% more damage."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 120 }
+
+[[perk]]
+id = "wd_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "wd_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "wd_protector_i"
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "wd_factory_overtime"
+name = "Factory Overtime"
+description = "Shrapnel Tanks build 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "gla_shrapnel_tank", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "wd_junk_armor"
+name = "Junk Armor"
+description = "Shrapnel Tanks take 10% less damage."
+rank = 3
+price = 800
+effects = [
+    { unit = "gla_shrapnel_tank", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "wd_insourced"
+name = "Insourced"
+description = "Shrapnel Tanks cost 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "gla_shrapnel_tank", cost_percent = 90 },
+]
+
+[[perk]]
+id = "wd_leadership"
+name = "Leadership"
+description = "Units gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "gla_shrapnel_tank", effect = "experience", percent = 200 },
+    { unit = "gla_rabble", effect = "experience", percent = 200 },
+    { unit = "gla_rpg", effect = "experience", percent = 200 },
+]
+
+[[perk]]
+id = "kb_scrap_parts"
+name = "Scrap Parts"
+description = "Stealth Field comes online 20% faster after use."
+rank = 1
+price = 200
+power_tuning = { cooldown_percent = 80 }
+
+[[perk]]
+id = "kb_long_field"
+name = "Long Field"
+description = "Stealth Field lasts 25% longer."
+rank = 2
+price = 500
+power_tuning = { strength_percent = 125 }
+
+[[perk]]
+id = "kb_protector_i"
+name = "Protector I"
+description = "Infantry take 10% less damage."
+rank = 1
+price = 300
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "kb_protector_ii"
+name = "Protector II"
+description = "Infantry take a further 10% less damage."
+rank = 3
+price = 800
+requires = "kb_protector_i"
+effects = [
+    { unit = "gla_rabble", effect = "toughness", percent = 90 },
+    { unit = "gla_rpg", effect = "toughness", percent = 90 },
+]
+
+[[perk]]
+id = "kb_factory_overtime"
+name = "Factory Overtime"
+description = "Black Market Artillery builds 15% faster."
+rank = 2
+price = 500
+modifiers = [
+    { unit = "gla_black_market_artillery", build_time_percent = 85 },
+]
+
+[[perk]]
+id = "kb_junk_repair"
+name = "Junk Repair"
+description = "Vehicles regain 2 hit points a second after 5 s without being hit."
+rank = 3
+price = 800
+effects = [
+    { unit = "gla_tank", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_technical", effect = "repair", hp = 2, calm = 5 },
+    { unit = "gla_black_market_artillery", effect = "repair", hp = 2, calm = 5 },
+]
+
+[[perk]]
+id = "kb_insourced"
+name = "Insourced"
+description = "Black Market Artillery costs 10% less."
+rank = 4
+price = 1000
+modifiers = [
+    { unit = "gla_black_market_artillery", cost_percent = 90 },
+]
+
+[[perk]]
+id = "kb_leadership"
+name = "Leadership"
+description = "Units gain double experience from kills."
+rank = 5
+price = 1500
+effects = [
+    { unit = "gla_rabble", effect = "experience", percent = 200 },
+    { unit = "gla_rpg", effect = "experience", percent = 200 },
+    { unit = "gla_tank", effect = "experience", percent = 200 },
+    { unit = "gla_toxin_artillery", effect = "experience", percent = 200 },
+    { unit = "gla_technical", effect = "experience", percent = 200 },
+    { unit = "gla_toxin_chopper", effect = "experience", percent = 200 },
+    { unit = "gla_battle_bus", effect = "experience", percent = 200 },
+    { unit = "gla_black_market_artillery", effect = "experience", percent = 200 },
+    { unit = "gla_shrapnel_tank", effect = "experience", percent = 200 },
+    { unit = "gla_toxin_tank", effect = "experience", percent = 200 },
+    { unit = "gla_mobile_chemist", effect = "experience", percent = 200 },
+    { unit = "gla_bomb_truck", effect = "experience", percent = 200 },
+]
+
+# ---- Perks that add a power ----
+# The alpha's "drop pods" perks (the README's Perks 3.0 notes): its skill trees hold stat
+# improvements only, so these give a general one of the faction powers the alpha has but
+# hands to no faction or general (only `Default_PlayerPowerContainer` lists them), or one
+# its own general of the faction never reached us with. Rank 4 and 1000 XP (placeholders,
+# as every perk's): the AI slots only perks up to rank 3, so its generals stay as measured.
+# src: EU_PlayerAbility_DeployStrikeTeam (RtsPlayerDeploymentAbility): three deployments
+# of 2, 1 and 3, naming no unit; RechargeTime 5 s and DelayBeforeActivation 2 s, the
+# defaults every unfinished ability in the build carries. Three Shock Troopers squads (the
+# general's line infantry) and a 240 s recharge, as the generals' powers, are placeholders.
+[[perk]]
+id = "mr_strike_team"
+name = "Strike Team"
+description = "Adds a power: three Shock Troopers squads drop in at a point."
+rank = 4
+price = 1000
+
+[perk.adds_power]
+name = "Strike Team"
+recharge = 240
+kind = "ambush"
+unit = "eu_shock_troopers"
+count = 3
+
+# src: EU_PlayerAbility_DeployRailgunTanks: recharge 240 s, 10 s before activation, radius
+# 7, `NumberToDeploy` 3; the wiki ("Deploy experimental railgun ... deploys an Experimental
+# Railgun Tank by air", Cleaver's): one. Our Railgun Tank is the alpha's experimental one
+# (eu_heavyrailguntank_exp). One tank, the wiki's: three are $3750 of tanks a use. It lands
+# at once; the 10 s delay is not modelled.
+[[perk]]
+id = "cl_railgun_drop"
+name = "Experimental Drop"
+description = "Adds a power: a Railgun Tank is air-dropped at a point."
+rank = 4
+price = 1000
+
+[perk.adds_power]
+name = "Railgun Drop"
+recharge = 240
+kind = "ambush"
+unit = "eu_railgun_tank"
+count = 1
+
+# src: APA_PlayerAbility_OffshoreBombardment_Lvl01 (the alpha's APA classic general's
+# power, whose units our Taskmaster has none of): recharge 240 s, 3 s before activation,
+# radius 15, two shells 0.4 s apart (its weapon container). Its own Damage is 0; 150 a
+# shell is EU_PlayerAbility_OffshoreBombardment's 450 over its three. The shell's blast
+# radius 8 is a placeholder, so the pair covers the 15.
+[[perk]]
+id = "tm_offshore"
+name = "Offshore Support"
+description = "Adds a power: two offshore shells land at a point."
+rank = 4
+price = 1000
+
+[perk.adds_power]
+name = "Offshore Bombardment"
+recharge = 240
+kind = "barrage"
+shells = 2
+delay = 3
+every = 0.4
+damage = 150
+radius = 8
+
+# src: APA_PlayerAbility_Sortie: recharge 90 s, no delay, `ShroudBlocksActivation` true
+# (aimed at explored ground); its fighter, au_airfighter_sortie2, has MaxHealth 400. That
+# fighter also carries a 420-damage bomb, which our recon pass does not drop.
+[[perk]]
+id = "bj_sortie"
+name = "Sortie"
+description = "Adds a power: a fighter flies over a point and back out."
+rank = 4
+price = 1000
+
+[perk.adds_power]
+name = "Sortie"
+recharge = 90
+kind = "recon"
+aircraft = "apa_sortie_fighter"
+
+# src: GLA_PlayerAbility_FaultyConstruction_Lvl01, the alpha's Junkyard general's own power
+# (GLA_JunkyardGeneral's `GeneralPowers`; ours keeps the ambush in slot 0, so this is its
+# ninth perk): radius 30, recharge 240 s, 1 s before activation, `Damage` 0 and no effect
+# numbers. The wiki: "Causes mechanical failures to enemy vehicles, reducing their speed
+# and combat effectiveness". Enemy vehicles at 60% speed and 75% damage for 15 s are
+# placeholders.
+[[perk]]
+id = "jy_faulty_construction"
+name = "Faulty Construction"
+description = "Adds a power: enemy vehicles at a point slow down and hit softer for a while."
+rank = 4
+price = 1000
+
+[perk.adds_power]
+name = "Faulty Construction"
+recharge = 240
+kind = "field"
+radius = 30
+delay = 1
+duration = 15
+enemies = [{ status = "speed", percent = 60 }, { status = "damage", percent = 75 }]
+vehicles = true

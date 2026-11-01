@@ -340,6 +340,11 @@ fn parse_args() -> Result<Args, String> {
 }
 
 fn main() -> AppExit {
+    // A bad file in `G2_RULES_DIR` is reported here, before any window opens.
+    if let Err(e) = g2_rules::try_rules() {
+        eprintln!("bad rules file: {e}");
+        return AppExit::error();
+    }
     let args = match parse_args() {
         Ok(a) => a,
         Err(e) => {
