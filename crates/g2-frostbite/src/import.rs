@@ -16,9 +16,10 @@
 //! Asset paths are the alpha's own (lowercase, `/`-separated). Nothing written here may be
 //! redistributed: it is EA's content, decoded from the player's own copy.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::ebx::Value;
 use crate::skeleton::Skeleton;
@@ -39,9 +40,21 @@ impl Report {
     /// Records a failure once: two parts can read the same broken asset (the material scan
     /// reads every ebx), and a model can use one texture in several slots.
     fn fail(&mut self, what: &str, e: impl std::fmt::Display) {
-        let entry = (what.to_owned(), e.to_string());
+        self.failed_once((what.to_owned(), e.to_string()));
+    }
+
+    fn failed_once(&mut self, entry: (String, String)) {
         if !self.failed.contains(&entry) {
             self.failed.push(entry);
+        }
+    }
+
+    fn merge(&mut self, other: Report) {
+        for (k, n) in other.written {
+            *self.written.entry(k).or_default() += n;
+        }
+        for entry in other.failed {
+            self.failed_once(entry);
         }
     }
 
@@ -62,6 +75,47 @@ impl Report {
         }
         s
     }
+}
+
+/// Runs `f` on every item across all cores, each with a report of its own, and merges those
+/// into `report` in item order, so the manifest reads as if they ran one after another. The
+/// first error in item order ends the part, as it would have one at a time.
+fn each<T: Sync, R: Send>(
+    report: &mut Report,
+    items: &[T],
+    f: impl Fn(&T, &mut Report) -> Result<R, Error> + Sync,
+) -> Result<Vec<R>, Error> {
+    let next = AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get()).min(items.len());
+    let mut done: Vec<Option<(Report, Result<R, Error>)>> = std::iter::repeat_with(|| None).take(items.len()).collect();
+    std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                s.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(item) = items.get(i) else { break };
+                        let mut r = Report::default();
+                        let v = f(item, &mut r);
+                        mine.push((i, r, v));
+                    }
+                    mine
+                })
+            })
+            .collect();
+        for w in workers {
+            for (i, r, v) in w.join().unwrap_or_else(|p| std::panic::resume_unwind(p)) {
+                done[i] = Some((r, v));
+            }
+        }
+    });
+    let mut out = Vec::with_capacity(items.len());
+    for (r, v) in done.into_iter().flatten() {
+        report.merge(r);
+        out.push(v?);
+    }
+    Ok(out)
 }
 
 /// Which parts to import; all by default.
@@ -92,14 +146,16 @@ pub fn import(alpha: &Alpha, out: &Path, parts: Parts, progress: &mut dyn FnMut(
     }
     if parts.textures {
         progress("textures");
-        for (name, e) in alpha.res_of(res_type::TEXTURE) {
+        let textures: Vec<_> = alpha.res_of(res_type::TEXTURE).collect();
+        each(&mut report, &textures, |&(name, e), report| {
             match texture::decode(alpha, e)
                 .and_then(|img| write(&out.join("textures").join(format!("{name}.png")), &png(&img)))
             {
                 Ok(()) => report.ok("textures"),
                 Err(err) => report.fail(name, err),
             }
-        }
+            Ok(())
+        })?;
     }
     if parts.models {
         progress("models");
@@ -115,16 +171,17 @@ pub fn import(alpha: &Alpha, out: &Path, parts: Parts, progress: &mut dyn FnMut(
 
 fn sounds(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
     let languages = media::languages(alpha)?;
-    for name in alpha.ebx.keys().filter(|n| n.starts_with("sound/") && n.contains("/waves/")) {
-        let Some(p) = report.asset(alpha, name) else { continue };
+    let waves: Vec<&String> = alpha.ebx.keys().filter(|n| n.starts_with("sound/") && n.contains("/waves/")).collect();
+    each(report, &waves, |&name, report| {
+        let Some(p) = report.asset(alpha, name) else { return Ok(()) };
         if p.primary().and_then(Value::ty) != Some("SoundWaveAsset") {
-            continue;
+            return Ok(());
         }
         let wave = match media::SoundWave::read(&p, &languages) {
             Ok(w) => w,
             Err(e) => {
                 report.fail(name, e);
-                continue;
+                return Ok(());
             }
         };
         let many = wave.variations.len() > 1;
@@ -137,7 +194,8 @@ fn sounds(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
                 Err(e) => report.fail(&format!("{name} {i}"), e),
             }
         }
-    }
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -173,10 +231,11 @@ fn ui(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
 }
 
 fn movies(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
-    for name in alpha.ebx.keys() {
-        let Some(p) = report.asset(alpha, name) else { continue };
+    let names: Vec<&String> = alpha.ebx.keys().collect();
+    each(report, &names, |&name, report| {
+        let Some(p) = report.asset(alpha, name) else { return Ok(()) };
         if p.primary().and_then(Value::ty) != Some("MovieTextureAsset") {
-            continue;
+            return Ok(());
         }
         let base = out.join("movies").join(name);
         let result = media::movie(alpha, &p).and_then(|bytes| movie::split(&bytes)).and_then(|m| {
@@ -201,7 +260,8 @@ fn movies(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
             }
             Err(e) => report.fail(name, e),
         }
-    }
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -251,19 +311,39 @@ fn movie_frames(vp6: &Path, dir: &Path) -> Result<(), Error> {
 }
 
 fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
-    let maps = material::diffuse_maps(alpha, &mut |name, e| report.fail(name, e));
-    let links = Skeleton::links(alpha);
-    // Skinned model -> its skeleton, for the animations written after the models.
-    let mut skinned = BTreeMap::new();
+    // Both scan every ebx asset, and neither needs the other.
+    let (maps, links) = std::thread::scope(|s| {
+        let links = s.spawn(|| Skeleton::links(alpha));
+        let maps = material::diffuse_maps(alpha, &mut |name, e| report.fail(name, e));
+        (maps, links.join().unwrap_or_else(|p| std::panic::resume_unwind(p)))
+    });
     // Mesh assets name their MeshSet res `<asset path>`. A texture is written once, to
     // `textures/<name>.png` (the flat texture export writes the same file), and every model
     // that uses it points there. One that can't be written leaves its materials untextured
     // and is a manifest line naming the model, so nothing goes missing silently.
-    let mut written: BTreeMap<String, Result<(), String>> = BTreeMap::new();
-    // `name min.x min.y min.z max.x max.y max.z` per model, so the client sizes a model to
-    // its footprint without parsing it.
-    let mut bounds = String::new();
-    for (name, e) in alpha.res_of(res_type::MESH_SET) {
+    let meshes: Vec<_> = alpha.res_of(res_type::MESH_SET).collect();
+    let used: Vec<&String> = meshes
+        .iter()
+        .filter_map(|(name, _)| maps.get(*name))
+        .flatten()
+        .flatten()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let states = each(report, &used, |&t, _| {
+        let path = out.join("textures").join(format!("{t}.png"));
+        if path.is_file() {
+            return Ok(Ok(()));
+        }
+        let Some(e) = alpha.res.get(t) else { return Ok(Err("no such texture res".to_owned())) };
+        Ok(texture::decode(alpha, e).and_then(|img| write(&path, &png(&img))).map_err(|e| e.to_string()))
+    })?;
+    let written: BTreeMap<&String, Result<(), String>> = used.into_iter().zip(states).collect();
+    // Per model: its `name min.x min.y min.z max.x max.y max.z` line, so the client sizes a
+    // model to its footprint without parsing it, and its skeleton if it is skinned.
+    let done = each(report, &meshes, |&(name, e), report| {
+        let mut line = None;
+        let mut skl = None;
         let result = mesh::read(alpha, e).map(|m| {
             let textures: Vec<Option<String>> = maps
                 .get(name)
@@ -272,18 +352,10 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
                 .iter()
                 .map(|t| {
                     let t = t.as_ref()?;
-                    let state = written.entry(t.clone()).or_insert_with(|| {
-                        let path = out.join("textures").join(format!("{t}.png"));
-                        if path.is_file() {
-                            return Ok(());
-                        }
-                        let e = alpha.res.get(t).ok_or("no such texture res")?;
-                        texture::decode(alpha, e).and_then(|img| write(&path, &png(&img))).map_err(|e| e.to_string())
-                    });
-                    match state {
+                    match &written[t] {
                         Ok(()) => Some(texture_uri(name, t)),
                         Err(why) => {
-                            report.fail(&format!("{name} texture {t}"), &*why);
+                            report.fail(&format!("{name} texture {t}"), why);
                             None
                         }
                     }
@@ -291,13 +363,13 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
                 .collect();
             // In the glTF's space: X negated, as `to_glb` writes it.
             let (lo, hi) = m.bounds;
-            let _ = writeln!(bounds, "{name} {} {} {} {} {} {}", -hi[0], lo[1], lo[2], -lo[0], hi[1], hi[2]);
+            line = Some(format!("{name} {} {} {} {} {} {}\n", -hi[0], lo[1], lo[2], -lo[0], hi[1], hi[2]));
             let skeleton =
                 m.subsets.iter().any(|s| s.skin.is_some()).then(|| skeleton_for(alpha, &links, name, &m)).flatten();
             match skeleton {
-                Some(Ok((skl, sk))) => {
+                Some(Ok((s, sk))) => {
                     report.ok("skinned models");
-                    skinned.insert(name.clone(), skl);
+                    skl = Some(s);
                     mesh::to_glb(&m, &textures, Some(&sk))
                 }
                 Some(Err(why)) => {
@@ -311,7 +383,11 @@ fn models(alpha: &Alpha, out: &Path, report: &mut Report) -> Result<(), Error> {
             Ok(()) => report.ok("models"),
             Err(err) => report.fail(name, err),
         }
-    }
+        Ok((line, skl.map(|s| (name.clone(), s))))
+    })?;
+    let bounds: String = done.iter().filter_map(|(line, _)| line.as_deref()).collect();
+    // Skinned model -> its skeleton, for the animations written after the models.
+    let skinned: BTreeMap<String, String> = done.into_iter().filter_map(|(_, s)| s).collect();
     write(&out.join("models/bounds.txt"), bounds.as_bytes())?;
     animations(alpha, out, &skinned, report)
 }
