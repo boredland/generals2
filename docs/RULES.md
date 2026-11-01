@@ -1,6 +1,6 @@
 # Rules files
 
-The game's units, buildings, weapons, abilities, upgrades, generals, perks and support powers are data: eight TOML files in `crates/g2-rules/data/`. They are compiled into every binary (`include_str!`), so a release needs nothing beside it, and parsed once at startup by `crates/g2-rules/src/data.rs` into the `Rules` the simulation reads. Parsing all eight takes about a millisecond. The campaign (`crates/g2-rules/src/missions.rs`) and the built-in Crater Ridge map stay Rust.
+The game's units, buildings, weapons, abilities, upgrades, generals, perks and support powers are data: eight TOML files in `crates/g2-rules/data/`. They are compiled into every binary (`include_str!`), so a release needs nothing beside it, and parsed once at startup by `crates/g2-rules/src/data.rs` into the `Rules` the simulation reads. Parsing all eight takes about 2 ms (release build). The campaign (`crates/g2-rules/src/missions.rs`) and the built-in Crater Ridge map stay Rust.
 
 | File | Holds |
 |---|---|
