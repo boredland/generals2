@@ -16,7 +16,7 @@
 //! `--mission N|KEY` plays a mission of the campaign (1-8, or its key, e.g. `first-light`) on
 //! its own map and forces instead of a skirmish, at `--difficulty easy|normal|hard` (Normal by
 //! default); with `--spectate` (or `--screenshot`) the Normal AI plays your side.
-//! `--ai easy|normal|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
+//! `--ai easy|normal|hard|onslaught` sets the AI level; `onslaught` makes the enemy the Onslaught
 //! mode: no base, waves on a schedule, and you win by outlasting the last one.
 //! `--map` takes "Crater Ridge" (built in, the default) or `<gen|zh>:<name>` for an original
 //! Generals / Zero Hour map (`g2-tools maps` lists them). `--general` picks a general of your
@@ -209,8 +209,9 @@ fn parse_args() -> Result<Args, String> {
                 a.ai = match it.next().as_deref() {
                     Some("easy") => g2_sim::AiLevel::Easy,
                     Some("normal") => g2_sim::AiLevel::Normal,
+                    Some("hard") => g2_sim::AiLevel::Hard,
                     Some("onslaught") => g2_sim::AiLevel::Onslaught,
-                    other => return Err(format!("--ai expects easy|normal|onslaught, got {other:?}")),
+                    other => return Err(format!("--ai expects easy|normal|hard|onslaught, got {other:?}")),
                 }
             }
             "--reveal" => a.reveal = true,

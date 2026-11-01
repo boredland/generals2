@@ -136,28 +136,77 @@ pub struct PlayerSetup {
     pub team: u8,
 }
 
-/// How strong the built-in AI plays. `Easy` is the original wave AI. `Normal` judges the battle
-/// (army strength seen, threats at home, its own fights) before attacking, retreats from losing
-/// fights, guards its constructors and expands when its base's supply runs low. `Onslaught`
-/// runs no economy: its waves appear on a schedule (`crate::onslaught`) and attack.
+/// How strong the built-in AI plays. `Easy` is the original wave AI. `Normal` and `Hard`
+/// judge the battle (army strength seen, threats at home, their own fights) before attacking,
+/// retreat from losing fights, guard their constructors and expand when their base's supply
+/// runs low. `Onslaught` runs no economy: its waves appear on a schedule (`crate::onslaught`)
+/// and attack.
+///
+/// In a skirmish the levels also differ in pace (`AiLevel::pace`), and Easy plays with the
+/// handicaps Zero Hour gives its campaign's Easy (there only in single-player, here borrowed
+/// for the skirmish): its weapons fire at 80% of their rate (`SOLO_AI_EASY RATE_OF_FIRE 80%`)
+/// and a human's units and buildings take two thirds of the damage it deals (their health at
+/// 150%, `HumanSoloPlayerHealthBonus_Easy`). In a mission, whose own difficulty sets the pace,
+/// Normal plays as Hard and Easy without handicaps.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
 pub enum AiLevel {
     #[default]
     Easy,
     Normal,
+    Hard,
     Onslaught,
+}
+
+/// A skirmish AI's pace: when its first attack may leave, how fast its army may grow, and
+/// whether it adds factories beyond its core barracks and war factory when credits pile up.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Pace {
+    /// No wave leaves and no support power is used before this tick; the base is still
+    /// defended.
+    pub first_attack: u32,
+    /// Its factories train no armed unit while it owns (or trains) one per this many ticks of
+    /// play so far; 0 for no limit.
+    pub unit_every: u32,
+    pub extra_factories: bool,
+}
+
+impl Pace {
+    /// How many armed units it may own (or have in training) at `tick`.
+    pub fn army_cap(&self, tick: u32) -> usize {
+        tick.checked_div(self.unit_every).map_or(usize::MAX, |n| n as usize)
+    }
 }
 
 impl AiLevel {
     /// The levels that play a skirmish; `Onslaught` is its own mode.
-    pub const ALL: [AiLevel; 2] = [AiLevel::Easy, AiLevel::Normal];
+    pub const ALL: [AiLevel; 3] = [AiLevel::Easy, AiLevel::Normal, AiLevel::Hard];
 
     pub fn name(self) -> &'static str {
         match self {
             AiLevel::Easy => "Easy",
             AiLevel::Normal => "Normal",
+            AiLevel::Hard => "Hard",
             AiLevel::Onslaught => "Onslaught",
         }
+    }
+
+    /// Its skirmish pace. Hard plays at full speed. Normal's first attack waits four minutes
+    /// and Easy's six, time for a new player to stand up a base and a first army, and their
+    /// armies grow by one armed unit per 25 s and 45 s of play (losses are replaced), so that
+    /// first wave is about ten units, not thirty. Measured against a player who builds nothing
+    /// (see `crates/g2-maps/tests/ai_levels.rs`).
+    pub fn pace(self) -> Pace {
+        let second = crate::world::TICKS_PER_SECOND;
+        match self {
+            AiLevel::Easy => Pace { first_attack: 360 * second, unit_every: 45 * second, extra_factories: false },
+            AiLevel::Normal => Pace { first_attack: 240 * second, unit_every: 25 * second, extra_factories: false },
+            AiLevel::Hard | AiLevel::Onslaught => Pace { first_attack: 0, unit_every: 0, extra_factories: true },
+        }
+    }
+
+    /// Whether it judges the battle (`Normal`, `Hard`) rather than sending waves (`Easy`).
+    pub fn judges(self) -> bool {
+        matches!(self, AiLevel::Normal | AiLevel::Hard)
     }
 }
 

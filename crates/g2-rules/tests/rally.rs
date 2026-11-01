@@ -130,7 +130,7 @@ fn set_rally_needs_an_own_producer() {
 fn the_ai_sets_no_rally_points() {
     let mut s = setup();
     for p in &mut s.players {
-        p.ai = Some(g2_sim::AiLevel::Normal);
+        p.ai = Some(g2_sim::AiLevel::Hard);
     }
     let mut w = World::new(&s, rules());
     for _ in 0..30 * 60 * 4 {

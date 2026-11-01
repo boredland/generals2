@@ -18,7 +18,7 @@ use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World};
 #[test]
 fn the_normal_ai_builds_and_fires_the_scud_storm() {
     let map = g2_maps::resolve("gen:Heartland Shield").unwrap();
-    for level in [AiLevel::Normal, AiLevel::Easy] {
+    for level in [AiLevel::Hard, AiLevel::Easy] {
         let player = |ai| PlayerSetup {
             faction: Faction::Gla,
             starting_credits: 40_000,
@@ -28,7 +28,7 @@ fn the_normal_ai_builds_and_fires_the_scud_storm() {
             rank: 1,
             team: 0,
         };
-        let s = MatchSetup { map: map.clone(), seed: 1, players: vec![player(level), player(AiLevel::Normal)] };
+        let s = MatchSetup { map: map.clone(), seed: 1, players: vec![player(level), player(AiLevel::Hard)] };
         let mut w = World::new(&s, rules());
         let (mut built, mut used) = ([false; 2], [Vec::new(), Vec::new()]);
         while w.winner().is_none() && w.tick() < 30 * 60 * 25 {

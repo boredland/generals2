@@ -63,7 +63,7 @@ pub enum Act {
     ChangeSetup,
     MapPage(i32),
     MapPick(usize),
-    /// A skirmish row's Player cell: an AI steps Easy, Normal, Onslaught, then the last row
+    /// A skirmish row's Player cell: an AI steps Easy, Normal, Hard, Onslaught, then the last row
     /// closes (two players always stay); an Open row adds an AI player.
     CyclePlayer(usize),
     /// A skirmish row's Faction cell: the next faction, or general of it, as the LAN page's.
@@ -690,7 +690,8 @@ fn apply_one(world: &mut World, act: Act) {
                 } else if i > 0 {
                     let next = match ui.config.slots[i].ai {
                         Some(AiLevel::Easy) => Some(AiLevel::Normal),
-                        Some(AiLevel::Normal) => Some(AiLevel::Onslaught),
+                        Some(AiLevel::Normal) => Some(AiLevel::Hard),
+                        Some(AiLevel::Hard) => Some(AiLevel::Onslaught),
                         _ => None,
                     };
                     match next {
@@ -1593,7 +1594,7 @@ fn setup(
          every 75 seconds; outlast the last one."
     } else {
         "Skirmish: destroy every enemy building and unit. Players on one team are allies and win \
-         together. Click an AI player to set it Easy, Normal or Onslaught; an Open seat adds one."
+         together. Click an AI player to set it Easy, Normal, Hard or Onslaught; an Open seat adds one."
     };
     c.spawn(Node {
         flex_direction: FlexDirection::Column,
@@ -2244,6 +2245,7 @@ fn ai_name(level: AiLevel) -> &'static str {
     match level {
         AiLevel::Easy => "Easy AI",
         AiLevel::Normal => "Normal AI",
+        AiLevel::Hard => "Hard AI",
         AiLevel::Onslaught => "Onslaught",
     }
 }
@@ -2407,7 +2409,7 @@ mod tests {
     }
 
     /// Setup edits respect the map: seats stay within its starts and at least two, the
-    /// player's own row has no AI level, an AI steps Easy, Normal, Onslaught and back, a
+    /// player's own row has no AI level, an AI steps Easy, Normal, Hard, Onslaught and back, a
     /// general only fits its own faction, and a Team cell steps no team, 1 to 4, and back.
     #[test]
     fn setup_edits_stay_valid() {
@@ -2418,14 +2420,15 @@ mod tests {
         assert_eq!(slots(&app).len(), 2, "Crater Ridge has two starts");
         act(&mut app, Act::CyclePlayer(0));
         assert_eq!(slots(&app)[0].ai, None, "the human has no level");
-        let levels: Vec<_> = (0..4)
+        let levels: Vec<_> = (0..5)
             .map(|_| {
                 act(&mut app, Act::CyclePlayer(1));
                 slots(&app)[1].ai
             })
             .collect();
-        let (easy, normal, onslaught) = (Some(AiLevel::Easy), Some(AiLevel::Normal), Some(AiLevel::Onslaught));
-        assert_eq!(levels, [onslaught, easy, normal, onslaught], "two players stay: Onslaught wraps to Easy");
+        let (easy, normal, hard, onslaught) =
+            (Some(AiLevel::Easy), Some(AiLevel::Normal), Some(AiLevel::Hard), Some(AiLevel::Onslaught));
+        assert_eq!(levels, [hard, onslaught, easy, normal, hard], "two players stay: Onslaught wraps to Easy");
         // The Faction cell steps through each faction and then its generals, as the LAN page's.
         let mut generals = Vec::new();
         loop {
@@ -2470,8 +2473,8 @@ mod tests {
         assert_eq!(config(&app).slots.len(), 2, "a smaller pick drops the extra seats");
         act(&mut app, Act::CancelMapList);
         assert_eq!((config(&app).map, config(&app).slots.len()), ("gen:Tournament Tundra".to_owned(), 4));
-        // A new seat starts at Normal: Onslaught, then closed.
-        for _ in 0..2 {
+        // A new seat starts at Normal: Hard, Onslaught, then closed.
+        for _ in 0..3 {
             act(&mut app, Act::CyclePlayer(3));
         }
         assert_eq!(config(&app).slots.len(), 3, "the last seat closes after Onslaught");

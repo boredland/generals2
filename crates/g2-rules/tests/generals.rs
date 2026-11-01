@@ -164,7 +164,7 @@ fn every_general_plays() {
             map: crater_ridge(),
             seed: 1,
             players: vec![
-                player(g.faction, g2_sim::AiLevel::Normal, Some(GeneralId(i as u16))),
+                player(g.faction, g2_sim::AiLevel::Hard, Some(GeneralId(i as u16))),
                 player(Faction::Gla, g2_sim::AiLevel::Onslaught, None),
             ],
         };

@@ -245,7 +245,7 @@ fn matches_with_aircraft_replay_exactly() {
             PlayerSetup {
                 faction: Faction::Gla,
                 starting_credits: 5_000,
-                ai: Some(AiLevel::Easy),
+                ai: Some(AiLevel::Hard),
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
@@ -254,7 +254,7 @@ fn matches_with_aircraft_replay_exactly() {
             PlayerSetup {
                 faction: Faction::Apa,
                 starting_credits: 5_000,
-                ai: Some(AiLevel::Normal),
+                ai: Some(AiLevel::Hard),
                 general: None,
                 perks: Vec::new(),
                 rank: 1,

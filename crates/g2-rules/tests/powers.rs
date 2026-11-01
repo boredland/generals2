@@ -235,17 +235,17 @@ fn matches_with_powers_replay_exactly() {
     }
 }
 
-/// A `Normal` AI with a general uses its power during the match (in a mirror match, so the
-/// fight lasts long enough for a target worth it); an `Easy` one fires only a power that hits,
-/// Bulldog's barrage, never a repair (Taskmaster) or an ambush (Junkyard); and those matches
-/// replay exactly: the AI's power commands are re-derived on replay like all its other
-/// commands.
+/// A `Hard` AI with a general uses its power during the match (in a mirror match, so the fight
+/// lasts long enough for a target worth it); an `Easy` one, against Easy (Hard ends the match
+/// before Easy's first attack at 6:00), fires only a power that hits, Bulldog's barrage, never
+/// a repair (Taskmaster) or an ambush (Junkyard); and those matches replay exactly: the AI's
+/// power commands are re-derived on replay like all its other commands.
 #[test]
 fn the_ai_uses_its_generals_power() {
     for (f, g) in [(Faction::Eu, BULLDOG), (Faction::Apa, TASKMASTER), (Faction::Gla, JUNKYARD)] {
         let mut s = setup(f, g);
         for p in &mut s.players {
-            p.ai = Some(g2_sim::AiLevel::Normal);
+            p.ai = Some(g2_sim::AiLevel::Hard);
             p.faction = f;
             p.general = Some(g);
         }
@@ -257,10 +257,12 @@ fn the_ai_uses_its_generals_power() {
         }
         assert!(used >= 1, "{g:?}: power never used");
         let mut easy = s.clone();
-        easy.players[0].ai = Some(g2_sim::AiLevel::Easy);
+        for p in &mut easy.players {
+            p.ai = Some(g2_sim::AiLevel::Easy);
+        }
         let mut e = World::new(&easy, rules());
         let mut easy_used = 0;
-        while e.winner().is_none() && e.tick() < 30 * 60 * 15 {
+        while e.winner().is_none() && e.tick() < 30 * 60 * 30 {
             e.step();
             easy_used +=
                 e.events().iter().filter(|e| matches!(e, Event::PowerUsed { player: P0, slot: 0, .. })).count();

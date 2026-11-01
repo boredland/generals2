@@ -354,7 +354,7 @@ fn matches_with_upgrades_replay_exactly() {
             PlayerSetup {
                 faction: Faction::Gla,
                 starting_credits: 20_000,
-                ai: Some(g2_sim::AiLevel::Normal),
+                ai: Some(g2_sim::AiLevel::Hard),
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
@@ -396,9 +396,9 @@ fn matches_with_upgrades_replay_exactly() {
 #[test]
 fn the_normal_ai_researches() {
     for (f, level, want) in [
-        (Faction::Eu, g2_sim::AiLevel::Normal, true),
-        (Faction::Apa, g2_sim::AiLevel::Normal, true),
-        (Faction::Gla, g2_sim::AiLevel::Normal, true),
+        (Faction::Eu, g2_sim::AiLevel::Hard, true),
+        (Faction::Apa, g2_sim::AiLevel::Hard, true),
+        (Faction::Gla, g2_sim::AiLevel::Hard, true),
         (Faction::Eu, g2_sim::AiLevel::Easy, false),
     ] {
         let s = MatchSetup {

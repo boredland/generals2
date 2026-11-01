@@ -15,7 +15,7 @@ use crate::command::CommandKind;
 use crate::defs::{Armour, BuildingRole, Class, DefId, GeneralId, PerkId, Power, PowerKind, Rules, Weapon};
 use crate::entity::{DeployState, Entity, EntityId, Order, PlayerId};
 use crate::fixed::{Fx, Vec2};
-use crate::map::AiLevel;
+use crate::map::{AiLevel, Pace};
 use crate::world::{TICKS_PER_SECOND, World};
 
 /// Decisions every second, not every tick: cheaper and closer to a human's pace.
@@ -39,6 +39,9 @@ const DANGER_RADIUS: Fx = Fx::from_int(45);
 pub struct Ai {
     player: PlayerId,
     level: AiLevel,
+    pace: Pace,
+    /// A skirmish Easy: slower fire, and less damage to humans (see `AiLevel`).
+    handicapped: bool,
     /// Combat strength of the largest enemy army seen lately (see `strength`), fading by a
     /// 64th every second, so an army out of sight still counts for a while.
     enemy_seen: i64,
@@ -46,15 +49,15 @@ pub struct Ai {
     regroup_until: u32,
 }
 
-/// The general rank an AI plays at: `Easy` at 1, like a new player; `Normal` and `Onslaught`
-/// at 3, matching the perks they slot (`ai_perks`), so their power is at its second level.
+/// The general rank an AI plays at: `Easy` at 1, like a new player; `Normal` and `Hard` at 3,
+/// matching the perks they slot (`ai_perks`), so their power is at its second level.
 pub fn ai_rank(level: AiLevel) -> u8 {
     if level == AiLevel::Easy { 1 } else { 3 }
 }
 
-/// What an AI general slots: `Easy` plays without perks; `Normal` and `Onslaught` slot as a
-/// rank 3 player would, the first three of the general's perks open by rank 3 whose lower tier
-/// is also slotted.
+/// What an AI general slots: `Easy` plays without perks; `Normal`, `Hard` and `Onslaught` slot
+/// as a rank 3 player would, the first three of the general's perks open by rank 3 whose lower
+/// tier is also slotted.
 pub fn ai_perks(rules: &Rules, general: Option<GeneralId>, level: AiLevel) -> Vec<PerkId> {
     let Some(g) = general else { return Vec::new() };
     if level == AiLevel::Easy {
@@ -113,18 +116,29 @@ fn strongest_unit(world: &World, faction: crate::defs::Faction) -> i64 {
 }
 
 impl Ai {
-    pub fn new(player: PlayerId, level: AiLevel) -> Ai {
-        Ai { player, level, enemy_seen: 0, regroup_until: 0 }
+    /// An AI for `player`. In a mission, whose difficulty sets its own pace, every level plays
+    /// at full pace without handicaps, and `Normal` plays as `Hard`: the missions were measured
+    /// that way.
+    pub fn new(player: PlayerId, level: AiLevel, mission: bool) -> Ai {
+        let level = if mission && level == AiLevel::Normal { AiLevel::Hard } else { level };
+        let pace = if mission { AiLevel::Hard.pace() } else { level.pace() };
+        let handicapped = !mission && level == AiLevel::Easy;
+        Ai { player, level, pace, handicapped, enemy_seen: 0, regroup_until: 0 }
     }
 
     pub fn level(&self) -> AiLevel {
         self.level
     }
 
-    /// Hash input: the state a `Normal` AI decides on. `Easy` and `Onslaught` keep none, so
-    /// they add nothing.
+    /// Whether it plays with Zero Hour's Easy handicaps (see `AiLevel`).
+    pub fn handicapped(&self) -> bool {
+        self.handicapped
+    }
+
+    /// Hash input: the state a `Normal` or `Hard` AI decides on. `Easy` and `Onslaught` keep
+    /// none, so they add nothing.
     pub(crate) fn hash_into(&self, mut put: impl FnMut(u64)) {
-        if self.level == AiLevel::Normal {
+        if self.level.judges() {
             put(self.enemy_seen as u64);
             put(self.regroup_until as u64);
         }
@@ -400,9 +414,11 @@ impl Ai {
         let count =
             |role: fn(BuildingRole) -> bool| mine.iter().filter(|e| rules.def(e.def).role().is_some_and(role)).count();
 
-        // Before anything that may return early: ready powers are used at once, one a think.
+        // Before anything that may return early: ready powers are used at once, one a think,
+        // once its pace lets it attack at all.
+        let attacking = world.tick() >= self.pace.first_attack;
         let ready = world.powers_of(me).into_iter().enumerate().filter_map(|(slot, p)| {
-            let p = p.filter(|_| world.power_wait(me, slot as u8) == Some(0))?;
+            let p = p.filter(|_| attacking && world.power_wait(me, slot as u8) == Some(0))?;
             Some((slot as u8, p))
         });
         for (slot, p) in ready {
@@ -429,7 +445,7 @@ impl Ai {
         });
         // Once a stealth unit has hit it, Normal (whose factories all stand) also holds back the
         // army until its detector is placed, so its credits can't keep the turret away.
-        let needs_detector = self.level == AiLevel::Normal
+        let needs_detector = self.level.judges()
             && world.player(me).hit_by_stealth
             && !mine.iter().any(|e| rules.def(e.def).role() == Some(BuildingRole::Defense))
             && mine.iter().filter(|e| rules.def(e.def).role() == Some(BuildingRole::Factory)).count() >= 2;
@@ -518,7 +534,8 @@ impl Ai {
                     .flatten()
             };
             let expand_to = if smart && depots.len() < 3 { expansion() } else { None };
-            let rich = world.player(me).credits >= 3_000
+            let rich = self.pace.extra_factories
+                && world.player(me).credits >= 3_000
                 && mine.iter().filter(|e| rules.def(e.def).role() == Some(BuildingRole::Factory)).count() < 4;
             // Normal: each tech building once, cheapest first, once credits pile up with every
             // factory it wants already standing (its army comes first).
@@ -622,8 +639,13 @@ impl Ai {
                 if air { w.targets.hits(true) } else { counter.is_some_and(|a| best_against(w) == a as usize) }
             })
         };
+        // A slower pace caps the armed units it owns or trains by the time played.
+        let armed = |d: DefId| rules.def(d).is_unit() && rules.def(d).weapon().is_some();
+        let mut army_size = mine.iter().filter(|e| armed(e.def)).count()
+            + mine.iter().flat_map(|e| &e.queue).filter(|p| p.unit().is_some_and(armed)).count();
+        let cap = self.pace.army_cap(world.tick());
         for f in mine.iter().filter(|e| !saving && e.is_complete() && e.queue.is_empty()) {
-            if rules.def(f.def).role() != Some(BuildingRole::Factory) {
+            if rules.def(f.def).role() != Some(BuildingRole::Factory) || army_size >= cap {
                 continue;
             }
             let produces = world.offers_of(me, f.def);
@@ -641,12 +663,13 @@ impl Ai {
                 && world.player(me).credits >= rules.def(unit).cost.credits
             {
                 out.push(CommandKind::Train { producer: f.id, def: unit });
+                army_size += 1;
             }
         }
 
-        // 3c. Normal: research what its buildings offer, in table order, one at a time and only
-        // from credits beyond a reserve, so the army it trains above keeps coming.
-        if self.level == AiLevel::Normal && !saving {
+        // 3c. Normal and Hard: research what its buildings offer, in table order, one at a time
+        // and only from credits beyond a reserve, so the army it trains above keeps coming.
+        if self.level.judges() && !saving {
             let busy = mine.iter().any(|e| e.queue.iter().any(|p| p.unit().is_none()));
             let offer = mine.iter().filter(|e| e.is_complete()).find_map(|b| {
                 let u = rules.def(b.def).researches.iter().copied().find(|&u| !world.researched_or_queued(me, u))?;
@@ -717,7 +740,7 @@ impl Ai {
     ) -> Vec<EntityId> {
         let (me, rules) = (self.player, world.rules);
         let mut sent = Vec::new();
-        let Some(home) = home.filter(|_| self.level == AiLevel::Normal) else { return sent };
+        let Some(home) = home.filter(|_| self.level.judges()) else { return sent };
         let armed: Vec<&Entity> = world
             .entities()
             .filter(|e| {
@@ -857,7 +880,8 @@ impl Ai {
         // waited at home from 7:00 on).
         let income = mine.iter().any(|e| matches!(rules.def(e.def).role(), Some(BuildingRole::OilDerrick { .. })))
             || world.entities().any(|e| matches!(rules.def(e.def).class, Class::SupplyPile) && e.resource > 0);
-        if (idle.len() >= WAVE || (!income && !idle.is_empty()))
+        if world.tick() >= self.pace.first_attack
+            && (idle.len() >= WAVE || (!income && !idle.is_empty()))
             && let Some(home) = home
             && let Some(target) = self.enemy_base(world, home)
         {
@@ -1039,8 +1063,9 @@ impl Ai {
         }
 
         // New wave: every idle armed unit, at home or left in the field by an earlier wave,
-        // once it outweighs the enemy army seen lately by half and the army isn't regrouping.
-        if world.tick() < self.regroup_until {
+        // once it outweighs the enemy army seen lately by half, the army isn't regrouping and
+        // its pace lets it attack.
+        if world.tick() < self.regroup_until.max(self.pace.first_attack) {
             return;
         }
         let idle: Vec<&&Entity> = army.iter().filter(|e| e.order == Order::Idle).collect();

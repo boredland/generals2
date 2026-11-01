@@ -674,7 +674,7 @@ impl World {
             }
             // An AI already playing keeps what it has learnt; a second trigger may wake it too.
             Action::Wake { player, level } => {
-                self.ai[player as usize].get_or_insert_with(|| crate::ai::Ai::new(PlayerId(player), level));
+                self.ai[player as usize].get_or_insert_with(|| crate::ai::Ai::new(PlayerId(player), level, true));
             }
         }
     }

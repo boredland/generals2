@@ -17,7 +17,7 @@ fn normal_ais_play_a_two_on_two_to_the_end() {
             .map(|i| PlayerSetup {
                 faction: Faction::ALL[(i + rot) % Faction::ALL.len()],
                 starting_credits: 5_000,
-                ai: Some(AiLevel::Normal),
+                ai: Some(AiLevel::Hard),
                 general: None,
                 perks: Vec::new(),
                 rank: 1,

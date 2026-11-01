@@ -86,7 +86,7 @@ fn the_waves_can_be_held_or_overrun_and_replay_exactly() {
     let (mut held, mut overrun) = (0, 0);
     for f0 in Faction::ALL {
         for f1 in Faction::ALL {
-            let s = setup(Some(AiLevel::Normal), [f0, f1]);
+            let s = setup(Some(AiLevel::Hard), [f0, f1]);
             let mut w = World::new(&s, rules());
             while w.winner().is_none() && w.tick() < wave_tick(WAVES) + 30 * 600 {
                 w.step();

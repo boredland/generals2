@@ -22,7 +22,7 @@ fn stats_agree_with_the_match() {
                 .map(|(i, &faction)| PlayerSetup {
                     faction,
                     starting_credits: 5_000,
-                    ai: Some(if i == 0 { AiLevel::Normal } else { AiLevel::Easy }),
+                    ai: Some(if i == 0 { AiLevel::Hard } else { AiLevel::Easy }),
                     general: None,
                     perks: Vec::new(),
                     rank: 1,

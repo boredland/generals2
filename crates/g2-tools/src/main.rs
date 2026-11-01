@@ -58,8 +58,9 @@ fn level(s: &str) -> Result<AiLevel, String> {
     match s.to_ascii_lowercase().as_str() {
         "easy" => Ok(AiLevel::Easy),
         "normal" => Ok(AiLevel::Normal),
+        "hard" => Ok(AiLevel::Hard),
         "onslaught" => Ok(AiLevel::Onslaught),
-        _ => Err(format!("unknown AI level {s:?} (easy, normal, onslaught)")),
+        _ => Err(format!("unknown AI level {s:?} (easy, normal, hard, onslaught)")),
     }
 }
 
@@ -203,7 +204,7 @@ fn generals(args: &[String]) -> Result<(), String> {
         names = ["Crater Ridge", "zh:Tournament Desert", "gen:Alpine Assault"].map(str::to_owned).to_vec();
     }
     let maps = names.iter().map(|n| resolve(n)).collect::<Result<Vec<_>, _>>()?;
-    let rank = g2_sim::ai::ai_rank(AiLevel::Normal);
+    let rank = g2_sim::ai::ai_rank(AiLevel::Hard);
     let (mut with, mut without, mut undecided) = (0, 0, 0);
     for (i, g) in rules().generals.iter().enumerate() {
         let (mut won, mut lost) = (0, 0);
@@ -213,9 +214,9 @@ fn generals(args: &[String]) -> Result<(), String> {
                     let player = |faction, general| PlayerSetup {
                         faction,
                         starting_credits: 5_000,
-                        ai: Some(AiLevel::Normal),
+                        ai: Some(AiLevel::Hard),
                         general,
-                        perks: g2_sim::ai::ai_perks(rules(), general, AiLevel::Normal),
+                        perks: g2_sim::ai::ai_perks(rules(), general, AiLevel::Hard),
                         rank: if general.is_some() { rank } else { 1 },
                         team: 0,
                     };
@@ -931,7 +932,7 @@ fn movement_play_map(map: &g2_sim::MapDef) -> [u64; 6] {
                 let player = |faction| PlayerSetup {
                     faction,
                     starting_credits: 5_000,
-                    ai: Some(AiLevel::Normal),
+                    ai: Some(AiLevel::Hard),
                     general: None,
                     perks: Vec::new(),
                     rank: 1,

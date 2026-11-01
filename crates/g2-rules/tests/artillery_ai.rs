@@ -32,7 +32,7 @@ fn normal_artillery_stands_behind_its_line() {
                     PlayerSetup {
                         faction: fa,
                         starting_credits: 5_000,
-                        ai: Some(AiLevel::Normal),
+                        ai: Some(AiLevel::Hard),
                         general: None,
                         perks: Vec::new(),
                         rank: 1,

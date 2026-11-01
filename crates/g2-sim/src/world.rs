@@ -463,7 +463,7 @@ impl World {
                 rank: p.rank,
                 team: p.team,
             });
-            world.ai.push(p.ai.map(|level| Ai::new(owner, level)));
+            world.ai.push(p.ai.map(|level| Ai::new(owner, level, mission.is_some())));
             // The onslaught has no base: its waves are all there is of it. A mission places
             // every side's forces itself.
             if p.ai == Some(AiLevel::Onslaught) || mission.is_some() {
@@ -795,8 +795,9 @@ impl World {
         w
     }
 
-    /// `w` as unit `e` fires it: its owner's upgrades, then a rank-3 unit's faster fire, then
-    /// its damage status (a Supply Drop's buff, Faulty Construction's debuff).
+    /// `w` as unit `e` fires it: its owner's upgrades, then a rank-3 unit's faster fire, then a
+    /// skirmish Easy AI's slower fire (80% of the rate, so 125% of the cooldown), then its
+    /// damage status (a Supply Drop's buff, Faulty Construction's debuff).
     pub(crate) fn unit_weapon(&self, e: &Entity, w: crate::defs::Weapon) -> crate::defs::Weapon {
         let mut w = match e.owner {
             Some(owner) => self.upgraded_weapon(owner, e.def, w),
@@ -804,6 +805,9 @@ impl World {
         };
         if let Some(v) = self.rules.def(e.def).veterancy.filter(|_| self.rank(e) >= 3) {
             w.cooldown_ticks = (w.cooldown_ticks * v.cooldown_percent / 100).max(1);
+        }
+        if e.owner.is_some_and(|o| self.handicapped(o)) {
+            w.cooldown_ticks = w.cooldown_ticks * 5 / 4;
         }
         let percent = e.status_percent(StatusKind::Damage);
         if percent != 100 {
@@ -814,6 +818,11 @@ impl World {
             w.damage = damage;
         }
         w
+    }
+
+    /// Whether `player` is a skirmish Easy AI, playing with Zero Hour's Easy handicaps.
+    pub(crate) fn handicapped(&self, player: PlayerId) -> bool {
+        self.ai.get(player.0 as usize).and_then(|a| a.as_ref()).is_some_and(|a| a.handicapped())
     }
 
     pub fn nearest_pile(&self, from: Vec2) -> Option<EntityId> {
@@ -2896,6 +2905,10 @@ impl World {
             let damage = if toughness == 0 || damage == 0 { damage } else { (damage * (100 + toughness) / 100).max(1) };
             let shield = t.status_percent(StatusKind::Toughness);
             let damage = if shield == 100 || damage == 0 { damage } else { (damage * shield / 100).max(1) };
+            // A skirmish Easy AI hits a human's units and buildings for two thirds, as Zero
+            // Hour's Easy gives them 150% health.
+            let human = t.owner.is_some_and(|o| self.ai_level(o).is_none());
+            let damage = if damage > 0 && human && self.handicapped(by) { (damage * 2 / 3).max(1) } else { damage };
             let tick = self.tick;
             let t = self.entities.get_mut(target).unwrap();
             let was_alive = t.hp > 0;

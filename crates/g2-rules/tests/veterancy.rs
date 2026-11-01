@@ -212,7 +212,7 @@ fn matches_with_promotions_replay_exactly() {
             PlayerSetup {
                 faction: Faction::Apa,
                 starting_credits: 10_000,
-                ai: Some(g2_sim::AiLevel::Normal),
+                ai: Some(g2_sim::AiLevel::Hard),
                 general: None,
                 perks: Vec::new(),
                 rank: 1,
@@ -221,7 +221,7 @@ fn matches_with_promotions_replay_exactly() {
             PlayerSetup {
                 faction: Faction::Gla,
                 starting_credits: 10_000,
-                ai: Some(g2_sim::AiLevel::Normal),
+                ai: Some(g2_sim::AiLevel::Hard),
                 general: None,
                 perks: Vec::new(),
                 rank: 1,

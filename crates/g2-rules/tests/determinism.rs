@@ -158,19 +158,20 @@ fn mirror_matches_build_mirrored_bases() {
     }
 }
 
-/// Every faction pairing, played AI against AI, ends with exactly one winner within 15 minutes,
+/// Every faction pairing, played AI against AI, ends with exactly one winner within 30 minutes,
 /// and the recorded match reproduces exactly: combat (targeting, hits, deaths, the AI's
-/// waves and rebuilding) is deterministic end to end.
+/// waves and rebuilding) is deterministic end to end. Easy against Easy at its slower pace
+/// ends between 12:32 and 25:13 (measured; APA against GLA the longest).
 #[test]
 fn ai_matches_end_with_a_winner_and_replay_exactly() {
     for f0 in Faction::ALL {
         for f1 in Faction::ALL {
             let s = setup(1, [true, true], [f0, f1]);
             let mut w = World::new(&s, rules());
-            while w.winner().is_none() && w.tick() < 30 * 60 * 15 {
+            while w.winner().is_none() && w.tick() < 30 * 60 * 30 {
                 w.step();
             }
-            let winner = w.winner().unwrap_or_else(|| panic!("{f0:?} vs {f1:?}: no winner in 15 minutes"));
+            let winner = w.winner().unwrap_or_else(|| panic!("{f0:?} vs {f1:?}: no winner in 30 minutes"));
             let loser = PlayerId(1 - winner.0);
             assert!(w.player(loser).defeated);
             assert!(w.entities().all(|e| e.owner != Some(loser)), "{f0:?} vs {f1:?}: loser's assets remain");

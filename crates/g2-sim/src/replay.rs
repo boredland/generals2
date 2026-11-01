@@ -18,9 +18,12 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// v13 each player's team (0, alone, before), v14 the mission played (`MISSION_VERSION`), v15
 /// its difficulty (`DIFFICULTY_VERSION`; `Normal` before), v16 the `Ability` command (tag 19),
 /// v17 the `AttackBridge` and `RepairBridge` commands (tags 20, 21), v18 the `Ability`
-/// command's slot and aim (tag 22; tag 19 still decodes, as the first slot used in place).
-/// Older replays still decode.
-pub const VERSION: u16 = 18;
+/// command's slot and aim (tag 22; tag 19 still decodes, as the first slot used in place), v19
+/// the `Hard` level (AI byte 4; `Normal`, byte 2, before it was what is now `Hard`, and decodes
+/// as that). Older replays still decode.
+pub const VERSION: u16 = 19;
+/// The first version whose `Normal` is the slower one, not today's `Hard`.
+const HARD_VERSION: u16 = 19;
 /// The first version with the mission field: a u16 after the players, `NO_MISSION` for none.
 /// Read only from this version on, so it composes with fields earlier versions add.
 const MISSION_VERSION: u16 = 14;
@@ -70,7 +73,12 @@ impl Replay {
         for p in &self.players {
             w.u8(p.faction as u8);
             w.i64(p.starting_credits);
-            w.u8(p.ai.map_or(0, |l| 1 + l as u8));
+            w.u8(p.ai.map_or(0, |l| match l {
+                AiLevel::Easy => 1,
+                AiLevel::Normal => 2,
+                AiLevel::Onslaught => 3,
+                AiLevel::Hard => 4,
+            }));
             w.u16(p.general.map_or(NO_GENERAL, |g| g.0));
             w.u8(p.perks.len() as u8);
             for k in &p.perks {
@@ -118,8 +126,10 @@ impl Replay {
                 (_, 0) => None,
                 (..=3, _) => Some(AiLevel::Easy),
                 (_, 1) => Some(AiLevel::Easy),
+                (..HARD_VERSION, 2) => Some(AiLevel::Hard),
                 (_, 2) => Some(AiLevel::Normal),
                 (6.., 3) => Some(AiLevel::Onslaught),
+                (HARD_VERSION.., 4) => Some(AiLevel::Hard),
                 (_, t) => return Err(DecodeError::BadTag(t)),
             };
             let general = match version {

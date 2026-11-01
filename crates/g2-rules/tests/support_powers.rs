@@ -269,7 +269,7 @@ fn jets_fly_edge_to_edge() {
 #[test]
 fn the_normal_ai_uses_airstrikes() {
     for f in [Faction::Eu, Faction::Apa] {
-        for level in [g2_sim::AiLevel::Normal, g2_sim::AiLevel::Easy] {
+        for level in [g2_sim::AiLevel::Hard, g2_sim::AiLevel::Easy] {
             let mut s = setup(f, Faction::Gla);
             s.players[0].ai = Some(level);
             s.players[1].ai = Some(g2_sim::AiLevel::Onslaught);
@@ -288,7 +288,7 @@ fn the_normal_ai_uses_airstrikes() {
                 .map(|r| r as u8 + 1);
             let strikes = used.iter().filter(|&&k| k >= 1 && Some(k) != recon).count();
             assert!(recon.is_none_or(|r| !used.contains(&r)), "{f:?} {level:?} flew the recon");
-            if level == g2_sim::AiLevel::Normal {
+            if level == g2_sim::AiLevel::Hard {
                 assert!(strikes >= 1, "{f:?} Normal flew no airstrike: {used:?}");
             }
         }
