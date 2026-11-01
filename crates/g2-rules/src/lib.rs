@@ -6,8 +6,6 @@ use g2_sim::defs::Rules;
 use g2_sim::{Fx, MapDef, Vec2};
 
 pub mod data;
-#[cfg(test)]
-mod legacy;
 pub mod missions;
 
 /// Declares each id constant and `KEYS`, every constant's name with its id. The data files
@@ -665,29 +663,5 @@ mod tests {
                 prev = lv;
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod data_matches_legacy {
-    #[test]
-    fn parsed_tables_equal_the_const_tables() {
-        let parsed = crate::data::parse(crate::data::FILES).unwrap_or_else(|e| panic!("{e}"));
-        let old = &crate::legacy::RULES;
-        for (i, (a, b)) in parsed.defs.iter().zip(old.defs).enumerate() {
-            assert_eq!(a, b, "def {i}");
-        }
-        assert_eq!(parsed.defs.len(), old.defs.len());
-        assert_eq!(parsed.upgrades, old.upgrades);
-        for (i, (a, b)) in parsed.perks.iter().zip(old.perks).enumerate() {
-            assert_eq!(a, b, "perk {i}");
-        }
-        assert_eq!(parsed.perks.len(), old.perks.len());
-        for (i, (a, b)) in parsed.generals.iter().zip(old.generals).enumerate() {
-            assert_eq!(a, b, "general {i}");
-        }
-        assert_eq!(parsed.generals.len(), old.generals.len());
-        assert_eq!(parsed.support, old.support);
-        assert_eq!(g2_sim::net::build_id(&parsed), g2_sim::net::build_id(old));
     }
 }

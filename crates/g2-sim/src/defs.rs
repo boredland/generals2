@@ -314,7 +314,7 @@ pub enum BuildingRole {
     Tunnel,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Def {
     pub name: &'static str,
     pub faction: Option<Faction>,
@@ -449,7 +449,7 @@ pub struct GeneralId(pub u16);
 /// A general a player picks within a faction. Generals 2 had several per faction, each with
 /// "unique advantages … balanced with disadvantages" (2012 developer
 /// blog in archive/wayback). Their exact rules are unknown; this models them as data, the way
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct General {
     pub name: &'static str,
     pub faction: Faction,
@@ -491,7 +491,7 @@ pub const PERK_SLOTS: usize = 5;
 /// pods" perks), after the faction's support powers. `rank` is the general rank it needs,
 /// `price` its experience cost to buy, `requires` the lower tier that must be bought first
 /// (the alpha shows all three).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Perk {
     pub name: &'static str,
     pub description: &'static str,
@@ -615,7 +615,7 @@ pub struct UpgradeId(pub u16);
 /// A one-time research: once done, `effects` apply to every current and future entity of each
 /// listed def the player owns. Researched in a building's production queue, like Zero Hour's
 /// player upgrades; the buildings that offer it list it in `Def::researches`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct Upgrade {
     pub name: &'static str,
     pub cost: Cost,
