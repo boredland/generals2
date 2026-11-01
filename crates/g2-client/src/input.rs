@@ -71,6 +71,16 @@ struct Drag {
 /// the first is a double click.
 const DOUBLE_CLICK: (f64, f32) = (0.25, 4.0);
 
+/// How far (in logical pixels) the cursor may move between press and release for a left
+/// press to still be a click rather than a drag.
+const CLICK_SLOP: f32 = 6.0;
+
+/// The rubber band of a left drag over the world, as Generals draws it
+/// (`W3DInGameUI::drawSelectionRegion`): an open rectangle 2 pixels wide in translucent green
+/// (`0x9933FF33`), from the press to the cursor.
+#[derive(Component)]
+struct DragBox;
+
 pub struct InputPlugin;
 
 /// The gameplay input systems, as one unit for ordering against other plugins.
@@ -86,7 +96,7 @@ impl Plugin for InputPlugin {
             .add_plugins((crate::select::SelectPlugin, crate::feedback::FeedbackPlugin))
             .add_systems(
                 Update,
-                (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays)
+                (prune_selection, keyboard, cycle_collectors, mouse, draw_overlays, drag_box)
                     .chain()
                     .in_set(InputSet)
                     .run_if(crate::menu::playing),
@@ -509,7 +519,7 @@ fn mouse(
     if buttons.just_released(MouseButton::Left)
         && let (Some(start), Some(end)) = (drag.left.take(), window.cursor_position())
     {
-        let click = start.distance(end) < 6.0;
+        let click = start.distance(end) < CLICK_SLOP;
         let now = time.elapsed_secs_f64();
         let double = click
             && drag.last_click.is_some_and(|(at, t)| now - t < DOUBLE_CLICK.0 && at.distance(end) < DOUBLE_CLICK.1);
@@ -752,6 +762,49 @@ fn draw_overlays(
     }
 }
 
+/// Shows `DragBox` over a left drag that has gone past `CLICK_SLOP`, and hides it otherwise
+/// (the HUD's own presses never start one: `mouse` returns before recording them). It hides by
+/// `Display`: its `Visibility` is `menu::hide_hud`'s, as for every top-level match node.
+fn drag_box(
+    mut commands: Commands,
+    drag: Res<Drag>,
+    buttons: Res<ButtonInput<MouseButton>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut boxes: Query<&mut Node, With<DragBox>>,
+) {
+    let Ok(mut node) = boxes.single_mut() else {
+        commands.spawn((
+            crate::menu::MatchEntity,
+            DragBox,
+            Node {
+                display: Display::None,
+                position_type: PositionType::Absolute,
+                border: UiRect::all(px(2)),
+                ..default()
+            },
+            BorderColor::all(Color::srgba_u8(0x33, 0xff, 0x33, 0x99)),
+        ));
+        return;
+    };
+    let cursor = window.single().ok().and_then(Window::cursor_position);
+    let band = drag
+        .left
+        .zip(cursor)
+        .filter(|(start, end)| buttons.pressed(MouseButton::Left) && start.distance(*end) >= CLICK_SLOP);
+    let Some((start, end)) = band else {
+        if node.display != Display::None {
+            node.display = Display::None;
+        }
+        return;
+    };
+    let (lo, hi) = (start.min(end), start.max(end));
+    node.display = Display::Flex;
+    node.left = px(lo.x);
+    node.top = px(lo.y);
+    node.width = px(hi.x - lo.x);
+    node.height = px(hi.y - lo.y);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -981,7 +1034,7 @@ mod tests {
                 .init_resource::<crate::settings::Settings>()
                 .init_resource::<crate::camera::PanDrag>()
                 .init_resource::<crate::feedback::Marks>()
-                .add_systems(Update, mouse);
+                .add_systems(Update, (mouse, drag_box).chain());
             let mut window = Window::default();
             window.resolution.set(1280.0, 720.0);
             app.world_mut().spawn((window, PrimaryWindow));
@@ -1062,5 +1115,42 @@ mod tests {
         }
         c.click(MouseButton::Left, at);
         assert_eq!(c.app.world().resource::<Selection>().0, vec![squads[0]], "a later click selects one again");
+    }
+
+    /// A left drag over the world draws Generals' green band from the press to the cursor once
+    /// it is past a click's slop, and the release selects what it covers and takes the band away.
+    #[test]
+    fn a_left_drag_draws_the_band_until_released() {
+        let (sim, squads) = crate::select::tests::sim_with_units();
+        let first = sim.to_world(sim.world.entity(squads[0]).unwrap().pos);
+        let mut c = Clicks::new(sim, Vec::new(), first);
+        let at = c.screen(first);
+        let band = |c: &mut Clicks| {
+            let w = c.app.world_mut();
+            let node = w.query_filtered::<&Node, With<DragBox>>().single(w).unwrap();
+            (node.display != Display::None).then_some((node.left, node.top, node.width, node.height))
+        };
+        let (start, end) = (at - Vec2::splat(40.0), at + Vec2::splat(40.0));
+        let frame = |c: &mut Clicks, cursor: Vec2, press: Option<bool>| {
+            let w = c.app.world_mut();
+            w.query::<&mut Window>().single_mut(w).unwrap().set_cursor_position(Some(cursor));
+            let mut b = c.app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+            b.clear();
+            match press {
+                Some(true) => b.press(MouseButton::Left),
+                Some(false) => b.release(MouseButton::Left),
+                None => {}
+            }
+            c.app.update();
+        };
+        frame(&mut c, start, Some(true));
+        assert_eq!(band(&mut c), None, "a press alone is still a click");
+        frame(&mut c, start + Vec2::splat(3.0), None);
+        assert_eq!(band(&mut c), None, "within the click's slop: no band");
+        frame(&mut c, end, None);
+        assert_eq!(band(&mut c), Some((px(start.x), px(start.y), px(80.0), px(80.0))), "from the press to the cursor");
+        frame(&mut c, end, Some(false));
+        assert_eq!(band(&mut c), None, "released: gone");
+        assert!(c.app.world().resource::<Selection>().0.contains(&squads[0]), "and it selected what it covered");
     }
 }

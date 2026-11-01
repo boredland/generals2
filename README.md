@@ -295,7 +295,7 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 
 | Input | Action |
 |---|---|
-| Left click / drag | Select own units (click selects buildings too); Shift adds. Double click: add every own unit or building of that kind on screen |
+| Left click / drag | Select own units (click selects buildings too); Shift adds. A drag shows the area as a green band, as Generals draws it. Double click: add every own unit or building of that kind on screen |
 | Right click | Enemy → attack (unarmed units in the selection walk there); supply pile → gather; own foundation → help build; ground → move, and with your production buildings selected, sets their rally point. Given on release: a right-button drag that panned the camera orders nothing |
 | Ctrl + right click | Attack-move: armed units fight anything they meet on the way |
 | Click the build grid | Constructor selected: choose a building, left click places (Shift repeats), Esc / right click cancels. Building selected: queue production; right click a cell cancels one of that item (the last queued, full refund), Backspace the last item queued. A foundation selected: its Cancel cell removes it and pays its price back in full, as Zero Hour's (it is replay command v20's `CancelConstruction`, the right-click cancel its `CancelItem`). Hover for the tooltip, which says when a right click cancels |
