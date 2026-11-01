@@ -111,15 +111,6 @@ impl Form {
     }
 }
 
-/// The next side in a lobby's faction list, which holds each faction and then its generals,
-/// as Zero Hour's lists every general as a faction of its own.
-pub fn next_side(faction: Faction, general: Option<GeneralId>) -> (Faction, Option<GeneralId>) {
-    match crate::menu::next_general(faction, general) {
-        Some(g) => (faction, Some(g)),
-        None => (Faction::ALL[(faction as usize + 1) % Faction::ALL.len()], None),
-    }
-}
-
 /// The side as the profile plays it: its perks slotted on the general, at its rank.
 fn pick(world: &World, faction: Faction, general: Option<GeneralId>) -> Pick {
     let profile = world.resource::<Profile>();
@@ -191,21 +182,21 @@ pub fn apply(world: &mut World, act: Act, maps: &[String]) {
                 Err(e) => note = Some(e),
             }
         }
-        Act::NetMode | Act::NetMap(_) | Act::NetSide | Act::NetAccept | Act::NetStart => {
-            let (faction, general) = next_side(form.faction, form.general);
+        Act::NetMode(_) | Act::NetMap(_) | Act::NetSide(..) | Act::NetAccept | Act::NetStart => {
+            let (faction, general) = match act {
+                Act::NetSide(f, g) => (f, g),
+                _ => (form.faction, form.general),
+            };
             let side = pick(world, faction, general);
             let done = match (&mut net, act) {
-                (Net::Hosting(h), Act::NetMode) => h.change(|o| o.coop = !o.coop),
-                (Net::Hosting(h), Act::NetMap(d)) => {
-                    let at = maps.iter().position(|m| *m == h.offer().map).unwrap_or(0) as i32;
-                    match maps.get((at + d).rem_euclid(maps.len().max(1) as i32) as usize) {
-                        Some(m) => h.change(|o| o.map = m.clone()),
-                        None => Ok(()),
-                    }
-                }
-                (Net::Hosting(h), Act::NetSide) => h.change(|o| o.own = side),
+                (Net::Hosting(h), Act::NetMode(coop)) => h.change(|o| o.coop = coop),
+                (Net::Hosting(h), Act::NetMap(i)) => match maps.get(i) {
+                    Some(m) => h.change(|o| o.map = m.clone()),
+                    None => Ok(()),
+                },
+                (Net::Hosting(h), Act::NetSide(..)) => h.change(|o| o.own = side),
                 (Net::Hosting(h), Act::NetStart) => h.start(),
-                (Net::Joined(g), Act::NetSide) => {
+                (Net::Joined(g), Act::NetSide(..)) => {
                     g.pick(side);
                     Ok(())
                 }
@@ -216,7 +207,7 @@ pub fn apply(world: &mut World, act: Act, maps: &[String]) {
                 _ => Ok(()),
             };
             let mut ui = world.resource_mut::<Ui>();
-            if act == Act::NetSide {
+            if let Act::NetSide(..) = act {
                 (ui.lobby.faction, ui.lobby.general) = (faction, general);
             }
             if let Net::Hosting(h) = &net {

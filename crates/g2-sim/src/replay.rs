@@ -3,8 +3,8 @@
 //! "Crater Ridge" is built in; `<gen|zh>:<name>` is imported from the original game's map.
 
 use crate::command::{Aim, Command, CommandKind};
-use crate::defs::{DefId, Faction};
-use crate::entity::{EntityId, PlayerId};
+use crate::defs::{DefId, Faction, UpgradeId};
+use crate::entity::{EntityId, PlayerId, Product};
 use crate::fixed::{Fx, Vec2};
 use crate::map::{AiLevel, PlayerSetup};
 
@@ -20,8 +20,9 @@ const MAGIC: &[u8; 4] = b"G2RP";
 /// v17 the `AttackBridge` and `RepairBridge` commands (tags 20, 21), v18 the `Ability`
 /// command's slot and aim (tag 22; tag 19 still decodes, as the first slot used in place), v19
 /// the `Hard` level (AI byte 4; `Normal`, byte 2, before it was what is now `Hard`, and decodes
-/// as that). Older replays still decode.
-pub const VERSION: u16 = 19;
+/// as that), v20 the `CancelItem` and `CancelConstruction` commands (tags 23, 24). Older
+/// replays still decode.
+pub const VERSION: u16 = 20;
 /// The first version whose `Normal` is the slower one, not today's `Hard`.
 const HARD_VERSION: u16 = 19;
 /// The first version with the mission field: a u16 after the players, `NO_MISSION` for none.
@@ -392,6 +393,24 @@ impl Writer {
                 self.ids(units);
                 self.u16(*bridge);
             }
+            CommandKind::CancelItem { producer, item } => {
+                self.u8(23);
+                self.id(*producer);
+                match item {
+                    Product::Unit(d) => {
+                        self.u8(0);
+                        self.u16(d.0);
+                    }
+                    Product::Upgrade(u) => {
+                        self.u8(1);
+                        self.u16(u.0);
+                    }
+                }
+            }
+            CommandKind::CancelConstruction { site } => {
+                self.u8(24);
+                self.id(*site);
+            }
         }
     }
 }
@@ -487,6 +506,16 @@ impl Reader<'_> {
                 };
                 CommandKind::Ability { units, slot, aim }
             }
+            23 => {
+                let producer = self.id()?;
+                let item = match self.u8()? {
+                    0 => Product::Unit(DefId(self.u16()?)),
+                    1 => Product::Upgrade(UpgradeId(self.u16()?)),
+                    t => return Err(DecodeError::BadTag(t)),
+                };
+                CommandKind::CancelItem { producer, item }
+            }
+            24 => CommandKind::CancelConstruction { site: self.id()? },
             t => return Err(DecodeError::BadTag(t)),
         })
     }

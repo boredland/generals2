@@ -172,21 +172,25 @@ fn selected_building(sim: &Sim, sel: &Selection) -> Option<EntityId> {
 
 pub(crate) fn keyboard(
     keys: Res<ButtonInput<KeyCode>>,
+    typed: Option<Res<ButtonInput<bevy::input::keyboard::Key>>>,
     mut sim: ResMut<Sim>,
     sel: Res<Selection>,
     mut placing: ResMut<Placement>,
     mut aim: ResMut<PowerAim>,
 ) {
     // Online the clock is shared: pausing or speeding up one machine would only stall the
-    // other, so these keys do nothing there.
+    // other, so these keys do nothing there. + and - are taken by the character typed too, so
+    // they work on layouts where they aren't the US keys' places (German: + beside Enter).
     let local_clock = sim.online.is_none();
+    let char =
+        |c: &str| typed.as_ref().is_some_and(|t| t.just_pressed(bevy::input::keyboard::Key::Character(c.into())));
     if local_clock && keys.just_pressed(KeyCode::Space) {
         sim.speed = if sim.speed == 0 { 1 } else { 0 };
     }
-    if local_clock && keys.any_just_pressed([KeyCode::Equal, KeyCode::NumpadAdd]) {
+    if local_clock && (keys.any_just_pressed([KeyCode::Equal, KeyCode::NumpadAdd]) || char("+")) {
         sim.speed = (sim.speed * 2).clamp(1, 8);
     }
-    if local_clock && keys.any_just_pressed([KeyCode::Minus, KeyCode::NumpadSubtract]) {
+    if local_clock && (keys.any_just_pressed([KeyCode::Minus, KeyCode::NumpadSubtract]) || char("-")) {
         sim.speed = (sim.speed / 2).max(1);
     }
     if keys.just_pressed(KeyCode::F10) {
@@ -306,22 +310,46 @@ fn aimed_ability(sim: &Sim, sel: &[EntityId], slot: u8, here: g2_sim::Vec2) -> C
     CommandKind::Ability { units: sel.to_vec(), slot, aim }
 }
 
-/// A left click on the HUD: a build-grid cell builds, trains or researches its slot, the minimap moves the
-/// camera there. Returns whether the HUD took the click.
+/// A click on the HUD: a build-grid cell builds, trains or researches its slot (a right click
+/// cancels one of it instead), a speed button sets the game speed, a ready power's tile arms it
+/// as its key does, the minimap moves the camera there (left click only). Returns whether the
+/// HUD took the click. MENU is the menu's (`menu::interact`).
+#[allow(clippy::too_many_arguments)]
 fn hud_click(
     point: Vec2,
+    right: bool,
     sim: &mut Sim,
     sel: &Selection,
     placing: &mut Placement,
+    aim: &mut PowerAim,
     hud: &HudQueries,
     cam: &mut RtsCamera,
 ) -> bool {
+    use crate::hud::HudButton;
     let inside = |node: &ComputedNode, tf: &bevy::ui::UiGlobalTransform, vis: &InheritedVisibility| {
         vis.get() && node.contains_point(*tf, point / node.inverse_scale_factor())
     };
     if let Some(cell) = hud.buttons.iter().find(|(_, n, tf, v)| inside(n, tf, v)).map(|(b, ..)| b.0) {
-        press_slot(sim, sel, placing, cell);
+        if right {
+            cancel_slot(sim, sel, cell);
+        } else {
+            press_slot(sim, sel, placing, cell);
+        }
         return true;
+    }
+    if let Some(&b) = hud.hud_buttons.iter().find(|(_, n, tf, v)| inside(n, tf, v)).map(|(b, ..)| b) {
+        match b {
+            HudButton::Speed(s) if !right && sim.online.is_none() => sim.speed = s,
+            HudButton::Power(slot) if !right && sim.power_wait(slot) == Some(0) => {
+                aim.0 = Some(slot);
+                placing.0 = None;
+            }
+            _ => {}
+        }
+        return true;
+    }
+    if right {
+        return crate::hud::over_hud(&hud.panels, point);
     }
     if let Some((n, tf, v, node)) = hud.minimap.iter().next()
         && inside(n, tf, v)
@@ -342,8 +370,8 @@ fn hud_click(
 }
 
 /// What a build-grid slot does for the selection: a constructor's slot starts placing that
-/// building, a building's trains that unit or researches that upgrade. Read from the same
-/// menu the grid shows.
+/// building, a building's trains that unit or researches that upgrade, a foundation's cancels
+/// it. Read from the same menu the grid shows.
 fn press_slot(sim: &mut Sim, sel: &Selection, placing: &mut Placement, i: usize) {
     use crate::hud::Slot;
     let Some(&slot) = crate::hud::build_menu(sim, sel).get(i) else { return };
@@ -351,7 +379,18 @@ fn press_slot(sim: &mut Sim, sel: &Selection, placing: &mut Placement, i: usize)
         (Slot::Def(def), Some(_), _) => placing.0 = Some(def),
         (Slot::Def(def), None, Some(producer)) => sim.order(CommandKind::Train { producer, def }),
         (Slot::Upgrade(upgrade), None, Some(producer)) => sim.order(CommandKind::Research { producer, upgrade }),
+        (Slot::Cancel, _, Some(site)) => sim.order(CommandKind::CancelConstruction { site }),
         _ => {}
+    }
+}
+
+/// A right click on a build-grid slot: the last queued item of its kind at the selected
+/// building goes, for a full refund (Generals' and OpenRA's right-click cancel).
+fn cancel_slot(sim: &mut Sim, sel: &Selection, i: usize) {
+    let Some(item) = crate::hud::build_menu(sim, sel).get(i).and_then(|s| s.product()) else { return };
+    let Some(producer) = selected_building(sim, sel) else { return };
+    if sim.world.entity(producer).is_some_and(|e| e.queue.iter().any(|p| p.item == item)) {
+        sim.order(CommandKind::CancelItem { producer, item });
     }
 }
 
@@ -373,6 +412,16 @@ struct HudQueries<'w, 's> {
         's,
         (&'static ComputedNode, &'static bevy::ui::UiGlobalTransform, &'static InheritedVisibility, &'static Node),
         With<crate::hud::MinimapView>,
+    >,
+    hud_buttons: Query<
+        'w,
+        's,
+        (
+            &'static crate::hud::HudButton,
+            &'static ComputedNode,
+            &'static bevy::ui::UiGlobalTransform,
+            &'static InheritedVisibility,
+        ),
     >,
 }
 
@@ -399,8 +448,9 @@ fn mouse(
     // drag that started in the world still ends normally over the HUD.
     let pressed = buttons.get_just_pressed().next().is_some();
     if pressed && crate::hud::over_hud(&hud.panels, cursor) {
-        if buttons.just_pressed(MouseButton::Left) && aim.0.is_none() {
-            hud_click(cursor, &mut sim, &sel, &mut placing, &hud, &mut rts);
+        let left = buttons.just_pressed(MouseButton::Left);
+        if (left || buttons.just_pressed(MouseButton::Right)) && aim.0.is_none() {
+            hud_click(cursor, !left, &mut sim, &sel, &mut placing, &mut aim, &hud, &mut rts);
         }
         return;
     }
@@ -784,16 +834,17 @@ mod tests {
         assert_eq!(armed(Some(mercury), &[], KeyCode::F4, drop), None, "no perk, nothing on F4");
     }
 
-    /// A click on the HUD is the HUD's: on a build-grid button it trains that slot's unit, on
-    /// bare panel art it issues nothing, on the minimap it moves the camera there, and the
-    /// same click off the HUD reaches the world (a click on open ground drops the selection).
-    /// The nodes are laid out at scale 2 (sizes and centres in physical pixels), the cursor in
-    /// logical pixels, as on a HiDPI window.
+    /// A click on the HUD is the HUD's: on a build-grid button a left click trains that slot's
+    /// unit and a right click cancels one of it queued (none queued: nothing), on a speed
+    /// button it sets the game speed, on bare panel art it issues nothing, on the minimap it
+    /// moves the camera there, and the same click off the HUD reaches the world (a click on
+    /// open ground drops the selection). The nodes are laid out at scale 2 (sizes and centres
+    /// in physical pixels), the cursor in logical pixels, as on a HiDPI window.
     #[test]
     fn hud_clicks_never_reach_the_world() {
         use bevy::ecs::system::RunSystemOnce;
         use bevy::ui::UiGlobalTransform;
-        let click = |at: Vec2| -> (u32, usize, Vec3) {
+        let click_with = |at: Vec2, button: MouseButton, queued: bool| -> (u32, usize, Vec3, usize, u32) {
             let mut sim = Sim::new(
                 g2_rules::crater_ridge(),
                 None,
@@ -809,6 +860,15 @@ mod tests {
                 .expect("a finished producer at the start");
             let pivot = sim.to_world(sim.world.entity(factory).unwrap().pos);
             sim.world.step();
+            let first = crate::hud::build_menu(&sim, &Selection(vec![factory]))[0];
+            if queued {
+                let crate::hud::Slot::Def(def) = first else { panic!("a unit first: {first:?}") };
+                sim.world.submit(sim.local, CommandKind::Train { producer: factory, def });
+                for _ in 0..=g2_sim::world::INPUT_DELAY {
+                    sim.world.step();
+                }
+                assert_eq!(sim.world.entity(factory).unwrap().queue.len(), 1, "one queued");
+            }
             let mut world = World::new();
             let mut window = Window::default();
             window.resolution.set(1280.0, 720.0);
@@ -828,7 +888,8 @@ mod tests {
             camera.computed.clip_from_view = bevy::camera::CameraProjection::get_clip_from_view(&projection);
             world.spawn((camera, GlobalTransform::from(cam.transform()), cam));
             // At scale 2, in logical pixels: a panel 0..400 x 500..720 holding a grid button at
-            // 10..60 x 510..560 and a 200 x 200 minimap at 180..380 x 510..710.
+            // 10..60 x 510..560, an x4 speed button at 85..115 x 520..550 and a 200 x 200
+            // minimap at 180..380 x 510..710.
             let node = |size: Vec2, centre: Vec2| {
                 (
                     ComputedNode { size: size * 2.0, inverse_scale_factor: 0.5, ..ComputedNode::DEFAULT },
@@ -838,13 +899,14 @@ mod tests {
             };
             world.spawn((crate::hud::HudPanel, node(Vec2::new(400.0, 220.0), Vec2::new(200.0, 610.0))));
             world.spawn((crate::hud::GridButton(0), node(Vec2::new(50.0, 50.0), Vec2::new(35.0, 535.0))));
+            world.spawn((crate::hud::HudButton::Speed(4), node(Vec2::new(30.0, 30.0), Vec2::new(100.0, 535.0))));
             world.spawn((
                 crate::hud::MinimapView,
                 Node { width: px(200), height: px(200), ..default() },
                 node(Vec2::new(200.0, 200.0), Vec2::new(280.0, 610.0)),
             ));
             let mut buttons = ButtonInput::<MouseButton>::default();
-            buttons.press(MouseButton::Left);
+            buttons.press(button);
             world.insert_resource(buttons);
             world.init_resource::<ButtonInput<KeyCode>>();
             world.insert_resource(sim);
@@ -859,13 +921,30 @@ mod tests {
             world.run_system_once(mouse).unwrap();
             // A world click completes on release: release on the same spot.
             world.resource_mut::<ButtonInput<MouseButton>>().clear();
-            world.resource_mut::<ButtonInput<MouseButton>>().release(MouseButton::Left);
+            world.resource_mut::<ButtonInput<MouseButton>>().release(button);
             world.run_system_once(mouse).unwrap();
             let pivot = world.query::<&RtsCamera>().single(&world).unwrap().pivot;
-            (world.resource::<Sim>().unheard_orders, world.resource::<Selection>().0.len(), pivot)
+            let (orders, selected) = (world.resource::<Sim>().unheard_orders, world.resource::<Selection>().0.len());
+            // What the orders did once they are due: the factory's queue.
+            let mut sim = world.remove_resource::<Sim>().unwrap();
+            for _ in 0..=g2_sim::world::INPUT_DELAY {
+                sim.world.step();
+            }
+            (orders, selected, pivot, sim.world.entity(factory).unwrap().queue.len(), sim.speed)
+        };
+        let click = |at: Vec2| {
+            let (orders, selected, pivot, ..) = click_with(at, MouseButton::Left, false);
+            (orders, selected, pivot)
         };
         let (orders, selected, home) = click(Vec2::new(35.0, 535.0));
         assert_eq!((orders, selected), (1, 1), "grid button: one Train order, selection kept");
+        let (orders, selected, _, queue, _) = click_with(Vec2::new(35.0, 535.0), MouseButton::Right, true);
+        assert_eq!((orders, selected), (1, 1), "right click on a queued slot: one order, selection kept");
+        assert_eq!(queue, 0, "and it cancels the one queued");
+        let (orders, ..) = click_with(Vec2::new(35.0, 535.0), MouseButton::Right, false);
+        assert_eq!(orders, 0, "right click with none queued: nothing");
+        let (orders, selected, _, _, speed) = click_with(Vec2::new(100.0, 535.0), MouseButton::Left, false);
+        assert_eq!((orders, selected, speed), (0, 1, 4), "speed button: x4, no order, selection kept");
         let (orders, selected, pivot) = click(Vec2::new(130.0, 650.0));
         assert_eq!((orders, selected), (0, 1), "bare panel: no order, selection kept");
         assert_eq!(pivot, home, "bare panel: camera stays");

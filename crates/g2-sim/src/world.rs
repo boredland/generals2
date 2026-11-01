@@ -1289,6 +1289,30 @@ impl World {
                 self.pay(player, item.item, -1);
                 Ok(())
             }
+            CommandKind::CancelItem { producer, item } => {
+                self.owned(player, *producer)?;
+                let queue = &mut self.entities.get_mut(*producer).unwrap().queue;
+                let at = queue.iter().rposition(|p| p.item == *item).ok_or(Reject::CannotProduce)?;
+                queue.remove(at);
+                self.pay(player, *item, -1);
+                Ok(())
+            }
+            CommandKind::CancelConstruction { site } => {
+                let s = self.owned(player, *site)?;
+                if s.construction.is_none() {
+                    return Err(Reject::NoSuchEntity);
+                }
+                let def = s.def;
+                self.pay(player, Product::Unit(def), -1);
+                self.entities.despawn(*site);
+                for id in self.entities.ids() {
+                    let e = self.entities.get_mut(id).unwrap();
+                    if e.order == (Order::Construct { site: *site }) {
+                        e.order = Order::Idle;
+                    }
+                }
+                Ok(())
+            }
             CommandKind::Stop { units } => {
                 for u in self.own_units(player, units, |_| true)? {
                     let e = self.entities.get_mut(u).unwrap();

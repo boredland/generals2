@@ -182,6 +182,11 @@ pub fn lines(sim: &Sim, sel: &Selection, slot: Slot) -> Vec<Line> {
     let (cost, ticks) = match slot {
         Slot::Def(d) => (world.cost_for(me, d).credits, world.build_ticks_for(me, d)),
         Slot::Upgrade(u) => (rules.upgrade(u).cost.credits, rules.upgrade(u).research_ticks.max(1)),
+        Slot::Cancel => {
+            let back = crate::hud::refund(sim, sel).unwrap_or(0);
+            out.push(Line::Info(format!("Removes the foundation and pays back ${back}")));
+            return out;
+        }
     };
     out.push(Line::Info(format!("${cost}  -  {}", seconds(ticks))));
     let focus = sel.0.first().and_then(|&id| world.entity(id));
@@ -233,6 +238,8 @@ pub fn lines(sim: &Sim, sel: &Selection, slot: Slot) -> Vec<Line> {
             names.dedup();
             out.push(Line::Info(format!("Improves {}", names.join(", "))));
         }
+        // Answered above, before the price line.
+        Slot::Cancel => {}
     }
     if world.player(me).credits < cost {
         out.push(Line::Warn(format!("Not enough money: ${} short", cost - world.player(me).credits)));
@@ -240,6 +247,12 @@ pub fn lines(sim: &Sim, sel: &Selection, slot: Slot) -> Vec<Line> {
     let builds = focus.is_some_and(|e| rules.def(e.def).is_constructor());
     if !builds && focus.is_some_and(|e| e.queue.len() >= g2_sim::world::MAX_QUEUE) {
         out.push(Line::Warn(format!("Queue full ({} items)", g2_sim::world::MAX_QUEUE)));
+    }
+    if !builds
+        && let Some(item) = slot.product()
+        && focus.is_some_and(|e| e.queue.iter().any(|p| p.item == item))
+    {
+        out.push(Line::Info("Right-click: cancel one, full refund".into()));
     }
     if !builds && focus.is_some_and(|e| !e.powered) && world.player(me).faction.uses_power() {
         out.push(Line::Warn("Unpowered: half speed".into()));

@@ -40,6 +40,17 @@ pub enum CommandKind {
     CancelTrain {
         producer: EntityId,
     },
+    /// Cancels the last queued `item` of the producer's (a unit or research of that kind) for a
+    /// full refund: a right click on its build-grid cell, as in Generals and OpenRA.
+    CancelItem {
+        producer: EntityId,
+        item: crate::entity::Product,
+    },
+    /// Cancels the foundation `site` before it is finished: it is removed and its price paid
+    /// back in full, and its constructors stop (Zero Hour's `onDozerCancelConstruct`).
+    CancelConstruction {
+        site: EntityId,
+    },
     /// Queue the research of `upgrade` at a building that offers it.
     Research {
         producer: EntityId,

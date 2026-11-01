@@ -63,22 +63,25 @@ pub enum Act {
     ChangeSetup,
     MapPage(i32),
     MapPick(usize),
-    /// A skirmish row's Player cell: an AI steps Easy, Normal, Hard, Onslaught, then the last row
-    /// closes (two players always stay); an Open row adds an AI player.
-    CyclePlayer(usize),
-    /// A skirmish row's Faction cell: the next faction, or general of it, as the LAN page's.
-    CycleSide(usize),
-    /// A skirmish row's Team cell: no team, then teams 1 to 4.
-    CycleTeam(usize),
+    /// A skirmish row's Player cell: the seat's AI level, or `None` to close the last seat
+    /// (two players always stay); on an Open row, adds an AI player at that level.
+    SetPlayer(usize, Option<AiLevel>),
+    /// A skirmish row's Faction cell: a faction, or one of its generals.
+    SetSide(usize, Faction, Option<GeneralId>),
+    /// A skirmish row's Team cell: 0 for no team, else teams 1 to 4.
+    SetTeam(usize, u8),
     /// Opens the map selection over the skirmish page, or closes it keeping the pick (ACCEPT).
     ToggleMapList,
     /// Closes the map selection and restores the map from before it opened (its BACK).
     CancelMapList,
     /// The main menu's ONSLAUGHT: the skirmish page with every AI playing Onslaught.
     OpenOnslaught,
-    CycleCredits,
-    ToggleFog,
-    NextSeed,
+    SetCredits(i64),
+    SetFog(bool),
+    SetSeed(u64),
+    /// Opens a combo cell's list of choices, or closes the open one (`None`). Any other act
+    /// closes it too.
+    Combo(Option<Combo>),
     Pause,
     Resume,
     Surrender,
@@ -96,8 +99,9 @@ pub enum Act {
     ImportAlpha,
     /// The options page, from the main menu or the in-game menu (it returns to either).
     OpenOptions,
-    /// An options cell steps its setting; changes apply at once and ACCEPT saves them.
-    CycleOption(Opt),
+    /// An options cell's choice (its place in `option_choices`); changes apply at once and
+    /// ACCEPT saves them.
+    SetOption(Opt, u8),
     /// DEFAULTS: every option back to its default (not saved until ACCEPT).
     DefaultOptions,
     /// ACCEPT: save the options and go back.
@@ -108,8 +112,8 @@ pub enum Act {
     OpenMissions,
     /// A mission in the campaign list: its briefing shows beside it.
     PickMission(u16),
-    /// The campaign page's Difficulty cell: Easy, Normal, Hard, then Easy again.
-    CycleDifficulty,
+    /// The campaign page's Difficulty cell.
+    SetDifficulty(Difficulty),
     /// START MISSION: plays the picked mission at the difficulty picked.
     StartMission,
     /// The main menu's NETWORK: the LAN lobby, listing games on the local network.
@@ -128,16 +132,32 @@ pub enum Act {
     DirectConnect,
     /// The game options' BACK: leave the game (closing it, for the host), back to the lobby.
     LeaveGame,
-    /// Host: versus or co-op Onslaught.
-    NetMode,
-    /// Host: the next (or previous) map with two starts or more.
-    NetMap(i32),
-    /// The local player's side: the next faction, or general of it, as Zero Hour's list.
-    NetSide,
+    /// Host: versus (`false`) or co-op Onslaught (`true`).
+    NetMode(bool),
+    /// Host: the map picked from the map list (its place in `MapList`); the list closes.
+    NetMap(usize),
+    /// The local player's side: a faction, or one of its generals.
+    NetSide(Faction, Option<GeneralId>),
     /// Joiner: accept the game as it stands, or take the accept back.
     NetAccept,
     /// Host: start the accepted game.
     NetStart,
+}
+
+/// A combo cell whose list of choices is open (`Ui::combo`).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Combo {
+    Player(usize),
+    Side(usize),
+    Team(usize),
+    Credits,
+    Fog,
+    Seed,
+    Option(Opt),
+    Difficulty,
+    /// The lobby's and the game options' own side.
+    NetSide,
+    NetMode,
 }
 
 /// One setting on the options page.
@@ -298,6 +318,8 @@ pub struct Ui {
     pub in_mission: bool,
     /// What the lobby pages edit.
     pub lobby: crate::lobby::Form,
+    /// The combo cell whose list of choices is open, if any.
+    pub combo: Option<Combo>,
 }
 
 impl Default for Ui {
@@ -317,6 +339,7 @@ impl Default for Ui {
             difficulty: g2_sim::mission::Difficulty::Normal,
             in_mission: false,
             lobby: crate::lobby::Form::default(),
+            combo: None,
         }
     }
 }
@@ -460,24 +483,32 @@ fn interact(
     ui: Res<Ui>,
     mut placing: Option<ResMut<crate::input::Placement>>,
     mut aim: Option<ResMut<crate::input::PowerAim>>,
-    buttons: Query<(&Btn, &RelativeCursorPosition)>,
+    buttons: Query<(&Btn, &RelativeCursorPosition, Has<ListRow>)>,
     mut pending: ResMut<Pending>,
 ) {
     if mouse.just_pressed(MouseButton::Left) {
-        for (btn, cur) in &buttons {
-            if cur.cursor_over() {
-                pending.0.push(btn.0);
-            }
+        // An open list lies over other cells: a click on one of its rows picks it alone, and a
+        // click anywhere else only closes it.
+        let listing = ui.combo.is_some();
+        let hit = buttons.iter().filter(|(_, cur, row)| cur.cursor_over() && (*row || !listing)).map(|(b, ..)| b.0);
+        let hit: Vec<Act> = hit.collect();
+        if listing && hit.is_empty() {
+            pending.0.push(Act::Combo(None));
         }
+        pending.0.extend(hit);
     }
     // Esc while typing only ends the typing (`lobby::type_text`).
+    if keys.just_pressed(KeyCode::Escape) && ui.combo.is_some() {
+        pending.0.push(Act::Combo(None));
+        return;
+    }
     if keys.just_pressed(KeyCode::Escape) && ui.lobby.typing.is_none() {
         // Esc closes whatever is open: a placement or an armed power first, then a menu.
         let placed = placing.as_mut().is_some_and(|p| p.0.take().is_some());
         let aimed = aim.as_mut().is_some_and(|a| a.0.take().is_some());
         if !placed && !aimed {
             pending.0.push(match (ui.screen, ui.paused) {
-                (Screen::Setup, _) if ui.map_select.is_some() => Act::CancelMapList,
+                (Screen::Setup | Screen::NetGame, _) if ui.map_select.is_some() => Act::CancelMapList,
                 (Screen::Options, _) => Act::CancelOptions,
                 (Screen::Setup | Screen::Controls | Screen::Generals | Screen::Alpha | Screen::Missions, _) => {
                     Act::BackToMain
@@ -553,6 +584,10 @@ fn apply(world: &mut World) {
 fn apply_one(world: &mut World, act: Act) {
     if world.resource::<Ui>().start_refused.is_some() {
         world.resource_mut::<Ui>().start_refused = None;
+    }
+    // Picking from a list, or doing anything else, closes the list that was open.
+    if world.resource::<Ui>().combo.is_some() && !matches!(act, Act::Combo(_)) {
+        world.resource_mut::<Ui>().combo = None;
     }
     match act {
         Act::QuitGame => {
@@ -679,38 +714,32 @@ fn apply_one(world: &mut World, act: Act) {
                     ui.map_page = i / MAPS_PER_PAGE;
                 }
             }
-            Act::CyclePlayer(i) => {
+            Act::SetPlayer(i, level) => {
                 let starts = map_starts(world, &world.resource::<Ui>().config.map).unwrap_or(MAX_PLAYERS);
                 let mut ui = world.resource_mut::<Ui>();
                 let n = ui.config.slots.len();
-                if i >= n {
-                    if n < starts.min(MAX_PLAYERS) {
-                        ui.config.add_slot();
-                    }
-                } else if i > 0 {
-                    let next = match ui.config.slots[i].ai {
-                        Some(AiLevel::Easy) => Some(AiLevel::Normal),
-                        Some(AiLevel::Normal) => Some(AiLevel::Hard),
-                        Some(AiLevel::Hard) => Some(AiLevel::Onslaught),
-                        _ => None,
-                    };
-                    match next {
-                        Some(level) => ui.config.slots[i].ai = Some(level),
-                        None if i == n - 1 && n > 2 => {
-                            ui.config.slots.pop();
+                match level {
+                    Some(level) if i >= n => {
+                        if n < starts.min(MAX_PLAYERS) {
+                            ui.config.add_slot();
+                            ui.config.slots[n].ai = Some(level);
                         }
-                        None => ui.config.slots[i].ai = Some(AiLevel::Easy),
                     }
+                    Some(level) if i > 0 => ui.config.slots[i].ai = Some(level),
+                    None if i > 1 && i == n - 1 => {
+                        ui.config.slots.pop();
+                    }
+                    _ => {}
                 }
             }
-            Act::CycleSide(i) => {
+            Act::SetSide(i, faction, general) => {
                 if let Some(s) = world.resource_mut::<Ui>().config.slots.get_mut(i) {
-                    (s.faction, s.general) = crate::lobby::next_side(s.faction, s.general);
+                    (s.faction, s.general) = (faction, general);
                 }
             }
-            Act::CycleTeam(i) => {
+            Act::SetTeam(i, team) => {
                 if let Some(s) = world.resource_mut::<Ui>().config.slots.get_mut(i) {
-                    s.team = (s.team + 1) % (MAX_TEAMS + 1);
+                    s.team = team.min(MAX_TEAMS);
                 }
             }
             Act::ToggleMapList => {
@@ -727,22 +756,13 @@ fn apply_one(world: &mut World, act: Act) {
                     ui.config.slots = slots;
                 }
             }
-            Act::CycleCredits => {
+            Act::SetCredits(c) => world.resource_mut::<Ui>().config.credits = c,
+            Act::SetFog(f) => world.resource_mut::<Ui>().config.fog = f,
+            Act::SetSeed(s) => world.resource_mut::<Ui>().config.seed = s,
+            Act::Combo(d) => {
                 let mut ui = world.resource_mut::<Ui>();
-                ui.config.credits = match ui.config.credits {
-                    2_500 => 5_000,
-                    5_000 => 10_000,
-                    10_000 => 20_000,
-                    _ => 2_500,
-                };
-            }
-            Act::ToggleFog => {
-                let mut ui = world.resource_mut::<Ui>();
-                ui.config.fog = !ui.config.fog;
-            }
-            Act::NextSeed => {
-                let mut ui = world.resource_mut::<Ui>();
-                ui.config.seed = ui.config.seed.wrapping_add(1);
+                // A second click on the open cell closes its list.
+                ui.combo = if ui.combo == d { None } else { d };
             }
             // Opens on the general the player last chose in the setup, if any.
             Act::OpenGenerals => {
@@ -798,11 +818,8 @@ fn apply_one(world: &mut World, act: Act) {
                 ui.mission = g2_sim::MissionId(next as u16);
             }
             Act::PickMission(i) => world.resource_mut::<Ui>().mission = g2_sim::MissionId(i),
-            Act::CycleDifficulty => {
-                let mut ui = world.resource_mut::<Ui>();
-                ui.difficulty = g2_sim::mission::Difficulty::ALL[(ui.difficulty as usize + 1) % 3];
-            }
-            Act::CycleOption(opt) => cycle_option(&mut world.resource_mut::<Settings>(), opt),
+            Act::SetDifficulty(d) => world.resource_mut::<Ui>().difficulty = d,
+            Act::SetOption(opt, i) => set_option(&mut world.resource_mut::<Settings>(), opt, i as usize),
             Act::DefaultOptions => world.resource_mut::<Settings>().reset(),
             Act::AcceptOptions | Act::CancelOptions => {
                 let before = world.resource_mut::<Ui>().options_before.take();
@@ -822,15 +839,19 @@ fn apply_one(world: &mut World, act: Act) {
             | Act::JoinGame
             | Act::DirectConnect
             | Act::LeaveGame
-            | Act::NetMode
+            | Act::NetMode(_)
             | Act::NetMap(_)
-            | Act::NetSide
+            | Act::NetSide(..)
             | Act::NetAccept
             | Act::NetStart => {
-                // Every map a game may be hosted on; before the list lands, the built-in one.
+                // Every map a game may be hosted on, in the map list's order (so `NetMap`'s
+                // index is the row picked); before the list lands, the built-in one.
                 let maps: Vec<String> = map_list(world)
                     .map_or_else(|| vec!["Crater Ridge".to_owned()], |m| m.iter().map(|m| m.name.clone()).collect());
                 crate::lobby::apply(world, act, &maps);
+                if let Act::NetMap(_) = act {
+                    world.resource_mut::<Ui>().map_select = None;
+                }
             }
             Act::Start | Act::StartMission | Act::QuitGame => unreachable!("handled above"),
         },
@@ -904,22 +925,25 @@ fn map_starts(world: &World, map: &str) -> Option<usize> {
     map_list(world).and_then(|maps| maps.iter().find(|m| m.name == map).map(|m| m.starts))
 }
 
-pub(crate) fn next_general(faction: Faction, current: Option<GeneralId>) -> Option<GeneralId> {
+/// The skirmish page's starting credits, as Generals' list.
+const CREDITS: [i64; 4] = [2_500, 5_000, 10_000, 20_000];
+
+/// Seeds the Seed cell lists (a match started from the command line may use any other).
+const SEEDS: u64 = 10;
+
+/// A side cell's list, as Zero Hour's faction list: each faction, then its generals; `now` is
+/// lit, and `act` is what picking a side does.
+fn side_choices(now: (Faction, Option<GeneralId>), act: impl Fn(Faction, Option<GeneralId>) -> Act) -> Vec<Choice> {
     let rules = g2_rules::rules();
-    let options: Vec<GeneralId> = rules
-        .generals
-        .iter()
-        .enumerate()
-        .filter(|(_, g)| g.faction == faction)
-        .map(|(i, _)| GeneralId(i as u16))
-        .collect();
-    match current {
-        None => options.first().copied(),
-        Some(g) => {
-            let at = options.iter().position(|&o| o == g).map_or(0, |i| i + 1);
-            options.get(at).copied()
+    let mut out = Vec::new();
+    for f in Faction::ALL {
+        out.push((faction_name(f).to_owned(), act(f, None), now == (f, None)));
+        for (i, g) in rules.generals.iter().enumerate().filter(|(_, g)| g.faction == f) {
+            let id = GeneralId(i as u16);
+            out.push((format!("   {} {}", faction_tag(f), g.name), act(f, Some(id)), now == (f, Some(id))));
         }
     }
+    out
 }
 
 // ---- drawing ----------------------------------------------------------------------------------
@@ -1115,10 +1139,10 @@ fn rebuild(
                         Screen::End => end_screen(c, &kit, &sim, &ui),
                         Screen::Generals => generals(c, &kit, &ui, &profile),
                         Screen::Alpha => alpha(c, &kit, &import.status()),
-                        Screen::Options => options(c, &kit, &settings, ui.paused),
+                        Screen::Options => options(c, &kit, &ui, &settings, ui.paused),
                         Screen::Missions => missions(c, &kit, &ui, &profile, map_image),
                         Screen::Lobby => lobby(c, &kit, &ui, &net),
-                        Screen::NetGame => net_game(c, &kit, &ui, &net, &profile, map_image),
+                        Screen::NetGame => net_game(c, &kit, &ui, &net, &profile, maps, map_image),
                     }
                 });
             side(root);
@@ -1189,10 +1213,31 @@ fn button(c: &mut ChildSpawnerCommands, kit: &Kit, s: &str, act: Act, look: Look
     .with_child(kit.text(s, size, look.ink(false), look == Look::Button));
 }
 
-/// A combo box: its value and the drop arrow; a click steps the value.
-fn cell(c: &mut ChildSpawnerCommands, kit: &Kit, s: &str, act: Act, r: Node) {
+/// One entry of a combo's list: its label, what picking it does, and whether it is the value
+/// now.
+type Choice = (String, Act, bool);
+
+/// A row of an open combo list. While a list is open it takes the click alone (`interact`): a
+/// click anywhere else only closes it, so a list over other cells never presses them too.
+#[derive(Component)]
+struct ListRow;
+
+/// A combo box, as Generals': its value and the drop arrow; a click opens its list of
+/// `choices` under it (over it, near the bottom of the page), the value lit, and a click on a
+/// choice picks it. `at` is the cell's rectangle on the 800x600 canvas.
+#[allow(clippy::too_many_arguments)]
+fn combo(
+    c: &mut ChildSpawnerCommands,
+    kit: &Kit,
+    ui: &Ui,
+    value: &str,
+    which: Combo,
+    choices: Vec<Choice>,
+    (x0, y0, x1, y1): (f32, f32, f32, f32),
+) {
+    let open = ui.combo == Some(which);
     c.spawn((
-        Btn(act),
+        Btn(Act::Combo(Some(which))),
         Look::Cell,
         RelativeCursorPosition::default(),
         Node {
@@ -1200,14 +1245,52 @@ fn cell(c: &mut ChildSpawnerCommands, kit: &Kit, s: &str, act: Act, r: Node) {
             padding: UiRect::horizontal(px(4)),
             align_items: AlignItems::Center,
             justify_content: JustifyContent::SpaceBetween,
-            ..r
+            ..rect(x0, y0, x1, y1)
         },
         BackgroundColor(Look::Cell.fill(false)),
-        BorderColor::all(Look::Cell.edge(false)),
+        BorderColor::all(if open { GOLD } else { Look::Cell.edge(false) }),
     ))
     .with_children(|b| {
-        b.spawn(kit.text(s, 12.0, WHITE, false));
-        b.spawn(kit.text("\u{25bc}", 8.0, WHITE, false));
+        b.spawn(kit.text(value, 12.0, WHITE, false));
+        b.spawn(kit.text(if open { "\u{25b2}" } else { "\u{25bc}" }, 8.0, WHITE, false));
+    });
+    if !open {
+        return;
+    }
+    const ROW: f32 = 17.0;
+    // At least wide enough for the longest choice ("Global Liberation Army", a general with
+    // its faction tag), kept on the canvas.
+    const WIDE: f32 = 170.0;
+    let h = ROW * choices.len() as f32 + 2.0;
+    let top = if y1 + h <= 596.0 { y1 } else { (y0 - h).max(4.0) };
+    let right = (x0 + (x1 - x0).max(WIDE)).min(796.0);
+    let left = (right - (x1 - x0).max(WIDE)).max(4.0);
+    c.spawn((
+        GlobalZIndex(20),
+        Node { border: UiRect::all(px(1)), flex_direction: FlexDirection::Column, ..rect(left, top, right, top + h) },
+        BackgroundColor(Color::srgba_u8(8, 6, 4, 245)),
+        BorderColor::all(GOLD),
+    ))
+    .with_children(|list| {
+        for (label, act, on) in choices {
+            list.spawn((
+                Btn(act),
+                ListRow,
+                Look::Row { on },
+                RelativeCursorPosition::default(),
+                Node {
+                    height: percent(100.0 * ROW / h),
+                    flex_shrink: 0.0,
+                    padding: UiRect::horizontal(px(4)),
+                    align_items: AlignItems::Center,
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(Look::Row { on }.fill(false)),
+                BorderColor::all(Color::NONE),
+            ))
+            .with_child((kit.text(&label, 12.0, WHITE, false), TextLayout::default().with_no_wrap()));
+        }
     });
 }
 
@@ -1336,7 +1419,7 @@ fn controls(c: &mut ChildSpawnerCommands, kit: &Kit) {
         ("Left click, drag; double click", "Select; a double click adds every one of its kind on screen"),
         ("Right click", "Context order: attack, gather, build, move; on the ground with a factory: rally point"),
         ("Ctrl + right click", "Attack-move"),
-        ("Click the build grid", "Build, train, research (hover: what it is); Backspace cancels"),
+        ("Click / right-click the grid", "Build, train, research; right-click cancels one (full refund)"),
         ("Ctrl + 0-9, 0-9", "Make a control group, select it (twice: go there)"),
         ("Shift / Alt + 0-9", "Add the group to the selection / go to it; Ctrl + Shift adds to it"),
         ("Z, X", "Select all units on screen, select more of the selected kinds"),
@@ -1345,7 +1428,7 @@ fn controls(c: &mut ChildSpawnerCommands, kit: &Kit) {
         ("T, R, E", "Deploy or transform; Particle Accelerator; evacuate"),
         ("G, F1-F6", "General's power, faction support powers, perk powers"),
         ("Tab, V", "Next collector; go to the last attack"),
-        ("Space, + / -, Esc, M", "Pause, game speed, menu, mute"),
+        ("Space, + / -, Esc, M", "Pause, speed (or the buttons top left), menu, mute; Backspace cancels the last"),
     ]
     .into_iter()
     .enumerate()
@@ -1376,98 +1459,101 @@ fn pause(c: &mut ChildSpawnerCommands, kit: &Kit) {
     }
 }
 
-/// Steps `opt` to its next value, wrapping.
-fn cycle_option(s: &mut Settings, opt: Opt) {
+/// An options cell's choices in list order, and which of them the settings hold.
+fn option_choices(s: &Settings, opt: Opt) -> (Vec<String>, usize) {
     use crate::settings::{Battlefield, Modifier, PAN_SPEEDS, Pan, Scheme, ZOOM_SPEEDS};
-    fn next<T: Copy + PartialEq>(all: &[T], v: T) -> T {
-        all[(all.iter().position(|&x| x == v).unwrap_or(0) + 1) % all.len()]
+    fn of<T: Copy + PartialEq>(all: &[T], v: T, name: fn(T) -> &'static str) -> (Vec<String>, usize) {
+        (all.iter().map(|&x| name(x).to_owned()).collect(), all.iter().position(|&x| x == v).unwrap_or(0))
     }
-    // A slider steps tick by tick: the next tick above the value, back to the first.
-    let tick = |ticks: &[f32; 7], v: f32| *ticks.iter().find(|&&t| t > v + 1e-4).unwrap_or(&ticks[0]);
+    let on = |b: bool| (vec!["Off".to_owned(), "On".to_owned()], b as usize);
+    // A slider's seven ticks, as "1 of 7" ... "7 of 7".
+    let ticks = |ticks: &[f32; 7], v: f32| {
+        let at = ticks.iter().position(|&t| (t - v).abs() < 1e-3).unwrap_or(0);
+        ((1..=7).map(|i| format!("{i} of 7")).collect(), at)
+    };
     match opt {
-        Opt::Camera => s.camera = next(&Battlefield::ALL, s.camera),
-        Opt::Scheme => s.scheme = next(&[Scheme::Classic, Scheme::Modern], s.scheme),
-        Opt::Pan => s.pan = next(&Pan::ALL, s.pan),
-        Opt::AlternatePan => s.alternate_pan = !s.alternate_pan,
-        Opt::EdgePan => s.edge_pan = !s.edge_pan,
-        Opt::LockMouse => s.lock_mouse = !s.lock_mouse,
-        Opt::PanSpeed => s.pan_speed = tick(&PAN_SPEEDS, s.pan_speed),
-        Opt::ZoomSpeed => s.zoom_speed = tick(&ZOOM_SPEEDS, s.zoom_speed),
-        Opt::ZoomModifier => s.zoom_modifier = next(&Modifier::ALL, s.zoom_modifier),
+        Opt::Camera => of(&Battlefield::ALL, s.camera, |b| match b {
+            Battlefield::Close => "Close",
+            Battlefield::Medium => "Medium",
+            Battlefield::Far => "Far",
+        }),
+        Opt::Scheme => of(&[Scheme::Classic, Scheme::Modern], s.scheme, |m| match m {
+            Scheme::Classic => "Classic",
+            Scheme::Modern => "Modern",
+        }),
+        Opt::Pan => of(&Pan::ALL, s.pan, |p| match p {
+            Pan::Disabled => "Disabled",
+            Pan::Standard => "Standard",
+            Pan::Inverted => "Inverted",
+            Pan::Joystick => "Joystick",
+        }),
+        Opt::AlternatePan => on(s.alternate_pan),
+        Opt::EdgePan => on(s.edge_pan),
+        Opt::LockMouse => on(s.lock_mouse),
+        Opt::PanSpeed => ticks(&PAN_SPEEDS, s.pan_speed),
+        Opt::ZoomSpeed => ticks(&ZOOM_SPEEDS, s.zoom_speed),
+        Opt::ZoomModifier => of(&Modifier::ALL, s.zoom_modifier, |m| match m {
+            Modifier::None => "None",
+            Modifier::Alt => "Alt",
+            Modifier::Ctrl => "Ctrl",
+            Modifier::Meta => "Meta",
+            Modifier::Shift => "Shift",
+        }),
+    }
+}
+
+/// Sets option `opt` to its `i`th choice (`option_choices`' order).
+fn set_option(s: &mut Settings, opt: Opt, i: usize) {
+    use crate::settings::{Battlefield, Modifier, PAN_SPEEDS, Pan, Scheme, ZOOM_SPEEDS};
+    fn pick<T: Copy>(all: &[T], i: usize, v: &mut T) {
+        if let Some(&x) = all.get(i) {
+            *v = x;
+        }
+    }
+    match opt {
+        Opt::Camera => pick(&Battlefield::ALL, i, &mut s.camera),
+        Opt::Scheme => pick(&[Scheme::Classic, Scheme::Modern], i, &mut s.scheme),
+        Opt::Pan => pick(&Pan::ALL, i, &mut s.pan),
+        Opt::AlternatePan => s.alternate_pan = i == 1,
+        Opt::EdgePan => s.edge_pan = i == 1,
+        Opt::LockMouse => s.lock_mouse = i == 1,
+        Opt::PanSpeed => pick(&PAN_SPEEDS, i, &mut s.pan_speed),
+        Opt::ZoomSpeed => pick(&ZOOM_SPEEDS, i, &mut s.zoom_speed),
+        Opt::ZoomModifier => pick(&Modifier::ALL, i, &mut s.zoom_modifier),
     }
 }
 
 /// The options page, in the frame of Generals' `OptionsMenu.wnd` (its parent window at
 /// 120,12-661,597, the gold title, the bordered Control Options panel and DEFAULTS, ACCEPT and
-/// BACK along the bottom), with OpenRA's Display camera and Input settings in it: a click steps
-/// a cell, OpenRA's dropdowns and sliders as Generals' combo boxes. Below the cells, what the
-/// mouse does under the chosen scheme, in OpenRA's words.
-fn options(c: &mut ChildSpawnerCommands, kit: &Kit, s: &Settings, in_match: bool) {
-    use crate::settings::{Battlefield, Modifier, PAN_SPEEDS, Pan, Scheme, ZOOM_SPEEDS};
+/// BACK along the bottom), with OpenRA's Display camera and Input settings in it: a click opens
+/// a cell's list, OpenRA's dropdowns and sliders as Generals' combo boxes. Below the cells,
+/// what the mouse does under the chosen scheme, in OpenRA's words.
+fn options(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, s: &Settings, in_match: bool) {
+    use crate::settings::{Modifier, Pan, Scheme};
     frame(c, rect(120.0, 12.0, 661.0, 597.0), if in_match { DIALOG } else { PANEL }, GOLD);
     c.spawn(Node { align_items: AlignItems::Center, ..rect(152.0, 21.0, 640.0, 54.0) })
         .with_child(kit.text("OPTIONS", 26.0, GOLD, true));
     c.spawn((rect(140.0, 56.0, 641.0, 57.0), BackgroundColor(GOLD)));
-    let on = |b: bool| if b { "On" } else { "Off" };
-    let level = |ticks: &[f32; 7], v: f32| {
-        let i = ticks.iter().position(|&t| (t - v).abs() < 1e-3).map_or(String::from("?"), |i| (i + 1).to_string());
-        format!("{i} of 7")
-    };
-    let rows: [(&str, String, Opt); 9] = [
-        (
-            "Battlefield Camera",
-            match s.camera {
-                Battlefield::Close => "Close",
-                Battlefield::Medium => "Medium",
-                Battlefield::Far => "Far",
-            }
-            .into(),
-            Opt::Camera,
-        ),
-        (
-            "Control Scheme",
-            match s.scheme {
-                Scheme::Classic => "Classic",
-                Scheme::Modern => "Modern",
-            }
-            .into(),
-            Opt::Scheme,
-        ),
-        (
-            "Pan Behaviour",
-            match s.pan {
-                Pan::Disabled => "Disabled",
-                Pan::Standard => "Standard",
-                Pan::Inverted => "Inverted",
-                Pan::Joystick => "Joystick",
-            }
-            .into(),
-            Opt::Pan,
-        ),
-        ("Alternate Mouse Panning", on(s.alternate_pan).into(), Opt::AlternatePan),
-        ("Screen Edge Panning", on(s.edge_pan).into(), Opt::EdgePan),
-        ("Lock Mouse to Window", on(s.lock_mouse).into(), Opt::LockMouse),
-        ("Pan Speed", level(&PAN_SPEEDS, s.pan_speed), Opt::PanSpeed),
-        ("Zoom Speed", level(&ZOOM_SPEEDS, s.zoom_speed), Opt::ZoomSpeed),
-        (
-            "Zoom Modifier",
-            match s.zoom_modifier {
-                Modifier::None => "None",
-                Modifier::Alt => "Alt",
-                Modifier::Ctrl => "Ctrl",
-                Modifier::Meta => "Meta",
-                Modifier::Shift => "Shift",
-            }
-            .into(),
-            Opt::ZoomModifier,
-        ),
+    let rows: [(&str, Opt); 9] = [
+        ("Battlefield Camera", Opt::Camera),
+        ("Control Scheme", Opt::Scheme),
+        ("Pan Behaviour", Opt::Pan),
+        ("Alternate Mouse Panning", Opt::AlternatePan),
+        ("Screen Edge Panning", Opt::EdgePan),
+        ("Lock Mouse to Window", Opt::LockMouse),
+        ("Pan Speed", Opt::PanSpeed),
+        ("Zoom Speed", Opt::ZoomSpeed),
+        ("Zoom Modifier", Opt::ZoomModifier),
     ];
     frame(c, rect(151.0, 69.0, 635.0, 376.0), BOX, RUST);
     heading(c, kit, "Control Options", rect(161.0, 72.0, 600.0, 96.0));
-    for (k, (name, value, opt)) in rows.iter().enumerate() {
+    for (k, &(name, opt)) in rows.iter().enumerate() {
         let y = 100.0 + 30.0 * k as f32;
         label(c, kit, name, rect(168.0, y, 400.0, y + 24.0), 14.0, WHITE, false);
-        cell(c, kit, value, Act::CycleOption(*opt), rect(420.0, y + 1.0, 615.0, y + 23.0));
+        let (names, at) = option_choices(s, opt);
+        let value = names[at].clone();
+        let choices = names.into_iter().enumerate().map(|(i, n)| (n, Act::SetOption(opt, i as u8), i == at)).collect();
+        combo(c, kit, ui, &value, Combo::Option(opt), choices, (420.0, y + 1.0, 615.0, y + 23.0));
     }
     // OpenRA's control scheme description, for the scheme, pan button and zoom modifier set.
     let (select, order) = match s.scheme {
@@ -1518,7 +1604,7 @@ fn setup(
     preview: Option<Handle<Image>>,
 ) {
     if ui.map_select.is_some() {
-        map_select(c, kit, ui, maps, preview);
+        map_select(c, kit, ui, maps, preview, &ui.config.map, Act::MapPick);
         return;
     }
     let rules = g2_rules::rules();
@@ -1531,20 +1617,42 @@ fn setup(
     }
     let starts = maps.and_then(|m| m.iter().find(|m| m.name == ui.config.map)).map_or(2, |m| m.starts);
     let colours = crate::models::team_slots(&ui.config.slots.iter().map(|s| s.faction).collect::<Vec<_>>());
+    let n = ui.config.slots.len();
     for (i, y) in (0..MAX_PLAYERS).map(|i| (i, 111.0 + 24.0 * i as f32)) {
         let at = |x0: f32, x1: f32| rect(x0, y + 1.0, x1, y + 23.0);
+        let span = |x0: f32, x1: f32| (x0, y + 1.0, x1, y + 23.0);
+        // An AI seat's levels; the last seat beyond two may also be closed.
+        let levels = |now: Option<AiLevel>, closable: bool| {
+            let mut v: Vec<Choice> = [AiLevel::Easy, AiLevel::Normal, AiLevel::Hard, AiLevel::Onslaught]
+                .into_iter()
+                .map(|l| (ai_name(l).to_owned(), Act::SetPlayer(i, Some(l)), now == Some(l)))
+                .collect();
+            if closable {
+                v.push(("Closed".to_owned(), Act::SetPlayer(i, None), false));
+            }
+            v
+        };
         match ui.config.slots.get(i).zip(colours.get(i)) {
             Some((slot, &colour)) => {
                 match slot.ai {
                     None => fixed(c, kit, "Player", at(72.0, 216.0), WHITE),
-                    Some(level) => cell(c, kit, ai_name(level), Act::CyclePlayer(i), at(72.0, 216.0)),
+                    Some(level) => {
+                        let choices = levels(Some(level), i > 1 && i == n - 1);
+                        combo(c, kit, ui, ai_name(level), Combo::Player(i), choices, span(72.0, 216.0));
+                    }
                 }
                 frame(c, at(224.0, 308.0), Look::Cell.fill(false), RUST.with_alpha(0.6));
                 c.spawn((rect(229.0, y + 6.0, 303.0, y + 18.0), BackgroundColor(crate::models::TEAM_PALETTE[colour])));
-                cell(c, kit, &side_name(slot.faction, slot.general, true), Act::CycleSide(i), at(316.0, 424.0));
-                cell(c, kit, &team_name(slot.team), Act::CycleTeam(i), at(432.0, 508.0));
+                let sides = side_choices((slot.faction, slot.general), |f, g| Act::SetSide(i, f, g));
+                let side = side_name(slot.faction, slot.general, true);
+                combo(c, kit, ui, &side, Combo::Side(i), sides, span(316.0, 424.0));
+                let teams = (0..=MAX_TEAMS).map(|t| (team_name(t), Act::SetTeam(i, t), t == slot.team)).collect();
+                combo(c, kit, ui, &team_name(slot.team), Combo::Team(i), teams, span(432.0, 508.0));
             }
-            None if i < starts => cell(c, kit, "Open", Act::CyclePlayer(i), at(72.0, 216.0)),
+            None if i == n && i < starts => {
+                combo(c, kit, ui, "Open", Combo::Player(i), levels(None, false), span(72.0, 216.0))
+            }
+            None if i < starts => fixed(c, kit, "Open", at(72.0, 216.0), INK_OFF),
             None => fixed(c, kit, "Closed", at(72.0, 216.0), INK_OFF),
         }
     }
@@ -1568,9 +1676,14 @@ fn setup(
     for (s, x0, x1) in [("Starting Cash", 72.0, 216.0), ("Fog of War", 224.0, 372.0), ("Seed", 380.0, 520.0)] {
         heading(c, kit, s, rect(x0, 312.0, x1, 336.0));
     }
-    cell(c, kit, &format!("${}", thousands(ui.config.credits)), Act::CycleCredits, rect(72.0, 337.0, 216.0, 359.0));
-    cell(c, kit, if ui.config.fog { "On" } else { "Off" }, Act::ToggleFog, rect(224.0, 337.0, 372.0, 359.0));
-    cell(c, kit, &ui.config.seed.to_string(), Act::NextSeed, rect(380.0, 337.0, 520.0, 359.0));
+    let cash = |c: i64| format!("${}", thousands(c));
+    let credits = CREDITS.iter().map(|&k| (cash(k), Act::SetCredits(k), k == ui.config.credits)).collect();
+    combo(c, kit, ui, &cash(ui.config.credits), Combo::Credits, credits, (72.0, 337.0, 216.0, 359.0));
+    let on = |b: bool| if b { "On" } else { "Off" }.to_owned();
+    let fog = [true, false].map(|f| (on(f), Act::SetFog(f), f == ui.config.fog)).into();
+    combo(c, kit, ui, &on(ui.config.fog), Combo::Fog, fog, (224.0, 337.0, 372.0, 359.0));
+    let seeds = (1..=SEEDS).map(|s| (s.to_string(), Act::SetSeed(s), s == ui.config.seed)).collect();
+    combo(c, kit, ui, &ui.config.seed.to_string(), Combo::Seed, seeds, (380.0, 337.0, 520.0, 359.0));
     // The career box: the general the player brings.
     frame(c, rect(58.0, 380.0, 291.0, 493.0), BOX, RUST);
     let general = ui.config.slots[0].general;
@@ -1619,13 +1732,16 @@ fn setup(
 }
 
 /// Generals' map selection (`SkirmishMapSelectMenu.wnd`): the list with its red scroll bar,
-/// the picked map's preview beside it, ACCEPT and BACK.
+/// the picked map's preview beside it, ACCEPT and BACK. `current` is lit; a row does `pick`
+/// (the skirmish page keeps the list open on a pick, the network host's closes it).
 fn map_select(
     c: &mut ChildSpawnerCommands,
     kit: &Kit,
     ui: &Ui,
     maps: Option<&[g2_maps::SkirmishMap]>,
     preview: Option<Handle<Image>>,
+    current: &str,
+    pick: fn(usize) -> Act,
 ) {
     heading(c, kit, "Select a map", rect(221.0, 89.0, 726.0, 112.0));
     frame(c, rect(223.0, 111.0, 726.0, 303.0), DIALOG, GOLD);
@@ -1641,15 +1757,7 @@ fn map_select(
     for (k, (i, m)) in maps.iter().enumerate().skip(page * MAPS_PER_PAGE).take(MAPS_PER_PAGE).enumerate() {
         let y = 146.0 + 12.4 * k as f32;
         let row = format!("{} ({})", map_title(&m.name), m.starts);
-        button(
-            c,
-            kit,
-            &row,
-            Act::MapPick(i),
-            Look::Row { on: m.name == ui.config.map },
-            rect(232.0, y, 572.0, y + 12.4),
-            11.0,
-        );
+        button(c, kit, &row, pick(i), Look::Row { on: m.name == current }, rect(232.0, y, 572.0, y + 12.4), 11.0);
     }
     // The scroll bar pages: Generals' red track between two arrows, the thumb where the page is.
     c.spawn((rect(576.0, 156.0, 588.0, 285.0), BackgroundColor(Color::srgb_u8(170, 20, 10))));
@@ -1778,7 +1886,9 @@ fn lobby(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, net: &crate::lobby::N
     label(c, kit, "Host port:", rect(62.0, 404.0, 162.0, 428.0), 13.0, GOLD, false);
     entry(c, kit, ui, Entry::Port, rect(166.0, 405.0, 246.0, 428.0));
     label(c, kit, "Side:", rect(262.0, 404.0, 312.0, 428.0), 13.0, GOLD, false);
-    cell(c, kit, &side_name(ui.lobby.faction, ui.lobby.general, false), Act::NetSide, rect(316.0, 405.0, 516.0, 428.0));
+    let sides = side_choices((ui.lobby.faction, ui.lobby.general), Act::NetSide);
+    let side = side_name(ui.lobby.faction, ui.lobby.general, false);
+    combo(c, kit, ui, &side, Combo::NetSide, sides, (316.0, 405.0, 516.0, 428.0));
     label(c, kit, "Direct connect to:", rect(62.0, 432.0, 212.0, 456.0), 13.0, GOLD, false);
     entry(c, kit, ui, Entry::Address, rect(216.0, 433.0, 516.0, 456.0));
     button(c, kit, "HOST", Act::HostGame, Look::Button, rect(54.0, 507.0, 225.0, 543.0), 16.0);
@@ -1789,16 +1899,24 @@ fn lobby(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, net: &crate::lobby::N
 
 /// The LAN game options, as Generals' `LanGameOptionsMenu.wnd`: the accept marks and the
 /// player, colour, faction and team columns, the map preview with its name and the host's
-/// map buttons, the chat window (here the mode and what happened) and START GAME (the host;
-/// the joiner's is ACCEPT) and BACK.
+/// SELECT MAP (the map list over the page, as the skirmish page's), the chat window (here the
+/// mode and what happened) and START GAME (the host; the joiner's is ACCEPT) and BACK.
+#[allow(clippy::too_many_arguments)]
 fn net_game(
     c: &mut ChildSpawnerCommands,
     kit: &Kit,
     ui: &Ui,
     net: &crate::lobby::Net,
     profile: &Profile,
+    maps: Option<&[g2_maps::SkirmishMap]>,
     preview: Option<Handle<Image>>,
 ) {
+    if ui.map_select.is_some()
+        && let Some((setup, _, true)) = net.game()
+    {
+        map_select(c, kit, ui, maps, preview, &setup.map, Act::NetMap);
+        return;
+    }
     frame(c, rect(42.0, 41.0, 758.0, 558.0), PANEL, GOLD);
     c.spawn(Node { align_items: AlignItems::Center, ..rect(48.0, 46.0, 384.0, 86.0) }).with_child(kit.text(
         "GAME OPTIONS",
@@ -1834,7 +1952,8 @@ fn net_game(
         c.spawn((rect(236.0, y + 6.0, 310.0, y + 18.0), BackgroundColor(crate::models::TEAM_PALETTE[colours[i]])));
         let side = side_name(row.faction, row.general, true);
         if row.own {
-            cell(c, kit, &side, Act::NetSide, at(323.0, 431.0));
+            let sides = side_choices((row.faction, row.general), Act::NetSide);
+            combo(c, kit, ui, &side, Combo::NetSide, sides, (323.0, y, 431.0, y + 24.0));
         } else {
             fixed(c, kit, &side, at(323.0, 431.0), WHITE);
         }
@@ -1848,14 +1967,16 @@ fn net_game(
     }
     label(c, kit, &map_title(&setup.map), rect(539.0, 259.0, 723.0, 287.0), 12.0, WHITE, true);
     if host {
-        button(c, kit, "\u{25c0}", Act::NetMap(-1), Look::Button, rect(546.0, 285.0, 576.0, 311.0), 12.0);
-        button(c, kit, "SELECT MAP", Act::NetMap(1), Look::Button, rect(580.0, 285.0, 714.0, 311.0), 13.0);
+        button(c, kit, "SELECT MAP", Act::ToggleMapList, Look::Button, rect(546.0, 285.0, 714.0, 311.0), 13.0);
     }
     // The mode where the skirmish page has its match options: the host changes it.
     heading(c, kit, "Mode", rect(79.0, 200.0, 223.0, 224.0));
     let mode = if coop { "Co-op Onslaught" } else { "Versus" };
     if host {
-        cell(c, kit, mode, Act::NetMode, rect(79.0, 225.0, 315.0, 247.0));
+        let modes = [(false, "Versus"), (true, "Co-op Onslaught")]
+            .map(|(m, s)| (s.to_owned(), Act::NetMode(m), m == coop))
+            .into();
+        combo(c, kit, ui, mode, Combo::NetMode, modes, (79.0, 225.0, 315.0, 247.0));
     } else {
         fixed(c, kit, mode, rect(79.0, 225.0, 315.0, 247.0), WHITE);
     }
@@ -2204,7 +2325,8 @@ fn missions(c: &mut ChildSpawnerCommands, kit: &Kit, ui: &Ui, profile: &Profile,
     );
     // Generals' skirmish page sets its options with cells; so does the campaign its difficulty.
     label(c, kit, "Difficulty", rect(48.0, 430.0, 195.0, 450.0), 12.0, GOLD, false);
-    cell(c, kit, ui.difficulty.name(), Act::CycleDifficulty, rect(52.0, 452.0, 190.0, 474.0));
+    let levels = Difficulty::ALL.map(|d| (d.name().to_owned(), Act::SetDifficulty(d), d == ui.difficulty)).into();
+    combo(c, kit, ui, ui.difficulty.name(), Combo::Difficulty, levels, (52.0, 452.0, 190.0, 474.0));
     if profile.unlocked(rules, ui.mission.0 as usize) {
         button(c, kit, "START MISSION", Act::StartMission, Look::Button, rect(382.0, 505.0, 554.0, 541.0), 16.0);
     } else {
@@ -2358,15 +2480,16 @@ mod tests {
         let old_scene = app.world_mut().spawn(MatchEntity).id();
         act(&mut app, Act::OpenSetup);
         assert_eq!(screen(&app), Screen::Setup);
-        act(&mut app, Act::CycleSide(1));
-        act(&mut app, Act::CycleCredits);
+        let first_gla =
+            g2_rules::rules().generals.iter().position(|g| g.faction == Faction::Gla).map(|i| GeneralId(i as u16));
+        act(&mut app, Act::SetSide(1, Faction::Gla, first_gla));
+        act(&mut app, Act::SetCredits(10_000));
         act(&mut app, Act::Start);
         assert_eq!(screen(&app), Screen::Match);
         let w = app.world();
         assert!(w.get_entity(old_scene).is_err(), "the old scene is gone");
         assert!(w.get_entity(window).is_ok(), "the window survives a swap");
         let sim = w.resource::<Sim>();
-        let first_gla = next_general(Faction::Gla, None);
         assert_eq!((sim.world.players()[1].faction, sim.world.players()[1].general), (Faction::Gla, first_gla));
         assert_eq!(sim.world.player(PlayerId(0)).credits, 10_000, "credits from the setup screen");
         assert_eq!(sim.world.tick(), 0, "a fresh world");
@@ -2409,46 +2532,48 @@ mod tests {
     }
 
     /// Setup edits respect the map: seats stay within its starts and at least two, the
-    /// player's own row has no AI level, an AI steps Easy, Normal, Hard, Onslaught and back, a
-    /// general only fits its own faction, and a Team cell steps no team, 1 to 4, and back.
+    /// player's own row has no AI level, an AI takes the level picked, only the last seat
+    /// beyond two can be closed, and a side and team are taken as picked.
     #[test]
     fn setup_edits_stay_valid() {
         let (mut app, _) = app();
         let slots = |app: &App| app.world().resource::<Ui>().config.slots.clone();
         act(&mut app, Act::OpenSetup);
-        act(&mut app, Act::CyclePlayer(2));
+        act(&mut app, Act::SetPlayer(2, Some(AiLevel::Easy)));
         assert_eq!(slots(&app).len(), 2, "Crater Ridge has two starts");
-        act(&mut app, Act::CyclePlayer(0));
+        act(&mut app, Act::SetPlayer(0, Some(AiLevel::Hard)));
         assert_eq!(slots(&app)[0].ai, None, "the human has no level");
-        let levels: Vec<_> = (0..5)
-            .map(|_| {
-                act(&mut app, Act::CyclePlayer(1));
-                slots(&app)[1].ai
-            })
-            .collect();
-        let (easy, normal, hard, onslaught) =
-            (Some(AiLevel::Easy), Some(AiLevel::Normal), Some(AiLevel::Hard), Some(AiLevel::Onslaught));
-        assert_eq!(levels, [hard, onslaught, easy, normal, hard], "two players stay: Onslaught wraps to Easy");
-        // The Faction cell steps through each faction and then its generals, as the LAN page's.
-        let mut generals = Vec::new();
-        loop {
-            act(&mut app, Act::CycleSide(0));
-            match slots(&app)[0].clone() {
-                Slot { faction: Faction::Eu, general: Some(g), .. } => generals.push(g),
-                s => {
-                    assert_eq!((s.faction, s.general), (Faction::Apa, None), "EU's generals, then APA");
-                    break;
-                }
-            }
+        for level in [AiLevel::Easy, AiLevel::Hard, AiLevel::Onslaught, AiLevel::Normal] {
+            act(&mut app, Act::SetPlayer(1, Some(level)));
+            assert_eq!(slots(&app)[1].ai, Some(level));
         }
-        assert!(!generals.is_empty() && generals.iter().all(|&g| g2_rules::rules().general(g).faction == Faction::Eu));
-        let teams: Vec<u8> = (0..5)
-            .map(|_| {
-                act(&mut app, Act::CycleTeam(1));
-                slots(&app)[1].team
-            })
-            .collect();
-        assert_eq!(teams, [1, 2, 3, 4, 0], "the Team cell steps 1-4 and back to none");
+        act(&mut app, Act::SetPlayer(1, None));
+        assert_eq!(slots(&app).len(), 2, "two players stay");
+        let bulldog = GeneralId(0);
+        act(&mut app, Act::SetSide(0, Faction::Eu, Some(bulldog)));
+        assert_eq!((slots(&app)[0].faction, slots(&app)[0].general), (Faction::Eu, Some(bulldog)));
+        act(&mut app, Act::SetTeam(1, 3));
+        assert_eq!(slots(&app)[1].team, 3);
+        act(&mut app, Act::SetTeam(1, 9));
+        assert_eq!(slots(&app)[1].team, MAX_TEAMS, "no team beyond the fourth");
+    }
+
+    /// A side cell's list holds each faction and then only that faction's generals, the
+    /// current side lit, as Zero Hour's list.
+    #[test]
+    fn the_side_list_groups_generals_under_their_faction() {
+        let rules = g2_rules::rules();
+        let list = side_choices((Faction::Apa, None), |f, g| Act::SetSide(0, f, g));
+        let mut faction = None;
+        for (label, act, on) in &list {
+            let Act::SetSide(_, f, g) = *act else { panic!("{label}: {act:?}") };
+            match g {
+                None => faction = Some(f),
+                Some(g) => assert_eq!((Some(rules.general(g).faction), Some(f)), (faction, faction), "{label}"),
+            }
+            assert_eq!(*on, (f, g) == (Faction::Apa, None), "{label}");
+        }
+        assert_eq!(list.len(), Faction::ALL.len() + rules.generals.len());
     }
 
     /// A many-start map takes more players through its Open seats, the last one closes again
@@ -2465,7 +2590,7 @@ mod tests {
         act(&mut app, Act::MapPick(i));
         act(&mut app, Act::ToggleMapList);
         for seat in 2..6 {
-            act(&mut app, Act::CyclePlayer(seat));
+            act(&mut app, Act::SetPlayer(seat, Some(AiLevel::Normal)));
         }
         assert_eq!(config(&app).slots.len(), 4, "four starts, four seats");
         act(&mut app, Act::ToggleMapList);
@@ -2473,11 +2598,11 @@ mod tests {
         assert_eq!(config(&app).slots.len(), 2, "a smaller pick drops the extra seats");
         act(&mut app, Act::CancelMapList);
         assert_eq!((config(&app).map, config(&app).slots.len()), ("gen:Tournament Tundra".to_owned(), 4));
-        // A new seat starts at Normal: Hard, Onslaught, then closed.
-        for _ in 0..3 {
-            act(&mut app, Act::CyclePlayer(3));
-        }
-        assert_eq!(config(&app).slots.len(), 3, "the last seat closes after Onslaught");
+        // The last seat closes from its list; a seat in the middle can't.
+        act(&mut app, Act::SetPlayer(2, None));
+        assert_eq!(config(&app).slots.len(), 4, "only the last seat closes");
+        act(&mut app, Act::SetPlayer(3, None));
+        assert_eq!(config(&app).slots.len(), 3, "the last seat closed");
         act(&mut app, Act::Start);
         assert_eq!(app.world().resource::<Sim>().world.players().len(), 3);
     }
@@ -2493,17 +2618,17 @@ mod tests {
         act(&mut app, Act::ToggleMapList);
         act(&mut app, Act::MapPick(i));
         act(&mut app, Act::ToggleMapList);
-        act(&mut app, Act::CyclePlayer(2));
-        act(&mut app, Act::CyclePlayer(3));
+        act(&mut app, Act::SetPlayer(2, Some(AiLevel::Normal)));
+        act(&mut app, Act::SetPlayer(3, Some(AiLevel::Normal)));
         for seat in 0..4 {
-            act(&mut app, Act::CycleTeam(seat));
+            act(&mut app, Act::SetTeam(seat, 1));
         }
         act(&mut app, Act::Start);
         assert_eq!(screen(&app), Screen::Setup, "four allies have no one to fight");
         assert!(app.world().resource::<Ui>().start_refused.is_some(), "and the page says why");
         assert_eq!(app.world().resource::<Sim>().world.players().len(), 2, "the old world stays");
         for seat in [2, 3] {
-            act(&mut app, Act::CycleTeam(seat));
+            act(&mut app, Act::SetTeam(seat, 2));
         }
         assert!(app.world().resource::<Ui>().start_refused.is_none(), "the next action clears it");
         act(&mut app, Act::Start);
@@ -2609,8 +2734,8 @@ mod tests {
             profile.slot(BULLDOG, BD_PROTECTOR_I).unwrap();
         }
         let xp = app.world().resource::<Profile>().progress(BULLDOG).xp;
-        act(&mut app, Act::CycleSide(0));
-        act(&mut app, Act::CycleSide(1));
+        act(&mut app, Act::SetSide(0, Faction::Eu, Some(BULLDOG)));
+        act(&mut app, Act::SetSide(1, Faction::Gla, Some(JUNKYARD)));
         act(&mut app, Act::Start);
         let w = &app.world().resource::<Sim>().world;
         assert_eq!(w.player(PlayerId(0)).perks, vec![BD_PROTECTOR_I]);
@@ -2687,8 +2812,16 @@ mod tests {
         assert_eq!((lobby(&apps[0]).name.as_str(), lobby(&apps[0]).port), ("Host", port.to_string()), "digits only");
         act(&mut apps[0], Act::HostGame);
         assert_eq!(screen(&apps[0]), Screen::NetGame, "{:?}", lobby(&apps[0]).note);
-        act(&mut apps[0], Act::NetMode);
+        act(&mut apps[0], Act::NetMode(true));
         assert!(lobby(&apps[0]).coop);
+        // SELECT MAP opens the map list over the page; a pick offers that map and closes it.
+        act(&mut apps[0], Act::ToggleMapList);
+        assert!(apps[0].world().resource::<Ui>().map_select.is_some(), "the map list is open");
+        let maps = g2_maps::skirmish_maps(&g2_maps::vendored_root());
+        let pick = maps.iter().position(|m| m.name == "zh:Tournament Desert").expect("listed");
+        act(&mut apps[0], Act::NetMap(pick));
+        assert!(apps[0].world().resource::<Ui>().map_select.is_none(), "a pick closes it");
+        assert_eq!(lobby(&apps[0]).map, "zh:Tournament Desert", "and offers that map");
         // The joiner: no address yet is refused; then typed in, connect.
         act(&mut apps[1], Act::DirectConnect);
         assert_eq!((screen(&apps[1]), lobby(&apps[1]).note.is_some()), (Screen::Lobby, true));
@@ -2703,7 +2836,7 @@ mod tests {
         both_until(&mut apps, "seated", |a| {
             joined(a) && a[1].world().resource::<crate::lobby::Net>().game().is_some_and(|g| g.0.players.len() == 3)
         });
-        act(&mut apps[1], Act::NetSide);
+        act(&mut apps[1], Act::NetSide(Faction::Apa, None));
         act(&mut apps[1], Act::NetAccept);
         both_until(&mut apps, "accepted", |a| match a[0].world().resource::<crate::lobby::Net>() {
             crate::lobby::Net::Hosting(h) => h.guest_ready(),
@@ -2733,7 +2866,7 @@ mod tests {
         app.world_mut().resource_mut::<Settings>().path = Some(path.clone());
         act(&mut app, Act::OpenOptions);
         assert_eq!(screen(&app), Screen::Options);
-        act(&mut app, Act::CycleOption(Opt::Camera));
+        act(&mut app, Act::SetOption(Opt::Camera, 1));
         assert_eq!(app.world().resource::<Settings>().camera, Battlefield::Medium, "applies at once");
         act(&mut app, Act::CancelOptions);
         assert_eq!((screen(&app), app.world().resource::<Settings>().camera), (Screen::Main, Battlefield::Close));
@@ -2742,8 +2875,7 @@ mod tests {
         act(&mut app, Act::Start);
         act(&mut app, Act::Pause);
         act(&mut app, Act::OpenOptions);
-        act(&mut app, Act::CycleOption(Opt::Camera));
-        act(&mut app, Act::CycleOption(Opt::Camera));
+        act(&mut app, Act::SetOption(Opt::Camera, 2));
         act(&mut app, Act::AcceptOptions);
         let ui = app.world().resource::<Ui>();
         assert_eq!((ui.screen, ui.paused), (Screen::Match, true), "back to the in-game menu");
@@ -2765,7 +2897,7 @@ mod tests {
         assert_eq!(screen(&app), Screen::Missions, "the second mission is locked");
         act(&mut app, Act::PickMission(0));
         assert_eq!(app.world().resource::<Ui>().difficulty, Difficulty::Normal);
-        act(&mut app, Act::CycleDifficulty);
+        act(&mut app, Act::SetDifficulty(Difficulty::Hard));
         assert_eq!(app.world().resource::<Ui>().difficulty, Difficulty::Hard);
         act(&mut app, Act::StartMission);
         assert_eq!(screen(&app), Screen::Match);
@@ -2809,5 +2941,122 @@ mod tests {
         act(&mut app, Act::Start);
         assert!(app.world().resource::<Sim>().world.mission().is_none());
         assert!(!app.world().resource::<Ui>().in_mission);
+    }
+
+    /// The acts a click queued, taken before `apply` so the page stays as it was.
+    #[derive(Resource, Default)]
+    struct Clicked(Vec<Act>);
+
+    fn record(mut pending: ResMut<Pending>, mut got: ResMut<Clicked>) {
+        got.0.append(&mut pending.0);
+    }
+
+    /// The menu app laid out for real in a 1280x720 window: `bevy_ui`'s layout and focus
+    /// systems decide what is under the cursor, as in the game.
+    fn laid_out() -> App {
+        let (mut app, _) = app();
+        app.add_plugins((
+            bevy::transform::TransformPlugin,
+            bevy::asset::AssetPlugin::default(),
+            bevy::window::WindowPlugin {
+                primary_window: Some(Window { resolution: (1280, 720).into(), ..default() }),
+                exit_condition: bevy::window::ExitCondition::DontExit,
+                close_when_requested: false,
+                ..default()
+            },
+            bevy::image::ImagePlugin::default(),
+            bevy::camera::CameraPlugin,
+            bevy::text::TextPlugin,
+            bevy::ui::UiPlugin,
+        ))
+        .add_plugins((
+            bevy::input_focus::InputFocusPlugin,
+            bevy::a11y::AccessibilityPlugin,
+            bevy::mesh::MeshPlugin,
+            bevy::image::TextureAtlasPlugin,
+        ))
+        .init_resource::<bevy::input::touch::Touches>()
+        .init_resource::<Clicked>()
+        .add_systems(Update, record.after(interact).before(apply));
+        // No renderer writes the window's size into the camera here: a viewport the size of the
+        // window stands in for it.
+        let viewport = bevy::camera::Viewport { physical_size: UVec2::new(1280, 720), ..default() };
+        app.world_mut().spawn((Camera2d, Camera { viewport: Some(viewport), ..default() }));
+        app.update();
+        app
+    }
+
+    /// Every clickable node on the page now: its act, centre and whether it is a list row.
+    fn controls(app: &mut App) -> Vec<(Act, Vec2, bool)> {
+        let w = app.world_mut();
+        w.query::<(&Btn, &bevy::ui::UiGlobalTransform, Has<ListRow>)>()
+            .iter(w)
+            .map(|(b, t, row)| (b.0, t.translation, row))
+            .collect()
+    }
+
+    /// A left click at `at` (physical pixels): the acts it queued.
+    fn click(app: &mut App, at: Vec2) -> Vec<Act> {
+        let w = app.world_mut();
+        let mut win = w.query_filtered::<&mut Window, With<bevy::window::PrimaryWindow>>().single_mut(w).unwrap();
+        win.set_physical_cursor_position(Some(at.as_dvec2()));
+        app.update();
+        app.world_mut().resource_mut::<ButtonInput<MouseButton>>().press(MouseButton::Left);
+        app.update();
+        let mut m = app.world_mut().resource_mut::<ButtonInput<MouseButton>>();
+        m.release(MouseButton::Left);
+        m.clear();
+        app.update();
+        core::mem::take(&mut app.world_mut().resource_mut::<Clicked>().0)
+    }
+
+    /// Through the real layout and the cursor, every button and cell on every page takes a
+    /// click at its centre and queues its own act, and only that one; every combo cell's list
+    /// opens, each row picks its own choice alone (never a cell under the list), and a click
+    /// beside an open list only closes it.
+    #[test]
+    fn every_control_takes_its_click_through_the_real_layout() {
+        let mut app = laid_out();
+        let pages = [
+            (Screen::Main, false, false),
+            (Screen::Controls, false, false),
+            (Screen::Setup, false, false),
+            (Screen::Setup, false, true),
+            (Screen::Generals, false, false),
+            (Screen::Alpha, false, false),
+            (Screen::Options, false, false),
+            (Screen::Missions, false, false),
+            (Screen::Lobby, false, false),
+            (Screen::Match, true, false),
+            (Screen::End, false, false),
+        ];
+        let mut lists = 0;
+        for (screen, paused, map_list) in pages {
+            {
+                let mut ui = app.world_mut().resource_mut::<Ui>();
+                (ui.screen, ui.paused, ui.combo) = (screen, paused, None);
+                ui.map_select = map_list.then(|| (ui.config.map.clone(), ui.config.slots.clone()));
+            }
+            app.update();
+            let all = controls(&mut app);
+            assert!(!all.is_empty(), "{screen:?}: no controls");
+            for &(act, at, _) in &all {
+                assert_eq!(click(&mut app, at), [act], "{screen:?}: the click at {at} on {act:?}");
+            }
+            for combo in all.iter().filter_map(|&(a, ..)| if let Act::Combo(Some(c)) = a { Some(c) } else { None }) {
+                app.world_mut().resource_mut::<Ui>().combo = Some(combo);
+                app.update();
+                let rows: Vec<_> = controls(&mut app).into_iter().filter(|&(.., row)| row).collect();
+                assert!(rows.len() >= 2, "{screen:?} {combo:?}: its list has {} rows", rows.len());
+                for (act, at, _) in rows {
+                    assert_eq!(click(&mut app, at), [act], "{screen:?} {combo:?}: the row at {at} picks {act:?}");
+                }
+                assert_eq!(click(&mut app, Vec2::new(4.0, 4.0)), [Act::Combo(None)], "{screen:?} {combo:?}");
+                lists += 1;
+            }
+        }
+        // Skirmish: 2 players' level, side and team for the AI, side and team for the human,
+        // cash, fog, seed; options 9; the difficulty; the lobby's side.
+        assert!(lists >= 19, "only {lists} lists opened");
     }
 }

@@ -469,6 +469,47 @@ fn cancelling_production_refunds_in_full() {
     assert!(w.entity(depot).unwrap().queue.is_empty());
 }
 
+/// A right click on a build-grid cell cancels the last queued item of that kind only, for a
+/// full refund; one of a kind not queued is refused and nothing changes.
+#[test]
+fn cancelling_one_kind_leaves_the_rest_of_the_queue() {
+    use g2_sim::entity::Product;
+    let mut w = world(Faction::Eu, 10_000);
+    let barracks = build(&mut w, EU_DOZER, EU_BARRACKS, Vec2::from_int(110, 80));
+    for def in [EU_RECON, EU_ROCKETS, EU_RECON] {
+        order(&mut w, CommandKind::Train { producer: barracks, def });
+    }
+    let before = w.player(P0).credits;
+    let r = order(&mut w, CommandKind::CancelItem { producer: barracks, item: Product::Unit(EU_ROCKETS) });
+    assert_eq!(r, vec![]);
+    let kinds: Vec<_> = w.entity(barracks).unwrap().queue.iter().map(|p| p.item).collect();
+    assert_eq!(kinds, [Product::Unit(EU_RECON), Product::Unit(EU_RECON)], "the rockets went, both recons stay");
+    assert_eq!(w.player(P0).credits, before + rules().def(EU_ROCKETS).cost.credits);
+    let r = order(&mut w, CommandKind::CancelItem { producer: barracks, item: Product::Unit(EU_ROCKETS) });
+    assert_eq!(r, vec![Reject::CannotProduce], "none of that kind left");
+    assert_eq!(w.entity(barracks).unwrap().queue.len(), 2);
+}
+
+/// Cancelling a foundation removes it and pays its price back in full, as Zero Hour's dozer
+/// cancel; its builder stops working on it. A finished building can't be cancelled.
+#[test]
+fn cancelling_a_foundation_refunds_it_in_full() {
+    let mut w = world(Faction::Eu, 10_000);
+    let (before, spent) = (w.player(P0).credits, w.stats(P0).spent);
+    let dozer = first(&w, P0, EU_DOZER).unwrap();
+    order(&mut w, CommandKind::Build { builder: dozer, def: EU_FACTORY, pos: Vec2::from_int(110, 110) });
+    let site = first(&w, P0, EU_FACTORY).expect("a foundation");
+    run(&mut w, 30 * 5);
+    assert!(w.entity(site).unwrap().construction.is_some_and(|t| t > 0), "under way");
+    assert_eq!(order(&mut w, CommandKind::CancelConstruction { site }), vec![]);
+    assert!(w.entity(site).is_none(), "the foundation is gone");
+    assert_eq!((w.player(P0).credits, w.stats(P0).spent), (before, spent), "paid back in full");
+    assert_eq!(w.entity(dozer).unwrap().order, Order::Idle, "its builder stops");
+    let depot = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(110, 80));
+    assert_eq!(order(&mut w, CommandKind::CancelConstruction { site: depot }), vec![Reject::NoSuchEntity]);
+    assert!(w.entity(depot).is_some());
+}
+
 /// A general's modifiers change what the player pays and how long training takes; a cancel
 /// refunds the discounted price exactly, and the general survives a replay round trip.
 #[test]

@@ -298,7 +298,7 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 | Left click / drag | Select own units (click selects buildings too); Shift adds. Double click: add every own unit or building of that kind on screen |
 | Right click | Enemy → attack (unarmed units in the selection walk there); supply pile → gather; own foundation → help build; ground → move, and with your production buildings selected, sets their rally point. Given on release: a right-button drag that panned the camera orders nothing |
 | Ctrl + right click | Attack-move: armed units fight anything they meet on the way |
-| Click the build grid | Constructor selected: choose a building, left click places (Shift repeats), Esc / right click cancels. Building selected: queue production; Backspace cancels the last item. Hover for the tooltip |
+| Click the build grid | Constructor selected: choose a building, left click places (Shift repeats), Esc / right click cancels. Building selected: queue production; right click a cell cancels one of that item (the last queued, full refund), Backspace the last item queued. A foundation selected: its Cancel cell removes it and pays its price back in full, as Zero Hour's (it is replay command v20's `CancelConstruction`, the right-click cancel its `CancelItem`). Hover for the tooltip, which says when a right click cancels |
 | `1`–`0` | Select control group (OpenRA's defaults throughout); twice within 250 ms also centres the camera on it |
 | Ctrl + `1`–`0` | Make the selection that control group (Meta on macOS) |
 | Shift + `1`–`0` / Ctrl + Shift + `1`–`0` | Add the group to the selection / add the selection to the group |
@@ -309,19 +309,19 @@ Verified on the build host: the AppImage renders headless (`--screenshot`) on th
 | Middle drag (Classic scheme: right drag) | Pan, by the chosen Pan Behaviour (Alternate Mouse Panning swaps the button) |
 | Mouse wheel | Zoom toward the cursor (with the Zoom Modifier held, if one is set) |
 | `]` / `[` / `.` | Zoom in / zoom out / toggle between the default and the closest view |
-| Space | Pause; `+`/`-` change speed (×1–×8). Not in a network match: the clock is shared |
+| Space | Pause; `+`/`-` change speed (×1–×8; also by the character typed, so `+` works on keyboards where it isn't beside Backspace). The buttons top left do the same: MENU opens the in-game menu (as Esc), then pause, ×1, ×2, ×4 and ×8, the running speed lit. Not in a network match: the clock is shared, and only MENU shows |
 | Tab | Select the next own collector and centre the camera on it |
 | T | Deploy the selected Thunderfists (howitzer), or pack them up if all are deployed; turn a Battle Bus into its bunker |
 | R / F / C | The selected units' first, second and third ability: one used in place goes now (Nitro, Radar Pulse, Detonate, Ignition, Unstoppable, Rally, Vanish); one aimed at the ground or an enemy (Grenade Volley, Anti-Materiel Shot, EMP and Incendiary Grenade, Flak Trap, Last Stand) is armed and the next left click aims it, right click / Esc disarms. R also arms the selected Shadow Tanks' Particle Accelerator or Sunstorms' Uranium Pile Eject; left click an enemy fires it |
 | E | Everyone out of the selected buildings and vehicles |
 | G | Arm your general's power when it is ready; left click aims it, right click / Esc disarms. The HUD shows the countdown |
-| F1-F6 | Arm your faction's support powers the same way (EU: Air Raid, Fuel Air Bomb, UAV Spy Drone; APA: Carpet Bombing, Spy Sorties; GLA: Scud Storm once built, GPS Scrambler, Sabotage), then the power a slotted power perk adds |
+| F1-F6 | Arm your faction's support powers the same way (EU: Air Raid, Fuel Air Bomb, UAV Spy Drone; APA: Carpet Bombing, Spy Sorties; GLA: Scud Storm once built, GPS Scrambler, Sabotage), then the power a slotted power perk adds. A click on a ready power's tile arms it too |
 | F10 | Surrender |
 | M | Mute / unmute sound (not while typing in a text field) |
 | Esc | Pause menu (options, surrender, quit to menu, resume); in the main menu, Esc goes back |
 | NETWORK page | Click a text field (player name, host port, address) to type in it; while typing, keys go to the field alone (M doesn't mute); Enter, Esc or a click elsewhere ends typing. Click a game in the list, then JOIN; or HOST, or DIRECT CONNECT to the typed address |
 
-The main menu and the pause menu open **Options**, OpenRA's camera and input settings in the frame of Generals' `OptionsMenu.wnd` (`crates/g2-client/src/settings.rs`). A click steps a setting and it applies at once; ACCEPT saves them (`$G2_SETTINGS`, else `settings` in the game's data folder; plain text), BACK puts them back as they were, DEFAULTS resets them. Headless screenshots ignore the saved file and use the defaults, or `--camera close|medium|far` (or `closest`, Close zoomed in as far as the wheel goes).
+The main menu and the pause menu open **Options**, OpenRA's camera and input settings in the frame of Generals' `OptionsMenu.wnd` (`crates/g2-client/src/settings.rs`). A click on a setting opens its list of values (a slider's as 1 of 7 to 7 of 7); the one picked applies at once; ACCEPT saves them (`$G2_SETTINGS`, else `settings` in the game's data folder; plain text), BACK puts them back as they were, DEFAULTS resets them. Every combo cell in the menus (skirmish seats, sides, teams, cash, fog, seed; the campaign's difficulty; the network side and mode) opens its list the same way; a click elsewhere or Esc closes it. Headless screenshots ignore the saved file and use the defaults, or `--camera close|medium|far` (or `closest`, Close zoomed in as far as the wheel goes).
 
 | Setting | Values (default first), as OpenRA's |
 |---|---|

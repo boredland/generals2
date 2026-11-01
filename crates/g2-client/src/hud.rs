@@ -113,6 +113,73 @@ struct HealthTrack;
 #[derive(Component)]
 pub(crate) struct PowerTile(pub u8);
 
+/// A HUD button besides the build cells: the in-match menu, a game speed (0 pauses), or a
+/// power tile (clicking it is pressing its key). Each sits in a `HudPanel`.
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum HudButton {
+    Menu,
+    Speed(u32),
+    Power(u8),
+}
+
+/// The speeds the HUD's speed buttons offer, as the +/- keys step them; 0 pauses.
+pub(crate) const SPEEDS: [u32; 5] = [0, 1, 2, 4, 8];
+
+/// Top left: MENU, then (off the network, where the clock is the player's own) pause and the
+/// speeds, the running one lit. `k` scales it as the rest of the HUD; `bold` is its type. MENU
+/// is a menu button (`menu::Btn`), so the menu's own click handling opens the in-game menu.
+fn hud_buttons(commands: &mut Commands, k: f32, bold: Option<Handle<Font>>, online: bool) {
+    let mut row = abs(px(10.0 * k), auto(), px(6.0 * k), auto());
+    row.column_gap = px(4.0 * k);
+    commands.spawn((root(), row, HudPanel)).with_children(|r| {
+        let mut buttons = vec![(HudButton::Menu, "MENU  (Esc)".to_owned())];
+        if !online {
+            buttons.extend(SPEEDS.map(|s| (HudButton::Speed(s), if s == 0 { "II".into() } else { format!("x{s}") })));
+        }
+        for (b, label) in buttons {
+            let mut font = TextFont { font_size: FontSize::Px(12.0 * k), ..default() };
+            if let Some(f) = &bold {
+                font.font = f.clone().into();
+            }
+            let mut e = r.spawn((
+                Node { border: UiRect::all(px(1)), padding: UiRect::axes(px(6.0 * k), px(2.0 * k)), ..default() },
+                BackgroundColor(PANEL),
+                BorderColor::all(PANEL_EDGE),
+                RelativeCursorPosition::default(),
+                b,
+            ));
+            if b == HudButton::Menu {
+                e.insert(crate::menu::Btn(crate::menu::Act::Pause));
+            }
+            e.with_child((Text::new(label), font, TextColor(TEXT), shadow()));
+        }
+    });
+}
+
+/// Lights the speed button for the running speed and any button under the cursor.
+fn hud_button_faces(
+    sim: Res<Sim>,
+    mut buttons: Query<(&HudButton, &RelativeCursorPosition, &Children, &mut BorderColor)>,
+    mut ink: Query<&mut TextColor>,
+) {
+    for (b, cursor, children, mut edge) in &mut buttons {
+        let on = matches!(*b, HudButton::Speed(s) if s == sim.speed);
+        let color = if on {
+            XP
+        } else if cursor.cursor_over() {
+            TEXT
+        } else {
+            PANEL_EDGE
+        };
+        edge.set_if_neq(BorderColor::all(color));
+        for &c in children {
+            if let Ok(mut t) = ink.get_mut(c) {
+                t.set_if_neq(TextColor(if on { XP } else { TEXT }));
+            }
+        }
+    }
+}
+
 /// The shade over a recharging power's tile, swept away clockwise as it charges.
 #[derive(Component)]
 struct PowerSweep(u8);
@@ -161,7 +228,7 @@ impl Plugin for HudPlugin {
                 (update_fields, tags, minimap, overlays, popups, grid_icons, selection_portrait, alpha_power_icons)
                     .after(spawn),
             )
-            .add_systems(Update, (meters, grid_faces, power_tiles, portrait).after(spawn));
+            .add_systems(Update, (meters, grid_faces, power_tiles, portrait, hud_button_faces).after(spawn));
     }
 }
 
@@ -358,6 +425,7 @@ fn spawn(
         && crate::alpha_hud::spawn(&mut commands, &layout, &server, faction, screen)
     {
         spawn_alpha_extras(&mut commands);
+        hud_buttons(&mut commands, 1.0, fonts.as_ref().map(|f| f.bold.clone()), sim.online.is_some());
         return;
     }
     let Some(art) = art else { return };
@@ -370,13 +438,9 @@ fn spawn(
     // Inside a bottom plate: clear of its bevel and trim, and of the cut corners on top.
     let plate_pad = UiRect::new(pen.px(12.0), pen.px(12.0), pen.px(13.0), pen.px(9.0));
 
-    // Top left: the in-match menu key; top right: neutral project label (no EA trademarks).
-    commands.spawn((
-        root(),
-        abs(pen.px(14.0), auto(), pen.px(8.0), auto()),
-        pen.text("ESC  MENU", 13.0, TEXT, true),
-        shadow(),
-    ));
+    // Top left: the in-match menu and the game speed; top right: neutral project label (no EA
+    // trademarks).
+    hud_buttons(&mut commands, k, fonts.as_ref().map(|f| f.bold.clone()), sim.online.is_some());
     commands.spawn((
         root(),
         abs(auto(), pen.px(14.0), pen.px(8.0), auto()),
@@ -671,6 +735,8 @@ fn power_tile(
             },
             art::sliced(kit.face(Face::Off), art::FACE_EDGE, pen.k),
             PowerTile(slot as u8),
+            HudButton::Power(slot as u8),
+            RelativeCursorPosition::default(),
         ))
         .with_children(|f| {
             f.spawn((
@@ -707,6 +773,8 @@ pub(crate) fn alpha_power(t: &mut ChildSpawnerCommands, slot: u8, font: TextFont
         Node { width: percent(100), height: percent(100), ..default() },
         ImageNode::default(),
         AlphaPowerIcon(slot),
+        HudButton::Power(slot),
+        RelativeCursorPosition::default(),
         Visibility::Hidden,
     ))
     .with_children(|f| {
@@ -757,7 +825,6 @@ fn alpha_power_icons(
 /// bottom-right panel's unit area.
 fn spawn_alpha_extras(commands: &mut Commands) {
     let shadow = || TextShadow { offset: Vec2::splat(1.0), ..default() };
-    commands.spawn((root(), abs(px(14), auto(), px(8), auto()), text("ESC  MENU", 14.0, TEXT), shadow()));
     let mut corner = abs(px(8), auto(), auto(), percent(36));
     corner.flex_direction = FlexDirection::Column;
     commands.spawn((root(), corner)).with_children(|p| {
@@ -987,6 +1054,7 @@ fn grid_faces(
             art.icon(match slot {
                 Slot::Def(d) => Icon::of_def(world.rules.def(d)),
                 Slot::Upgrade(_) => Icon::Upgrade,
+                Slot::Cancel => Icon::Building,
             })
         });
         if img.image != want {
@@ -1146,11 +1214,13 @@ fn picture_tint(face: Face) -> Color {
     }
 }
 
-/// One entry of the build grid: a building to place, a unit to train, an upgrade to research.
+/// One entry of the build grid: a building to place, a unit to train, an upgrade to research,
+/// or (for a foundation of ours) cancelling it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Slot {
     Def(g2_sim::DefId),
     Upgrade(g2_sim::defs::UpgradeId),
+    Cancel,
 }
 
 impl Slot {
@@ -1158,6 +1228,7 @@ impl Slot {
         match self {
             Slot::Def(d) => rules.def(d).name,
             Slot::Upgrade(u) => rules.upgrade(u).name,
+            Slot::Cancel => "Cancel construction",
         }
     }
 
@@ -1166,15 +1237,25 @@ impl Slot {
         match self {
             Slot::Def(d) => crate::alpha_hud::icon_for(rules.def(d).name).map(|(icon, _)| icon),
             Slot::Upgrade(u) => crate::alpha_hud::upgrade_icon(rules.upgrade(u).name),
+            Slot::Cancel => None,
         }
     }
 
     /// Whether a production queue item is this slot's.
-    fn is(self, item: Product) -> bool {
+    pub(crate) fn is(self, item: Product) -> bool {
         match (self, item) {
             (Slot::Def(d), Product::Unit(u)) => d == u,
             (Slot::Upgrade(a), Product::Upgrade(b)) => a == b,
             _ => false,
+        }
+    }
+
+    /// The queue item a right click on the slot cancels.
+    pub(crate) fn product(self) -> Option<Product> {
+        match self {
+            Slot::Def(d) => Some(Product::Unit(d)),
+            Slot::Upgrade(u) => Some(Product::Upgrade(u)),
+            Slot::Cancel => None,
         }
     }
 }
@@ -1189,7 +1270,7 @@ pub(crate) fn build_menu(sim: &Sim, sel: &Selection) -> Vec<Slot> {
         let d = world.rules.def(e.def);
         let offers = world.offers_of(sim.local, e.def).into_iter().map(Slot::Def);
         if !e.is_complete() {
-            Vec::new()
+            if e.owner == Some(sim.local) && e.construction.is_some() { vec![Slot::Cancel] } else { Vec::new() }
         } else if d.is_constructor() {
             offers.collect()
         } else {
@@ -1199,12 +1280,19 @@ pub(crate) fn build_menu(sim: &Sim, sel: &Selection) -> Vec<Slot> {
     })
 }
 
-/// What a slot costs the local player.
+/// What a slot costs the local player (a cancel pays back instead: 0 here).
 fn slot_cost(sim: &Sim, slot: Slot) -> i64 {
     match slot {
         Slot::Def(d) => sim.world.cost_for(sim.local, d).credits,
         Slot::Upgrade(u) => sim.world.rules.upgrade(u).cost.credits,
+        Slot::Cancel => 0,
     }
+}
+
+/// What cancelling the selected foundation pays back: its price in full.
+pub(crate) fn refund(sim: &Sim, sel: &Selection) -> Option<i64> {
+    let e = sel.0.first().and_then(|&id| sim.world.entity(id)).filter(|e| e.construction.is_some())?;
+    Some(sim.world.cost_for(sim.local, e.def).credits)
 }
 
 pub(crate) fn clock(ticks: u32) -> String {
@@ -1421,17 +1509,28 @@ fn update_fields(
                     match slot {
                         Slot::Def(_) => name.split_once(' ').map_or(name, |(_, rest)| rest),
                         Slot::Upgrade(_) => name,
+                        Slot::Cancel => "Cancel",
                     }
                     .to_owned()
                 })
             }
             Field::GridCost(i) => {
-                let cost = menu.get(*i).map(|&slot| slot_cost(&sim, slot));
-                t.0 = cost.map_or(String::new(), |c| format!("${c}"));
-                color.set_if_neq(TextColor(if cost.is_some_and(|c| c > me.credits) { SHORT } else { MONEY }));
+                let slot = menu.get(*i).copied();
+                if slot == Some(Slot::Cancel) {
+                    t.0 = refund(&sim, &sel).map_or(String::new(), |c| format!("+${c}"));
+                    color.set_if_neq(TextColor(MONEY));
+                } else {
+                    let cost = slot.map(|slot| slot_cost(&sim, slot));
+                    t.0 = cost.map_or(String::new(), |c| format!("${c}"));
+                    color.set_if_neq(TextColor(if cost.is_some_and(|c| c > me.credits) { SHORT } else { MONEY }));
+                }
             }
             Field::GridTag(i) => {
-                t.0 = menu.get(*i).map_or(String::new(), |&slot| format!("${}", slot_cost(&sim, slot)))
+                t.0 = match menu.get(*i) {
+                    Some(Slot::Cancel) => refund(&sim, &sel).map_or(String::new(), |c| format!("+${c}")),
+                    Some(&slot) => format!("${}", slot_cost(&sim, slot)),
+                    None => String::new(),
+                }
             }
         }
     }
