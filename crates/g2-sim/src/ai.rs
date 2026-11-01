@@ -690,6 +690,8 @@ impl Ai {
             self.waves(world, &mine, &army, home, out);
         } else {
             self.command_army(world, &mine, &army, home, out);
+            // Last, so a hero's ability wins over an army order given it this second.
+            self.hero(world, &mine, saving, home, out);
         }
     }
 
@@ -1070,7 +1072,10 @@ impl Ai {
         let mut ready = Vec::new();
         for u in mine.iter().filter(|e| e.inside.is_none() && !e.stunned() && e.decoy_until.is_none()) {
             let d = rules.def(u.def);
-            // The first ability only: every unit outside the heroes has one.
+            if d.unique {
+                continue;
+            }
+            // The first ability only: every unit outside the heroes (`hero`) has one.
             let Some(a) = d.abilities.first().filter(|_| u.ability_at[0] <= world.tick()) else { continue };
             let engaged = match u.order {
                 Order::Attack { target } | Order::AttackMove { engaged: Some(target), .. } => world.entity(target),
@@ -1206,7 +1211,166 @@ impl Ai {
         }
         best.map(|(_, p)| p)
     }
+
+    /// `Normal`'s hero (`Def::unique`), all in one place. Outside missions it is trained at the
+    /// command center once both core factories stand and credits are `HERO_SURPLUS` above its price, and
+    /// never while saving for a constructor or a detector. One without a gun (the GLA agent)
+    /// walks with the army: to the armed unit of ours furthest from home. Its abilities, at
+    /// most one a second each, where they plainly pay: a throw or a stun at the visible enemy
+    /// with the most enemy ground units around it (three or more for a volley or a stun, two
+    /// for a single grenade), within its reach plus 10; the anti-materiel shot at the
+    /// toughest enemy vehicle or building in reach with 300 hit points or more; a self status
+    /// while fighting an armed enemy within 40; a rally with three own infantry squads in its
+    /// radius during a fight; camouflage to slip away below half health with an armed enemy
+    /// within 40, then home; a flak trap under an enemy aircraft in its reach; a last stand
+    /// where every own squad it would take has an enemy in its blast and they hit twice as
+    /// many enemies as squads are lost.
+    fn hero(&self, world: &World, mine: &[&Entity], saving: bool, home: Option<Vec2>, out: &mut Vec<CommandKind>) {
+        use crate::command::Aim;
+        use crate::defs::AbilityKind;
+        let (me, rules, tick) = (self.player, world.rules, world.tick());
+        let factories = mine.iter().filter(|e| rules.def(e.def).role() == Some(BuildingRole::Factory)).count();
+        let cc = mine.iter().find(|e| rules.def(e.def).role() == Some(BuildingRole::CommandCenter) && e.is_complete());
+        // Not in a mission: its sides fight with what the mission gives them (the Normal AI in
+        // the player's seat lost Mountain Pass on Normal spending $1800 on the agent).
+        if let Some(cc) = cc
+            && world.mission().is_none()
+            && !saving
+            && factories >= 2
+            && cc.queue.is_empty()
+            && let Some(def) = world.offers_of(me, cc.def).into_iter().find(|&d| rules.def(d).unique)
+            && !world.has_or_trains(me, def)
+            && world.player(me).credits >= world.cost_for(me, def).credits + HERO_SURPLUS
+        {
+            out.push(CommandKind::Train { producer: cc.id, def });
+        }
+        let Some(h) = mine.iter().find(|e| rules.def(e.def).unique && e.inside.is_none() && e.decoy_until.is_none())
+        else {
+            return;
+        };
+        let d = rules.def(h.def);
+        if h.stunned() || matches!(h.order, Order::Cast { .. }) {
+            return;
+        }
+        let enemies: Vec<&Entity> =
+            world.entities().filter(|e| world.hostile(me, e.owner) && e.hp > 0 && world.sees(me, e)).collect();
+        let gap = |e: &Entity, from: Vec2| e.pos.distance(from) - rules.def(e.def).radius;
+        let ground = |e: &&&Entity| !rules.def(e.def).flies() && e.inside.is_none();
+        let armed_near = enemies.iter().any(|e| strength(world, e) > 0 && gap(e, h.pos) <= Fx::from_int(40));
+        let fighting = matches!(h.order, Order::Attack { .. } | Order::AttackMove { engaged: Some(_), .. });
+        // The visible enemy within `reach` with the most enemy ground units within `radius`
+        // of it (ties by id), if at least `least` are.
+        let crowd = |reach: Fx, radius: Fx, least: usize| {
+            enemies
+                .iter()
+                .filter(ground)
+                .filter(|e| e.pos.distance(h.pos) <= reach)
+                .map(|e| {
+                    let n = enemies
+                        .iter()
+                        .filter(ground)
+                        .filter(|x| rules.def(x.def).is_unit() && gap(x, e.pos) <= radius)
+                        .count();
+                    (n, std::cmp::Reverse(e.id), e.pos)
+                })
+                .filter(|&(n, ..)| n >= least)
+                .max_by_key(|&(n, id, _)| (n, id))
+                .map(|(.., p)| p)
+        };
+        let ten = Fx::from_int(10);
+        for (slot, a) in d.abilities.iter().enumerate() {
+            if h.ability_at[slot] > tick {
+                continue;
+            }
+            let slot = slot as u8;
+            let aim = match a.kind {
+                AbilityKind::Throw { range, blast, shells, spread, .. } => {
+                    let least = if shells > 1 { 3 } else { 2 };
+                    crowd(range + ten, spread + blast.radius.max(blast.cloud_radius), least).map(Aim::Point)
+                }
+                AbilityKind::Area { range, field } => crowd(range + ten, field.radius, 3).map(Aim::Point),
+                AbilityKind::Shot { weapon } => enemies
+                    .iter()
+                    .filter(ground)
+                    .filter(|e| rules.def(e.def).armour != Armour::Infantry && e.hp >= 300)
+                    .filter(|e| gap(e, h.pos) <= weapon.range + ten)
+                    .max_by_key(|e| (rules.def(e.def).is_unit(), e.hp, std::cmp::Reverse(e.id)))
+                    .map(|e| Aim::Unit(e.id)),
+                AbilityKind::Boost { cloak_ticks, .. } if cloak_ticks > 0 => {
+                    (armed_near && h.hp * 2 < world.max_hp(h)).then_some(Aim::Here)
+                }
+                AbilityKind::Boost { radius, infantry, .. } if radius > Fx::ZERO => {
+                    let squads = mine
+                        .iter()
+                        .filter(|e| e.id != h.id && rules.def(e.def).is_unit() && e.pos.distance(h.pos) <= radius)
+                        .filter(|e| !infantry || rules.def(e.def).armour == Armour::Infantry)
+                        .count();
+                    (fighting && squads >= 3).then_some(Aim::Here)
+                }
+                AbilityKind::Boost { .. } => (fighting && armed_near).then_some(Aim::Here),
+                AbilityKind::Trap { range, .. } => enemies
+                    .iter()
+                    .filter(|e| rules.def(e.def).flies() && !rules.def(e.def).is_support_jet())
+                    .filter(|e| e.pos.distance(h.pos) <= range)
+                    .min_by_key(|e| (e.pos.distance(h.pos), e.id))
+                    .map(|e| Aim::Point(world.map.clamp(e.pos))),
+                AbilityKind::Sacrifice { range, radius, blast } => {
+                    let squads: Vec<&&Entity> = mine
+                        .iter()
+                        .filter(|e| {
+                            let sd = rules.def(e.def);
+                            e.id != h.id
+                                && sd.is_unit()
+                                && sd.armour == Armour::Infantry
+                                && sd.weapon().is_some()
+                                && e.inside.is_none()
+                                && e.decoy_until.is_none()
+                        })
+                        .collect();
+                    let caught =
+                        |at: Vec2| enemies.iter().filter(ground).filter(|x| gap(x, at) <= blast.radius).count();
+                    squads
+                        .iter()
+                        .filter(|s| s.pos.distance(h.pos) <= range && caught(s.pos) >= 2)
+                        .map(|s| s.pos)
+                        .find(|&p| {
+                            let lost: Vec<_> = squads.iter().filter(|s| gap(s, p) <= radius).collect();
+                            let hits: usize = lost.iter().map(|s| caught(s.pos)).sum();
+                            lost.iter().all(|s| caught(s.pos) >= 1) && hits >= 2 * lost.len()
+                        })
+                        .map(Aim::Point)
+                }
+                AbilityKind::Detonate => None,
+            };
+            if let Some(aim) = aim {
+                out.push(CommandKind::Ability { units: vec![h.id], slot, aim });
+                // Camouflage is for getting away.
+                if let (AbilityKind::Boost { cloak_ticks: 1.., .. }, Some(home)) = (a.kind, home) {
+                    out.push(CommandKind::Move { units: vec![h.id], target: home });
+                }
+                // One aimed ability a think: a second would replace the walk to the first.
+                if aim != Aim::Here {
+                    return;
+                }
+            }
+        }
+        // An unarmed hero keeps up with the army: beside its armed unit furthest from home.
+        if d.weapon().is_none()
+            && let Some(home) = home
+            && matches!(h.order, Order::Idle)
+            && let Some(lead) = mine
+                .iter()
+                .filter(|e| e.id != h.id && rules.def(e.def).is_unit() && strength(world, e) > 0 && e.inside.is_none())
+                .max_by_key(|e| (e.pos.distance(home), std::cmp::Reverse(e.id)))
+            && lead.pos.distance(h.pos) > Fx::from_int(30)
+        {
+            out.push(CommandKind::Move { units: vec![h.id], target: lead.pos });
+        }
+    }
 }
+
+/// Credits `Normal` keeps over its hero's price before training it.
+const HERO_SURPLUS: i64 = 500;
 
 /// Just outside a building of `radius` at `pos`, on the side facing `from`: not its centre, a
 /// blocked cell no route can end on.

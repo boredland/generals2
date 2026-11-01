@@ -104,7 +104,10 @@ impl Targets {
 /// `garrison_bonus` is extra damage against a building with units inside (the Thunderfist
 /// howitzer's card: "+100 vs. garrisoned buildings"). A `suicidal` weapon is its unit's own
 /// charge (the Bomb Truck's, the alpha's `Suicidal`): firing it destroys the unit, which sets
-/// off its `Def::blast` instead of dealing the weapon's damage.
+/// off its `Def::blast` instead of dealing the weapon's damage. A direct-fire weapon with a
+/// `splash` also hits the other enemy ground units and buildings around its target (the
+/// alpha's `RtsWeaponAbilitySphereDamage`): full damage within three quarters of it, 40% out
+/// to the whole of it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Weapon {
     pub damage: i32,
@@ -117,6 +120,7 @@ pub struct Weapon {
     pub air_range: Option<Fx>,
     pub garrison_bonus: i32,
     pub suicidal: bool,
+    pub splash: Fx,
 }
 
 impl Weapon {

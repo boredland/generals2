@@ -182,6 +182,9 @@ pub fn icon_for(def: &str) -> Option<(&'static str, &'static str)> {
         "EU Longbow" => {
             ("BuildButtons/Active/EU/EU_LightRocketHelo", "UnitPortraits/EU/Vehicles/EU_LightRocketHelo_Portrait")
         }
+        "EU Commando" => ("BuildButtons/Active/EU/EU_Commando", "UnitPortraits/EU/Units/EU_Commando_Portrait"),
+        "APA Commando" => ("BuildButtons/Active/APA/AU_Commando", "UnitPortraits/APA/Units/AU_Commando_Portrait"),
+        "GLA Agent" => ("BuildButtons/Active/GLA/GU_Commando", "UnitPortraits/GLA/Units/GU_Commando_Portrait"),
         "EU Sniper Team" => {
             ("BuildButtons/Active/EU/EU_EliteSniperSoldierSquad", "UnitPortraits/EU/Units/EU_EliteSniperSquad_Portrait")
         }

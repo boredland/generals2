@@ -98,6 +98,9 @@ pub mod ids {
     pub const EU_SPY_DRONE: DefId = DefId(80);
     pub const APA_SORTIE_FIGHTER: DefId = DefId(81);
     pub const GLA_TUNNEL: DefId = DefId(82);
+    pub const EU_COMMANDO: DefId = DefId(83);
+    pub const APA_COMMANDO: DefId = DefId(84);
+    pub const GLA_AGENT: DefId = DefId(85);
 }
 
 /// Stable ids into `RULES.upgrades`.
@@ -495,6 +498,7 @@ const fn weapon(damage: i32, bonus: [i32; 4], range: i64, cooldown_tenths: u32) 
         air_range: None,
         garrison_bonus: 0,
         suicidal: false,
+        splash: Fx::ZERO,
     }
 }
 
@@ -665,7 +669,7 @@ const HARVEST: CollectorSpec = CollectorSpec { capacity: 100, load_ticks: secs(3
 const HARVEST_AIR: CollectorSpec = CollectorSpec { capacity: 190, load_ticks: secs(3), unload_ticks: secs(1) };
 const DERRICK: BuildingRole = BuildingRole::OilDerrick { credits_per_second: 5 };
 
-static DEFS: [Def; 83] = [
+static DEFS: [Def; 86] = [
     Def {
         name: "Supply Pile",
         faction: None,
@@ -725,7 +729,7 @@ static DEFS: [Def; 83] = [
         credits(1000),
         28,
         12,
-        &[EU_DOZER],
+        &[EU_DOZER, EU_COMMANDO],
     ),
     // src: Bulldozer hp 250, armour Heavy, land speed 14.
     with_armour(
@@ -782,7 +786,7 @@ static DEFS: [Def; 83] = [
         credits(1000),
         28,
         12,
-        &[APA_CRANE],
+        &[APA_CRANE, APA_COMMANDO],
     ),
     // src: Crane hp 280, $150, 11 s.
     unit(
@@ -823,7 +827,7 @@ static DEFS: [Def; 83] = [
         credits(1000),
         28,
         12,
-        &[GLA_WORKER],
+        &[GLA_WORKER, GLA_AGENT],
     ),
     // src: workers construct and gather supplies.
     unit(
@@ -1789,6 +1793,67 @@ static DEFS: [Def; 83] = [
     // 5 s. The alpha's exit (gs_tunnelnetwork_exit, $300) is trained at an entrance; here
     // every tunnel is a full entrance.
     tunnel("GLA Tunnel Network", 500, credits(600), 30, 10, 10, 5),
+    // ---- Heroes: one per faction, trained at its command center, one at a time --------------
+    // src: the alpha's eu_commandosquad (built at es_cc): MaxHealth 510, $1950, BuildTime 24 s,
+    // MovementRate 14, ArmorRating 1 (our Infantry), EntityRadius 2; eu_commando's machine gun
+    // 50, range 30, RateOfFire 1.5 s, ground only, `RtsWeaponAbilitySphereDamage` radius 8;
+    // veterancy +45 hit points, RateOfFireChange -0.1. Its abilities: `EU_COMMANDO_ABILITIES`.
+    // The alpha has no build-limit field; one at a time is ours.
+    hero(with_abilities(
+        ranked(
+            soldier(
+                "EU Commando",
+                Faction::Eu,
+                510,
+                Armour::Infantry,
+                credits(1950),
+                secs(24),
+                14,
+                Fx::from_int(2),
+                splashing(weapon(50, [0, 0, 0, 0], 30, 15), 8),
+            ),
+            45,
+            90,
+        ),
+        EU_COMMANDO_ABILITIES,
+    )),
+    // src: the alpha's au_commandosquad (built at the APA command center): MaxHealth 610, $1800,
+    // BuildTime 24 s, MovementRate 14, ArmorRating 1, EntityRadius 2; au_commando's sniper
+    // rifle 100 (+42 vs infantry), range 50, RateOfFire 4.2 s, ground only; veterancy +45 hit
+    // points, RateOfFireChange -0.28. Abilities: `APA_COMMANDO_ABILITIES`.
+    hero(with_abilities(
+        ranked(
+            soldier(
+                "APA Commando",
+                Faction::Apa,
+                610,
+                Armour::Infantry,
+                credits(1800),
+                secs(24),
+                14,
+                Fx::from_int(2),
+                weapon(100, [42, 0, 0, 0], 50, 42),
+            ),
+            45,
+            72,
+        ),
+        APA_COMMANDO_ABILITIES,
+    )),
+    // src: the alpha's gu_commandosquad (built at gs_cc): MaxHealth 510, $1800, BuildTime 24 s,
+    // MovementRate 14, ArmorRating 1, EntityRadius 2; no weapon of its own (its weapon
+    // components belong to its abilities); veterancy +45 hit points. Abilities:
+    // `GLA_AGENT_ABILITIES`.
+    hero(with_abilities(
+        ranked(
+            with_armour(
+                unit("GLA Agent", Faction::Gla, 510, credits(1800), 24, 14, false, None, NONE),
+                Armour::Infantry,
+            ),
+            45,
+            100,
+        ),
+        GLA_AGENT_ABILITIES,
+    )),
 ];
 
 /// A support power's aircraft: flies, unarmed, never built (no cost, no build time), worth the
@@ -3338,6 +3403,149 @@ const fn thunderclap(stun_secs: u32) -> Power {
 /// (placeholders: the alpha's ability holds only its name and an instant targeting type).
 const NITRO: Ability = Ability { name: "Nitro", kind: boost(StatusKind::Speed, 150, 5), cooldown_ticks: secs(30) };
 
+// The heroes' abilities. src: each hero's `RtsUnitAbilityCasterData`: MaxMana 100, regaining 1
+// a second, so an ability recharges for its ManaCost in seconds; the numbers per ability are
+// in its comment. Names and descriptions are ours.
+
+/// `d` is a hero: one per player, standing or in training.
+const fn hero(mut d: Def) -> Def {
+    d.unique = true;
+    d
+}
+
+/// `w` also hits around its target, out to `radius` (the alpha's sphere damage).
+const fn splashing(mut w: Weapon, radius: i64) -> Weapon {
+    w.splash = Fx::from_int(radius);
+    w
+}
+
+/// A point-aimed area effect that stuns enemy units within `radius` for `secs_` seconds.
+const fn stun_field(radius: i64, secs_: u32) -> Field {
+    Field {
+        radius: Fx::from_int(radius),
+        delay_ticks: 0,
+        damage: 0,
+        hp: 0,
+        ranks: 0,
+        ticks: secs(secs_),
+        allies: [None, None],
+        enemies: [Some((StatusKind::Stun, 0)), None],
+        vehicles: false,
+    }
+}
+
+const EU_COMMANDO_ABILITIES: &[Ability] = &[
+    // src: eu_grenadestorm (RtsUnitAbilityCircle): ManaCost 50, Range 50, Radius 10; its
+    // GrenadeStormWeapon fires 50 grenades (RepeatFire 49) 0.1 s apart at InitialSpeed 45, each
+    // bursting for BlastDamage 100 within BlastRadius 5. Ours land on the point and on two
+    // rings around it, at half and the whole of its radius.
+    Ability {
+        name: "Grenade Volley",
+        kind: AbilityKind::Throw {
+            range: Fx::from_int(50),
+            blast: blast(100, [0, 0, 0, 0], 5),
+            shells: 50,
+            every_ticks: 3,
+            spread: Fx::from_int(10),
+            speed: per_sec(45),
+        },
+        cooldown_ticks: secs(50),
+    },
+    // src: eu_unstoppable (RtsUnitAbilityInstant): ManaCost 50; no amounts in its data (the
+    // wiki: tougher and hitting harder for a while). Half the damage taken and a quarter more
+    // dealt for 10 s are placeholders.
+    Ability {
+        name: "Unstoppable",
+        kind: AbilityKind::Boost {
+            statuses: [Some(status(StatusKind::Toughness, 50, 10)), Some(status(StatusKind::Damage, 125, 10))],
+            radius: Fx::ZERO,
+            infantry: false,
+            cloak_ticks: 0,
+        },
+        cooldown_ticks: secs(50),
+    },
+    // src: eu_leadership (RtsUnitAbilityInstant): ManaCost 28; no amounts in its data (the
+    // wiki: nearby infantry fight harder). A quarter more damage for own infantry within 30,
+    // the commando too, for 15 s, are placeholders.
+    Ability {
+        name: "Rally",
+        kind: AbilityKind::Boost {
+            statuses: [Some(status(StatusKind::Damage, 125, 15)), None],
+            radius: Fx::from_int(30),
+            infantry: true,
+            cloak_ticks: 0,
+        },
+        cooldown_ticks: secs(28),
+    },
+];
+
+const APA_COMMANDO_ABILITIES: &[Ability] = &[
+    // src: apa_antimaterialshot (RtsUnitAbilityUnitTarget): ManaCost 60, Range 50, DamageRating
+    // 1000, one shot at a chosen unit; ground targets, as its rifle.
+    Ability {
+        name: "Anti-Materiel Shot",
+        kind: AbilityKind::Shot { weapon: weapon(1000, [0, 0, 0, 0], 50, 10) },
+        cooldown_ticks: secs(60),
+    },
+    // src: the commando's EMP grenade (RtsUnitAbilityCircle): ManaCost 40, Range 40, Radius 15;
+    // its appliers stop movement and firing for Duration 5 s, on enemies (AffectsTeam 5).
+    Ability {
+        name: "EMP Grenade",
+        kind: AbilityKind::Area { range: Fx::from_int(40), field: stun_field(15, 5) },
+        cooldown_ticks: secs(40),
+    },
+    // src: apa_pyrogrenade (RtsUnitAbilityCircle): ManaCost 60, Range 50, DamageRating 40,
+    // Radius 5, a damage-over-time applier of 20 a second. Its Duration is 0 in the data; the
+    // burn's 5 s are a placeholder. Thrown at InitialSpeed 100.
+    Ability {
+        name: "Incendiary Grenade",
+        kind: AbilityKind::Throw {
+            range: Fx::from_int(50),
+            blast: clouding(blast(40, [0, 0, 0, 0], 5), 5, 20, 5),
+            shells: 1,
+            every_ticks: 0,
+            spread: Fx::ZERO,
+            speed: per_sec(100),
+        },
+        cooldown_ticks: secs(60),
+    },
+];
+
+const GLA_AGENT_ABILITIES: &[Ability] = &[
+    // src: gla_shadowagent (RtsUnitAbilityInstant): ManaCost 23; no amounts in its data (the
+    // wiki: camouflaged and faster for a while). Hidden and half again as fast for 10 s are
+    // placeholders.
+    Ability {
+        name: "Vanish",
+        kind: AbilityKind::Boost {
+            statuses: [Some(status(StatusKind::Speed, 150, 10)), None],
+            radius: Fx::ZERO,
+            infantry: false,
+            cloak_ticks: secs(10),
+        },
+        cooldown_ticks: secs(23),
+    },
+    // src: gla_commandoflaktrap (RtsUnitAbilityCircle): ManaCost 30, Range 50, DamageRating 125,
+    // Radius 15.
+    Ability {
+        name: "Flak Trap",
+        kind: AbilityKind::Trap { range: Fx::from_int(50), radius: Fx::from_int(15), damage: 125 },
+        cooldown_ticks: secs(30),
+    },
+    // src: gla_ultimatesacrifice (RtsUnitAbilityCircle): ManaCost 30, Range 75, Radius 30; the
+    // wiki: nearby GLA infantry blow themselves up. Each one's blast, 100 within 8, is a
+    // placeholder.
+    Ability {
+        name: "Last Stand",
+        kind: AbilityKind::Sacrifice {
+            range: Fx::from_int(75),
+            radius: Fx::from_int(30),
+            blast: blast(100, [0, 0, 0, 0], 8),
+        },
+        cooldown_ticks: secs(30),
+    },
+];
+
 // A faction's perk tables list every unit of its kind, the generals' own ones too: only a
 // player with that general can train them, so for anyone else those entries do nothing.
 const PROTECTOR: Effect = Effect::Toughness { percent: 90 };
@@ -4415,6 +4623,9 @@ mod tests {
             (EU_SPY_DRONE, "EU Spy Drone"),
             (APA_SORTIE_FIGHTER, "APA Sortie Fighter"),
             (GLA_TUNNEL, "GLA Tunnel Network"),
+            (EU_COMMANDO, "EU Commando"),
+            (APA_COMMANDO, "APA Commando"),
+            (GLA_AGENT, "GLA Agent"),
         ];
         for (id, name) in named {
             assert_eq!(r.def(id).name, name);

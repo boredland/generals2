@@ -2377,6 +2377,9 @@ impl World {
             None => {
                 let damage = w.damage_vs(armour) + self.garrison_bonus_vs(w.garrison_bonus, target);
                 self.shots.push((id, owner, target, if real { damage } else { 0 }, false));
+                if real && w.splash > Fx::ZERO {
+                    self.splash(id, owner, target, tpos, w);
+                }
             }
             Some(s) => {
                 let flight = (pos.distance(tpos) / s.speed).floor_int().max(1) as u32;

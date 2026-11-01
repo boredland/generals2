@@ -336,7 +336,8 @@ fn soldier(rest: &Transform, k: u8, feet: Vec3, limb: Limb, p: &Pose) -> Transfo
     if p.pace > 0.0 {
         if leg {
             let side = if limb == Limb::LeftLeg { 1.0 } else { -1.0 };
-            let hip = Vec3::new(rest.translation.x, SOLDIER_HIP, rest.translation.z);
+            // The leg's own top, so a figure drawn larger (a hero) swings from its own hips.
+            let hip = Vec3::new(rest.translation.x, rest.translation.y + rest.scale.y / 2.0, rest.translation.z);
             tf = turn(&tf, hip, Quat::from_rotation_x(side * LEG_SWING * stride.sin()));
         } else {
             // Up at each footfall's push, twice a stride, leaning into the walk.
@@ -465,7 +466,10 @@ mod tests {
                 Motion::Spin { .. } => assert_eq!(place(p.motion, &rest, &idle), rest, "{p:?} turns idle"),
                 Motion::Slew { .. } | Motion::Flag { .. } => {}
                 Motion::Soldier { limb: Limb::Body | Limb::Rifle | Limb::Launcher, .. } => {
-                    assert!((at.translation - rest.translation).length() < 0.06, "{p:?} shifts too far: {at:?}");
+                    // The shift is a small lean about the feet, so a taller figure (a hero)
+                    // moves its head further: the limit is a soldier's, scaled by height.
+                    let tall = (rest.translation.y / 1.4).max(1.0);
+                    assert!((at.translation - rest.translation).length() < 0.06 * tall, "{p:?} shifts too far: {at:?}");
                 }
                 _ => assert_eq!(at, rest, "{p:?} moves standing"),
             }

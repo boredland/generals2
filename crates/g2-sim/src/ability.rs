@@ -10,7 +10,7 @@
 //! (`spring_traps`) and production (`has_or_trains`).
 
 use crate::command::{Aim, CommandKind, Reject};
-use crate::defs::{AbilityAim, AbilityKind, Armour, DefId};
+use crate::defs::{AbilityAim, AbilityKind, Armour, DefId, Weapon};
 use crate::entity::{EntityId, Order, PlayerId, Product};
 use crate::fixed::{Fx, Vec2};
 use crate::world::{
@@ -54,6 +54,30 @@ impl World {
             (e.def == def && e.hp > 0 && e.decoy_until.is_none())
                 || e.queue.iter().any(|q| q.item == Product::Unit(def))
         })
+    }
+
+    /// A splash weapon's hit on `target` at `at` reaches the other enemy ground units and
+    /// buildings around it (`Weapon::splash`): full damage within three quarters of the
+    /// splash, 40% beyond, by their edge.
+    pub(crate) fn splash(&mut self, shooter: EntityId, owner: PlayerId, target: EntityId, at: Vec2, w: Weapon) {
+        let inner = w.splash * Fx::from_ratio(3, 4);
+        let hit: Vec<(EntityId, i32)> = self
+            .entities
+            .iter()
+            .filter(|e| e.id != target && self.hostile(owner, e.owner) && e.hp > 0 && e.inside.is_none())
+            .filter_map(|e| {
+                let d = self.rules.def(e.def);
+                let gap = e.pos.distance(at) - d.radius;
+                if d.flies() || gap > w.splash {
+                    return None;
+                }
+                let full = w.damage_vs(d.armour);
+                Some((e.id, if gap <= inner { full } else { (full * 2 / 5).max(1) }))
+            })
+            .collect();
+        for (e, damage) in hit {
+            self.shots.push((shooter, owner, e, damage, true));
+        }
     }
 
     /// `CommandKind::Ability`: the units with ability `slot` ready use it at once, or, for one
