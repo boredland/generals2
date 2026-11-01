@@ -357,4 +357,8 @@ fn the_build_id_follows_the_rules() {
     let mut upgrades = base.upgrades.to_vec();
     upgrades[0].cost.credits += 1;
     assert_ne!(build_id(base), build_id(leak(base.defs.to_vec(), upgrades)), "an upgrade's price is part of the id");
+    let mut support = base.support.to_vec();
+    support[0].1.cooldown_ticks += 1;
+    let edited = Box::leak(Box::new(g2_sim::Rules { support: Box::leak(support.into_boxed_slice()), ..*base }));
+    assert_ne!(build_id(base), build_id(edited), "a support power's recharge is part of the id");
 }

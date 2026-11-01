@@ -100,6 +100,16 @@ fn a_mod_folder_replaces_only_its_files_and_changes_the_build_id() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A modded support power refuses unmodded machines too: they would otherwise play on until
+/// the power is first used and fall out of sync.
+#[test]
+fn a_modded_support_power_changes_the_build_id() {
+    let base = parse(FILES).unwrap();
+    let modded = parse(with("powers.toml", |t| t.replacen("damage = 600", "damage = 601", 1))).unwrap();
+    assert_ne!(modded.support, base.support);
+    assert_ne!(build_id(&modded), build_id(&base));
+}
+
 #[test]
 fn a_mod_may_add_a_unit() {
     let files = with("units.toml", |t| {

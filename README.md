@@ -226,7 +226,7 @@ mkdir mymod && cp crates/g2-rules/data/units.toml mymod/   # then edit mymod/uni
 G2_RULES_DIR=$PWD/mymod cargo run -p g2-client --release
 ```
 
-A bad file stops the game at startup with its file, line and field (`mymod/units.toml:107: eu_recon.hp: expected a whole number`). Network play compares a hash of the rules (the build id), so a modded game refuses to play one with other rules.
+A bad file stops the game at startup with its file, line and field (`mymod/units.toml:107: eu_recon.hp: expected a whole number`). Network play compares a hash of the rules (the build id), so a modded game refuses to play one with other rules. The hash covers every file, the support powers too: before, it left them out, so two machines with different support powers would have started a match and fallen out of sync.
 
 Bevy is built with an explicit **X11-only** feature list on Linux (see the root `Cargo.toml`), because the build host lacks Wayland development headers. On a host that has them, add `"wayland"` to the list. Windows (Direct3D 12 or Vulkan) and macOS (Metal) build from the same tree with `cargo build`; CI runs the test suite on all three.
 

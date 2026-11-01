@@ -41,10 +41,14 @@ pub const PROTOCOL: u16 = 4;
 pub const SIM_VERSION: u32 = 21;
 
 /// What both machines must agree on before a match: `SIM_VERSION` and the rules tables
-/// (every unit, building, weapon, general, upgrade and perk). Two different releases almost always
-/// differ here, so they are refused at the handshake instead of failing with "out of sync".
+/// (every unit, building, weapon, general, upgrade, perk and support power). Two different
+/// releases, or two sets of modded rules, almost always differ here, so they are refused at the
+/// handshake instead of failing with "out of sync".
 pub fn build_id(rules: &crate::defs::Rules) -> u64 {
-    let text = format!("{SIM_VERSION} {:?} {:?} {:?} {:?}", rules.defs, rules.generals, rules.upgrades, rules.perks);
+    let text = format!(
+        "{SIM_VERSION} {:?} {:?} {:?} {:?} {:?}",
+        rules.defs, rules.generals, rules.upgrades, rules.perks, rules.support
+    );
     // FNV-1a, as `state_hash`.
     text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100_0000_01b3))
 }
