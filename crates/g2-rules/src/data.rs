@@ -659,6 +659,7 @@ fn power(mut t: Entry, ids: &Ids) -> Res<Power> {
     let first_ticks = t.or("first", cooldown_ticks, Val::time)?;
     let blind = t.or("blind", false, Val::bool)?;
     let requires = t.get("requires", |v| v.def(ids))?;
+    let rank = t.or("rank", 1, Val::int)?;
     let kind = t.need("kind", |v| {
         v.pick(&[
             ("barrage", 0),
@@ -721,7 +722,7 @@ fn power(mut t: Entry, ids: &Ids) -> Res<Power> {
         _ => PowerKind::Decoys { radius: t.need("radius", Val::dist)?, ticks: t.need("duration", Val::time)? },
     };
     t.done()?;
-    Ok(Power { name, kind, first_ticks, cooldown_ticks, blind, requires })
+    Ok(Power { name, kind, first_ticks, cooldown_ticks, blind, requires, rank })
 }
 
 fn garrison(v: &Val) -> Res<Garrison> {

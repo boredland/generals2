@@ -18,10 +18,23 @@
 # into bombs isn't archived: the bomb counts and spacing are ours, chosen so each strike's
 # total over its area matches the alpha's figure. Carpet Bombing's and Sabotage's damage are
 # placeholders. A new power goes after its faction's others, so their keys stay.
+#
+# Who has them, as Zero Hour's (the alpha's abilities name no building or rank): every power
+# but the Scud Storm is fired from the faction's Command Center (Zero Hour's
+# `*CommandCenter.ini` carry them; the Scud Storm its own building), so it `requires` one
+# standing and goes with the last (constructors here can't raise a new one, as Zero Hour's
+# can), and is the player's from general `rank` on, the rank Zero Hour's science for its
+# counterpart needs (`Science.ini`: SCIENCE_SpyDrone Rank1; SCIENCE_A10ThunderboltMissileStrike1
+# and Early_SCIENCE_ChinaCarpetBomb Rank3; SCIENCE_DaisyCutter and SCIENCE_GPSScrambler Rank5).
+# Zero Hour also has players buy each with a point; here the rank alone grants it. Sabotage
+# has no counterpart (Zero Hour's GLA booby-traps buildings with a unit): rank 3, its Rebel
+# Ambush's tier, is ours.
 
 [[support]]
 faction = "eu"
 name = "Air Raid"
+requires = "eu_cc"
+rank = 3
 recharge = 360
 kind = "airstrike"
 aircraft = "eu_bomber"
@@ -35,6 +48,8 @@ radius = 10
 [[support]]
 faction = "eu"
 name = "Fuel Air Bomb"
+requires = "eu_cc"
+rank = 5
 recharge = 420
 kind = "airstrike"
 aircraft = "eu_bomber"
@@ -48,6 +63,7 @@ radius = 35
 [[support]]
 faction = "eu"
 name = "UAV Spy Drone"
+requires = "eu_cc"
 recharge = 90
 blind = true
 kind = "recon"
@@ -56,6 +72,8 @@ aircraft = "eu_spy_drone"
 [[support]]
 faction = "apa"
 name = "Carpet Bombing"
+requires = "apa_cc"
+rank = 3
 recharge = 420
 kind = "airstrike"
 aircraft = "apa_bomber"
@@ -68,6 +86,7 @@ radius = 8
 [[support]]
 faction = "apa"
 name = "Spy Sorties"
+requires = "apa_cc"
 recharge = 90
 blind = true
 kind = "recon"
@@ -102,6 +121,8 @@ cloud = { radius = 65, damage = 20, duration = 9 }
 [[support]]
 faction = "gla"
 name = "GPS Scrambler"
+requires = "gla_cc"
+rank = 5
 recharge = 90
 blind = true
 kind = "cloak"
@@ -114,6 +135,8 @@ duration = 20
 [[support]]
 faction = "gla"
 name = "Sabotage"
+requires = "gla_cc"
+rank = 3
 recharge = 120
 kind = "sabotage"
 damage = 600

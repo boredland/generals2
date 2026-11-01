@@ -452,7 +452,8 @@ impl World {
                 power_supply: 0,
                 power_drain: 0,
                 defeated: false,
-                // A power that needs a building starts unavailable: finishing one charges it.
+                // A power that needs a building starts unavailable: a finished one charges it
+                // (the starting command center, from the first tick: `update_power_sites` below).
                 power_ready: crate::defs::powers(rules, p.faction, p.general, p.rank, &p.perks)
                     .iter()
                     .map(|pw| pw.filter(|pw| pw.requires.is_none()).map(|pw| pw.first_ticks))
@@ -482,6 +483,7 @@ impl World {
             world.start_mission(id, difficulty);
         }
         world.update_power();
+        world.update_power_sites();
         world.update_vision();
         world
     }
@@ -727,15 +729,25 @@ impl World {
     fn update_power_sites(&mut self) {
         for p in 0..self.players.len() {
             let player = PlayerId(p as u8);
+            // A faction's command-center powers sit next to each other, so remembering the
+            // last building looked for scans for each one once.
+            let mut last: Option<(DefId, bool)> = None;
             for (slot, power) in self.powers_of(player).into_iter().enumerate() {
-                let Some(def) = power.and_then(|pw| pw.requires) else { continue };
-                let has = self
-                    .entities
-                    .iter()
-                    .any(|e| e.owner == Some(player) && e.def == def && e.is_complete() && e.hp > 0);
+                let Some((power, def)) = power.and_then(|pw| Some((pw, pw.requires?))) else { continue };
+                let has = match last {
+                    Some((d, has)) if d == def => has,
+                    _ => {
+                        let has = self
+                            .entities
+                            .iter()
+                            .any(|e| e.owner == Some(player) && e.def == def && e.is_complete() && e.hp > 0);
+                        last = Some((def, has));
+                        has
+                    }
+                };
                 let ready = &mut self.players[p].power_ready[slot];
                 match (has, *ready) {
-                    (true, None) => *ready = Some(self.tick + power.unwrap().first_ticks),
+                    (true, None) => *ready = Some(self.tick + power.first_ticks),
                     (false, Some(_)) => *ready = None,
                     _ => {}
                 }

@@ -845,8 +845,9 @@ mod tests {
     }
 
     /// G arms the general's power only once it is ready, and never for a player without one;
-    /// F1 arms the faction's first support power, on its own timer; each further key the next
-    /// slot: F3 the EU's third support power, F4 the power Mercury Red's Strike Team perk adds.
+    /// each F key arms its support power slot on its own timer, once the player's rank has it:
+    /// at rank 1 the EU's Air Raid (F1) is locked and the UAV Spy Drone (F3) is theirs; F4 arms
+    /// the power Mercury Red's Strike Team perk adds.
     #[test]
     fn power_keys_arm_only_ready_powers() {
         use bevy::ecs::system::RunSystemOnce;
@@ -876,10 +877,10 @@ mod tests {
         assert_eq!(armed(Some(bulldog), &[], KeyCode::KeyG, ready), Some(0), "ready");
         assert_eq!(armed(None, &[], KeyCode::KeyG, ready), None, "no general, no power");
         let raid = rules.support_powers(g2_sim::Faction::Eu).next().unwrap().first_ticks;
-        assert_eq!(armed(None, &[], KeyCode::F1, raid - 30), None, "support still charging");
-        assert_eq!(armed(None, &[], KeyCode::F1, raid), Some(1), "support ready without a general");
+        assert_eq!(armed(None, &[], KeyCode::F1, raid), None, "the Air Raid is rank 3's");
         let drone = rules.support_powers(g2_sim::Faction::Eu).nth(2).unwrap();
         assert_eq!(drone.name, "UAV Spy Drone");
+        assert_eq!(armed(None, &[], KeyCode::F3, drone.first_ticks - 30), None, "support still charging");
         assert_eq!(armed(None, &[], KeyCode::F3, drone.first_ticks), Some(3), "F3: the third support power");
         let (mercury, team) = (g2_rules::generals::MERCURY_RED, g2_rules::perks::MR_STRIKE_TEAM);
         let drop = rules.perk(team).adds_power.unwrap().first_ticks;

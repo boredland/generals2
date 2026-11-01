@@ -535,7 +535,8 @@ pub enum PowerTuning {
 /// `cooldown_ticks`. The first use is possible `first_ticks` into the match, or, for a power
 /// that `requires` a building, `first_ticks` after the player's first one of them is
 /// finished; while none stands the power is unavailable, and a new one charges it from the
-/// start.
+/// start. A support power is a player's only from general `rank` on (Zero Hour's science
+/// prerequisites, `SCIENCE_Rank1`/`3`/`5`); `rank` is 1 for every other power.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Power {
     pub name: &'static str,
@@ -544,6 +545,7 @@ pub struct Power {
     pub cooldown_ticks: u32,
     pub blind: bool,
     pub requires: Option<DefId>,
+    pub rank: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -746,9 +748,9 @@ impl Rules {
 
 /// Every power a player has, by slot: `general`'s first (slot 0, at the level their `rank`
 /// with it reaches, tuned by `perks`), or `None` in slot 0 without a general power, then
-/// `faction`'s support powers, then the powers `perks` add, in slotted order. Perk tunings
-/// add up (two -10% cooldown perks make -20%), as upgrade effects do; they apply to the
-/// general's power only.
+/// `faction`'s support powers (`None` for one their `rank` doesn't reach yet, so each keeps its
+/// slot and key), then the powers `perks` add, in slotted order. Perk tunings add up (two -10%
+/// cooldown perks make -20%), as upgrade effects do; they apply to the general's power only.
 pub fn powers(
     rules: &Rules,
     faction: Faction,
@@ -757,7 +759,7 @@ pub fn powers(
     perks: &[PerkId],
 ) -> Vec<Option<Power>> {
     let mut out = vec![general.and_then(|g| general_power(rules.general(g), rank)).map(|p| tuned(rules, p, perks))];
-    out.extend(rules.support_powers(faction).map(|&p| Some(p)));
+    out.extend(rules.support_powers(faction).map(|&p| (rank >= p.rank).then_some(p)));
     out.extend(perks.iter().filter_map(|&k| rules.perk(k).adds_power).map(Some));
     out
 }

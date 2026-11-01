@@ -328,7 +328,11 @@ impl Mission {
     /// The match this mission is played as: its seats, the player's played by `player` (a
     /// human for `None`), the enemies by their own AI levels (or idle) with what an AI general
     /// slots. With two enemies or more they are one team, so they fight only the player. The
-    /// difficulty is applied when the match starts (`World::with_mission`).
+    /// difficulty is applied when the match starts (`World::with_mission`). Every seat plays
+    /// at the top general rank, so it has all its faction's support powers: Zero Hour's
+    /// campaign grants each mission its sciences by script (`PLAYER_GRANT_SCIENCE`), and ours
+    /// were built and measured with every power (no side has a general, whose power and perks
+    /// the rank would also change).
     pub fn setup(&self, rules: &Rules, map: MapDef, seed: u64, player: Option<AiLevel>) -> MatchSetup {
         let players = self
             .sides
@@ -342,7 +346,7 @@ impl Mission {
                     ai,
                     general: s.general,
                     perks: ai.map_or_else(Vec::new, |level| crate::ai::ai_perks(rules, s.general, level)),
-                    rank: ai.map_or(1, crate::ai::ai_rank),
+                    rank: crate::defs::PERK_SLOTS as u8,
                     team: if i != PLAYER.0 as usize && self.sides.len() > 2 { ENEMY_TEAM } else { 0 },
                 }
             })

@@ -13,6 +13,8 @@ use g2_sim::{
 const P0: PlayerId = PlayerId(0);
 const P1: PlayerId = PlayerId(1);
 
+/// Two players without a general at `rank` 5, so every support power is theirs (the rank
+/// gate has its own test).
 fn setup(f0: Faction, f1: Faction) -> MatchSetup {
     let player = |faction| PlayerSetup {
         faction,
@@ -20,7 +22,7 @@ fn setup(f0: Faction, f1: Faction) -> MatchSetup {
         ai: None,
         general: None,
         perks: Vec::new(),
-        rank: 1,
+        rank: 5,
         team: 0,
     };
     MatchSetup { map: crater_ridge(), seed: 1, players: vec![player(f0), player(f1)] }
@@ -79,6 +81,35 @@ fn support_powers_have_their_own_slots_and_timers() {
         order(&mut w, P0, CommandKind::Power { slot: 9, at: Vec2::from_int(10, 10) }),
         vec![Reject::PowerNotReady]
     );
+}
+
+/// A support power is a player's from the general rank Zero Hour's science for it needs:
+/// at rank 1 only the recon (each locked power keeps its slot, so the keys stay), at rank 3
+/// the strikes and Sabotage too, at rank 5 the Fuel Air Bomb and GPS Scrambler. Each needs a
+/// command center, charging from the first tick with the starting one.
+#[test]
+fn support_powers_come_with_rank() {
+    let names = |f: Faction, rank: u8| {
+        let mut s = setup(f, Faction::Eu);
+        s.players[0].rank = rank;
+        World::new(&s, rules()).powers_of(P0).iter().map(|p| p.map(|p| p.name)).collect::<Vec<_>>()
+    };
+    assert_eq!(names(Faction::Eu, 1), vec![None, None, None, Some("UAV Spy Drone")]);
+    assert_eq!(names(Faction::Eu, 3), vec![None, Some("Air Raid"), None, Some("UAV Spy Drone")]);
+    assert_eq!(names(Faction::Eu, 5), vec![None, Some("Air Raid"), Some("Fuel Air Bomb"), Some("UAV Spy Drone")]);
+    assert_eq!(names(Faction::Apa, 1), vec![None, None, Some("Spy Sorties")]);
+    assert_eq!(names(Faction::Apa, 3), vec![None, Some("Carpet Bombing"), Some("Spy Sorties")]);
+    assert_eq!(names(Faction::Gla, 1), vec![None, Some("Scud Storm"), None, None]);
+    assert_eq!(names(Faction::Gla, 3), vec![None, Some("Scud Storm"), None, Some("Sabotage")]);
+    assert_eq!(names(Faction::Gla, 5), vec![None, Some("Scud Storm"), Some("GPS Scrambler"), Some("Sabotage")]);
+    let mut s = setup(Faction::Eu, Faction::Gla);
+    s.players[0].rank = 1;
+    let mut w = World::new(&s, rules());
+    assert_eq!(w.power_wait(P0, 3), Some(ready_at(Faction::Eu, 3)), "charging with the starting command center");
+    assert_eq!(w.power_wait(P0, 1), None, "locked");
+    run_until(&mut w, ready_at(Faction::Eu, 1));
+    let at = crater_ridge().spawns[0] + Vec2::from_int(20, 0);
+    assert_eq!(order(&mut w, P0, CommandKind::Power { slot: 1, at }), vec![Reject::PowerNotReady], "never");
 }
 
 /// Spy Sorties may be aimed into unexplored ground: the fighter flies in from behind the
@@ -272,6 +303,7 @@ fn the_normal_ai_uses_airstrikes() {
         for level in [g2_sim::AiLevel::Hard, g2_sim::AiLevel::Easy] {
             let mut s = setup(f, Faction::Gla);
             s.players[0].ai = Some(level);
+            s.players[0].rank = g2_sim::ai::ai_rank(level);
             s.players[1].ai = Some(g2_sim::AiLevel::Onslaught);
             let mut w = World::new(&s, rules());
             let mut used = Vec::new();
@@ -387,6 +419,8 @@ fn a_scud_storm_strikes_and_poisons() {
     assert_eq!((fired, landed), (8, 8), "eight missiles from the silo, all at the point");
     assert!(first_fired.unwrap() >= ready + g2_sim::TICKS_PER_SECOND * 6, "6 s before launch");
     assert!(w.entity(cc).is_none(), "the command center fell");
+    let gone: Vec<_> = (1..=3).map(|slot| w.power_wait(P1, slot)).collect();
+    assert_eq!(gone, vec![None; 3], "and the EU's support powers with it (its power plant stands)");
     assert!((8..=10).contains(&dozer_hits), "a cloud hit each second for 9 s: {dozer_hits}");
     assert!(w.clouds().is_empty(), "the cloud is gone");
 }

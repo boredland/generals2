@@ -14,6 +14,7 @@ const S: u32 = g2_sim::TICKS_PER_SECOND;
 
 /// A world of one mission on Crater Ridge: seat 0 (`ai` at `level`, its command center at
 /// `HOME`) against seat 1 (`enemy`, idle), with `forces` and `triggers`. Nobody wins early.
+/// As in every mission, both seats have all their faction's support powers.
 fn scene(ai: Faction, level: AiLevel, enemy: Faction, forces: Vec<Force>, triggers: Vec<Trigger>) -> World {
     let base = rules();
     let sides = vec![
