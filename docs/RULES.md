@@ -37,7 +37,7 @@ Decimals are read as exact ratios (`3.5` is 7/2), never as floats, so a value gi
 
 A field left out takes the default shown; one without a default is required. A field the reader doesn't know is an error, so a misspelt name doesn't pass silently.
 
-**Weapon** (in `weapons.toml`, or in place: `weapon = { damage = 46, range = 45, cooldown = 2.25 }`): `damage`, `range`, `cooldown` (time between shots), `bonus` ({}), `targets` (`"ground"`; `"air"`, `"both"`), `air_range` (the range against aircraft, else `range`), `shell` (an artillery shell: `{ radius, speed, min_range }`), `garrison_bonus` (0, extra damage to a building with units inside), `suicidal` (false: firing destroys the unit, its `blast` deals the damage), `splash` (0: radius hit around a direct-fire target).
+**Weapon** (in `weapons.toml`, or in place: `weapon = { damage = 46, range = 45, cooldown = 2.25 }`): `damage`, `range`, `cooldown` (time between shots), `bonus` ({}), `targets` (`"ground"`; `"air"`, `"both"`), `air_range` (the range against aircraft, else `range`), `shell` (an artillery shell: `{ radius, speed, min_range }`), `garrison_bonus` (0, extra damage to a building with units inside), `suicidal` (false: firing destroys the unit, its `blast` deals the damage), `splash` (0: radius hit around a direct-fire target), `structure_percent` (100: the share, 0-100, of a hit's damage, bonus included, that buildings and bridges take; direct fire only, a shell refuses it; infantry guns and rockets set 50, as Zero Hour's structure armour takes small arms).
 
 **Blast** (`blast` of a unit, special, ability): `damage`, `radius`, `bonus` ({}), `cloud` (none: `{ radius, damage, duration }`, damage a second).
 

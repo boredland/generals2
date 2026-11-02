@@ -235,6 +235,31 @@ fn toughness_cuts_damage_taken_by_the_listed_defs() {
     );
 }
 
+/// Infantry weapons hit buildings for half, as Zero Hour's `StructureArmor` takes its small
+/// arms and infantry missiles: a Red Guard squad's rifles (13) do 6 to a command center and
+/// the full 13 to a bulldozer; a Warlord's gun does its full 40 to the same command center.
+#[test]
+fn infantry_does_half_damage_to_buildings() {
+    let mut w = world(Faction::Eu, Faction::Apa);
+    let barracks = build(&mut w, P1, APA_BARRACKS, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
+    let squad = train(&mut w, P1, barracks, APA_RED_GUARD);
+    let factory = build(&mut w, P1, APA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(0, -40));
+    let tank = train(&mut w, P1, factory, APA_WARLORD);
+    let cc = first(&w, P0, EU_CC).unwrap();
+    let cc_pos = w.entity(cc).unwrap().pos;
+    w.submit(P1, CommandKind::Move { units: vec![squad, tank], target: cc_pos + Vec2::from_int(22, 0) });
+    step_until(&mut w, 30 * 120, "command center in sight", |w| w.vision(P1).is_visible(cc_pos));
+    let rifles = direct(&hits(&mut w, squad, cc, 30 * 5));
+    assert!(!rifles.is_empty() && rifles.iter().all(|&d| d == 6), "rifles on the command center: {rifles:?}");
+    let gun = direct(&hits(&mut w, tank, cc, 30 * 5));
+    assert!(!gun.is_empty() && gun.iter().all(|&d| d == 40), "tank gun on the command center: {gun:?}");
+    let dozer = first(&w, P0, EU_DOZER).unwrap();
+    let near = w.entity(squad).unwrap().pos + Vec2::from_int(8, 0);
+    bring(&mut w, dozer, near, P1);
+    let on_dozer = direct(&hits(&mut w, squad, dozer, 30 * 3));
+    assert!(!on_dozer.is_empty() && on_dozer.iter().all(|&d| d == 13), "rifles on a unit: {on_dozer:?}");
+}
+
 /// Population Control adds a man's hit points to every Red Guard squad: ones already fielded
 /// gain them on top of their current hit points (Zero Hour's `ADD_CURRENT_HEALTH_TOO`), new
 /// ones roll out with the higher maximum.

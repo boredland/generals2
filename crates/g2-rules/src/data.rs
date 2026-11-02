@@ -525,7 +525,18 @@ fn weapon_table(mut t: Entry) -> Res<Weapon> {
         garrison_bonus: t.or("garrison_bonus", 0, Val::int)?,
         suicidal: t.or("suicidal", false, Val::bool)?,
         splash: t.or("splash", Fx::ZERO, Val::dist)?,
+        structure_percent: t.or("structure_percent", 100, |v| {
+            let p: i32 = v.int()?;
+            if !(0..=100).contains(&p) {
+                return Err(v.err("expected 0-100"));
+            }
+            Ok(p)
+        })?,
     };
+    // A landing shell carries its damage and bonus, not this share (`World::land_shells`).
+    if w.shell.is_some() && w.structure_percent != 100 {
+        return Err(t.err("structure_percent is for direct fire, not shells"));
+    }
     t.done()?;
     Ok(w)
 }

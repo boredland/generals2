@@ -1,6 +1,13 @@
 # Named weapons, shared by several units (`weapon = "rifles"`); a unit with a weapon of its
 # own writes it in place. Fields and units: docs/RULES.md. The bonus is extra damage per
 # armour class, the way the archived cards state it ("40 (Bonus: 30 vs. Light)").
+#
+# Infantry rifles, machine guns and rockets take `structure_percent = 50`: Zero Hour's
+# `StructureArmor` (Armor.ini) takes `SMALL_ARMS` and `INFANTRY_MISSILE` at 50%, tank guns
+# (`ARMOR_PIERCING`) and explosives at 100%. Measured before, a squad force did about three
+# times Zero Hour's damage per credit to a building (a $1,200 rifle force razed an 800 hp
+# barracks in 6 s; Zero Hour's Rangers, 18 s). The alpha's buildings carry `ArmorRating 6`,
+# but how a rating cuts damage isn't archived, so the rule is Zero Hour's.
 
 # src: Red Guard (APA basic infantry): 13 (+2 vs. infantry), cooldown 0.9, range 25. Recon
 # squad and Rabble squad have no weapon card; they reuse it as a placeholder.
@@ -9,6 +16,7 @@ damage = 13
 bonus = { infantry = 2 }
 range = 25
 cooldown = 0.9
+structure_percent = 50
 
 # src: Warlord tank: 40 (bonus 30 vs. Light), cooldown 1.50, range 35. Placeholder for Aegis.
 [tank_gun]
@@ -70,3 +78,4 @@ range = 30
 cooldown = 2
 targets = "both"
 air_range = 40
+structure_percent = 50

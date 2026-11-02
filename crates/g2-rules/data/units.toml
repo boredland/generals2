@@ -176,6 +176,7 @@ damage = 12
 bonus = { infantry = 4, light = 4 }
 range = 20
 cooldown = 1
+structure_percent = 50
 
 # src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
 # placeholders: cheaper, faster and weaker than the Warlord. Black Market Nitro (the
@@ -294,6 +295,7 @@ damage = 45
 bonus = { heavy = 90 }
 range = 30
 cooldown = 2.5
+structure_percent = 50
 
 # Placeholder throughout: no GLA anti-armour infantry is archived. A Rabble-priced squad
 # with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks. The
@@ -319,6 +321,7 @@ range = 26
 cooldown = 2
 targets = "both"
 air_range = 26
+structure_percent = 50
 
 # src: Armored Personnel Carrier hp 390, Light, $435, 14.66 s, EU war factory; machine gun
 # 46, cooldown 2.25, range 45; land speed 19. Carries two infantry squads who can't fire
@@ -571,6 +574,7 @@ damage = 25
 bonus = { infantry = 200 }
 range = 50
 cooldown = 4
+structure_percent = 50
 
 # Assault APC (eu_apcassault): hp 440, $600, 13 s; machine gun 28, 32, 1.5 s; carries two.
 [[unit]]
@@ -610,6 +614,7 @@ ranks = { health = 21, cooldown_percent = 94 }
 damage = 49
 range = 25
 cooldown = 1.2
+structure_percent = 50
 
 # Heavy Assault Laser (eu_heavylasertank): hp 600 (the wiki's 1000), $1200, 22 s; laser
 # 110, 35, 3 s. A direct-fire gun stands in for the beam.
@@ -867,6 +872,7 @@ ranks = { health = 12, cooldown_percent = 95 }
 damage = 44
 range = 20
 cooldown = 2
+structure_percent = 50
 
 # Battle Bus (gu_battlebus): hp 525, $750, 14 s, unarmed; carries four squads who can't
 # fire out. Its two unlocked abilities are the passive GLA_BattleBusBunker (the wiki: it
@@ -1052,6 +1058,7 @@ damage = 50
 range = 30
 cooldown = 1.5
 splash = 8
+structure_percent = 50
 
 # src: the alpha's au_commandosquad (built at the APA command center): MaxHealth 610, $1800,
 # BuildTime 24 s, MovementRate 14, ArmorRating 1, EntityRadius 2; au_commando's sniper
@@ -1076,6 +1083,7 @@ damage = 100
 bonus = { infantry = 42 }
 range = 50
 cooldown = 4.2
+structure_percent = 50
 
 # src: the alpha's gu_commandosquad (built at gs_cc): MaxHealth 510, $1800, BuildTime 24 s,
 # MovementRate 14, ArmorRating 1, EntityRadius 2; no weapon of its own (its weapon

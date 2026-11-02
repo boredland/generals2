@@ -80,6 +80,9 @@ fn weapon_lines(label: &str, w: Weapon) -> Vec<Line> {
     if !weak.is_empty() {
         out.push(Line::Info(format!("Weak vs {}", weak.join(", "))));
     }
+    if w.structure_percent < 100 {
+        out.push(Line::Info(format!("{}% damage to structures", w.structure_percent)));
+    }
     out
 }
 

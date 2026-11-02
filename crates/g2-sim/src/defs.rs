@@ -107,7 +107,9 @@ impl Targets {
 /// off its `Def::blast` instead of dealing the weapon's damage. A direct-fire weapon with a
 /// `splash` also hits the other enemy ground units and buildings around its target (the
 /// alpha's `RtsWeaponAbilitySphereDamage`): full damage within three quarters of it, 40% out
-/// to the whole of it.
+/// to the whole of it. `structure_percent` is the share of its damage (bonus included) a
+/// structure takes: Zero Hour's `StructureArmor` takes its infantry's `SMALL_ARMS` and
+/// `INFANTRY_MISSILE` at 50%, everything else here at 100%. Direct fire only.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Weapon {
     pub damage: i32,
@@ -121,12 +123,14 @@ pub struct Weapon {
     pub garrison_bonus: i32,
     pub suicidal: bool,
     pub splash: Fx,
+    pub structure_percent: i32,
 }
 
 impl Weapon {
     /// At least 1, so every hit counts.
     pub fn damage_vs(&self, armour: Armour) -> i32 {
-        (self.damage + self.bonus[armour as usize]).max(1)
+        let d = (self.damage + self.bonus[armour as usize]).max(1);
+        if armour == Armour::Structure { (d * self.structure_percent / 100).max(1) } else { d }
     }
 
     /// Its reach against a target that flies or not; `None` if it can't fire at one.
