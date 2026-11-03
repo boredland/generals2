@@ -19,7 +19,8 @@
 ranks = { at = [3, 6, 10], idle_regen = 5 }
 
 # ---- European Union ------------------------------------------------------------------
-# src: Bulldozer hp 250, armour Heavy, land speed 14.
+# src: Bulldozer hp 250, armour Heavy, land speed 14. Build time: the alpha's
+# eu_constructionunit (`BuildTime` 10 s).
 [[unit]]
 id = "eu_dozer"
 name = "EU Bulldozer"
@@ -27,7 +28,7 @@ faction = "eu"
 hp = 250
 armour = "heavy"
 cost = 500
-build_time = 12
+build_time = 10
 radius = 2
 speed = 14
 constructor = true
@@ -56,7 +57,7 @@ speed = 24
 collector = { capacity = 190, load_time = 4, unload_time = 1 }
 
 # ---- Asia-Pacific Alliance -----------------------------------------------------------
-# src: Crane hp 280, $150, 11 s.
+# src: Crane hp 280, $150; build time the alpha's au_constructionunit (10 s; the card's 11 s).
 [[unit]]
 id = "apa_crane"
 name = "APA Crane"
@@ -64,13 +65,13 @@ faction = "apa"
 hp = 280
 armour = "light"
 cost = 150
-build_time = 11
+build_time = 10
 radius = 2
 speed = 13
 constructor = true
 builds = ["apa_supply", "apa_power", "apa_derrick", "apa_barracks", "apa_factory", "apa_airfield", "apa_flame_turret"]
 
-# src: APA harvester $300, 0:19.
+# src: APA harvester $300; build time the alpha's au_harvester (17 s; the card's 0:19).
 [[unit]]
 id = "apa_harvester"
 name = "APA Harvester"
@@ -78,13 +79,14 @@ faction = "apa"
 hp = 350
 armour = "light"
 cost = 300
-build_time = 19
+build_time = 17
 radius = 2
 speed = 18
 collector = { capacity = 100, load_time = 3, unload_time = 1 }
 
 # ---- Global Liberation Army ----------------------------------------------------------
-# src: workers construct and gather supplies.
+# src: workers construct and gather supplies. Build time: the alpha's
+# gu_constructionunitsquad (11 s).
 [[unit]]
 id = "gla_worker"
 name = "GLA Worker"
@@ -92,7 +94,7 @@ faction = "gla"
 hp = 120
 armour = "infantry"
 cost = 200
-build_time = 8
+build_time = 11
 radius = 2
 speed = 16
 constructor = true
@@ -102,7 +104,8 @@ builds = ["gla_stash", "gla_derrick", "gla_barracks", "gla_factory", "gla_salvag
 # ---- Combat ----------------------------------------------------------------------------
 # Ranks: each unit's rank-1 health and rank-3 fire interval come from the alpha
 # unit it stands for (EU Howitzer: the rocket vehicle).
-# src: Recon squad hp 200, basic infantry. Cost, time, speed and weapon: Red Guard's.
+# src: Recon squad hp 200, basic infantry. Cost, speed and weapon: Red Guard's. Build time:
+# the alpha's eu_riflesoldiersquad (8 s).
 [[unit]]
 id = "eu_recon"
 name = "EU Recon Squad"
@@ -110,13 +113,14 @@ faction = "eu"
 hp = 200
 armour = "infantry"
 cost = 150
-build_time = 6.27
+build_time = 8
 radius = 2
 speed = 9
 ranks = { health = 21, cooldown_percent = 93 }
 weapon = "rifles"
 
-# src: Aegis tank hp 660, $990, 24.44 s, main battle tank. Armour, speed, gun: Warlord's.
+# src: Aegis tank hp 660, $990, main battle tank; build time the alpha's eu_mediumcannontank
+# (18 s; the card's 24.44 s). Armour, speed, gun: Warlord's.
 [[unit]]
 id = "eu_aegis"
 name = "EU Aegis Tank"
@@ -124,13 +128,14 @@ faction = "eu"
 hp = 660
 armour = "heavy"
 cost = 990
-build_time = 24.44
+build_time = 18
 radius = 3.5
 speed = 9
 ranks = { health = 90, cooldown_percent = 92 }
 weapon = "tank_gun"
 
-# src: Red Guard hp 180, Infantry, $150, 6.27 s, land speed 9.
+# src: Red Guard hp 180, Infantry, $150, land speed 9; build time the alpha's
+# au_riflesoldiersquad (7 s; the card's 6.27 s).
 [[unit]]
 id = "apa_red_guard"
 name = "APA Red Guard"
@@ -138,13 +143,14 @@ faction = "apa"
 hp = 180
 armour = "infantry"
 cost = 150
-build_time = 6.27
+build_time = 7
 radius = 2
 speed = 9
 ranks = { health = 12, cooldown_percent = 94 }
 weapon = "rifles"
 
-# src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9. Build time: Aegis's.
+# src: Warlord tank hp 610, Heavy Mechanical, $990, land speed 9; build time the alpha's
+# au_mediumcannontank (18 s).
 [[unit]]
 id = "apa_warlord"
 name = "APA Warlord Tank"
@@ -152,13 +158,14 @@ faction = "apa"
 hp = 610
 armour = "heavy"
 cost = 990
-build_time = 24.44
+build_time = 18
 radius = 3.5
 speed = 9
 ranks = { health = 68, cooldown_percent = 93 }
 weapon = "tank_gun"
 
-# src: Rabble squad: anti-infantry / light-armour infantry. Numbers are placeholders.
+# src: Rabble squad: anti-infantry / light-armour infantry. Build time the alpha's
+# gu_rebelsoldiersquad and gu_rabblesquad (7 s); the other numbers are placeholders.
 [[unit]]
 id = "gla_rabble"
 name = "GLA Rabble Squad"
@@ -166,7 +173,7 @@ faction = "gla"
 hp = 160
 armour = "infantry"
 cost = 120
-build_time = 6
+build_time = 7
 radius = 2
 speed = 10
 ranks = { health = 30, cooldown_percent = 94 }
@@ -178,9 +185,10 @@ range = 20
 cooldown = 1
 structure_percent = 50
 
-# src: Scorpion tanks "are lightly armored but find strength in numbers". Numbers are
-# placeholders: cheaper, faster and weaker than the Warlord. Black Market Nitro (the
-# alpha's gla_mediumcannonnitro, an instant ability with no numbers): the `nitro` ability.
+# src: Scorpion tanks "are lightly armored but find strength in numbers". Build time the
+# alpha's gu_mediumcannontank (14 s); the other numbers are placeholders: cheaper, faster and
+# weaker than the Warlord. Black Market Nitro (the alpha's gla_mediumcannonnitro, an instant
+# ability with no numbers): the `nitro` ability.
 [[unit]]
 id = "gla_tank"
 name = "GLA Scorpion Tank"
@@ -188,7 +196,7 @@ faction = "gla"
 hp = 420
 armour = "light"
 cost = 700
-build_time = 18
+build_time = 14
 radius = 3.5
 speed = 11
 ranks = { health = 72, cooldown_percent = 92 }
@@ -200,7 +208,8 @@ bonus = { light = 15 }
 range = 30
 cooldown = 1.2
 
-# src: Thunderfist hp 600, Heavy Mechanical, $980, 21.51 s, heavy war factory; moves with a
+# src: Thunderfist hp 600, Heavy Mechanical, $980, heavy war factory; build time the alpha's
+# au_heavycannonartillery (24 s; the card's 21.51 s); moves with a
 # cannon and deploys for a howitzer. Speed and set-up time are placeholders: speed 8 (7
 # before; on the 33 maps Normal APA won 54 of 131 at 7, 64 of 129 at 8) and set-up 2 s (3 s
 # before; with the EU harvester's 4 s load, Normal APA 64 of 129 at 3 s, 67 of 130 at 2 s,
@@ -212,7 +221,7 @@ faction = "apa"
 hp = 600
 armour = "heavy"
 cost = 980
-build_time = 21.51
+build_time = 24
 radius = 3.5
 speed = 8
 ranks = { health = 45, cooldown_percent = 80 }
@@ -222,7 +231,8 @@ weapon = "thunderfist_cannon"
 time = 2
 weapon = "howitzer"
 
-# src: Toxin Artillery hp 950, $1000, 30.11 s, GLA war factory, anti-ground artillery.
+# src: Toxin Artillery hp 950, $1000, GLA war factory, anti-ground artillery; build time the
+# alpha's gu_heavytoxinartillery (24 s; the card's 30.11 s).
 # Weapon, armour (Light, like the Scorpion) and speed are placeholders; it fires on the move.
 [[unit]]
 id = "gla_toxin_artillery"
@@ -231,7 +241,7 @@ faction = "gla"
 hp = 950
 armour = "light"
 cost = 1000
-build_time = 30.11
+build_time = 24
 radius = 3.5
 speed = 7
 ranks = { health = 105, cooldown_percent = 95 }
@@ -254,7 +264,8 @@ ranks = { health = 39, cooldown_percent = 93 }
 weapon = "eu_shell"
 
 # ---- Anti-armour infantry and fast vehicles ----------------------------------------------
-# src: Rocket Squad hp 180, $300, 16.29 s, EU barracks, anti-armour. Weapon and speed:
+# src: Rocket Squad hp 180, $300, EU barracks, anti-armour; build time the alpha's
+# eu_rocketsoldiersquad (12 s; the card's 16.29 s). Weapon and speed:
 # the `rockets` weapon, a placeholder. The alpha's squad also fires up at aircraft, reaching 40 there
 # (its "Anti-air Attack" spec) against 30 on the ground.
 [[unit]]
@@ -301,6 +312,7 @@ structure_percent = 50
 # with a shorter-ranged rocket, so the GLA has an answer to armour from its barracks. The
 # alpha's RPG targets ground and air alike (`TargetType` 0), at the same reach.
 # src: stealthed, the alpha's passive `GLA_RocketSoldier_Stealth`, unlocked from the start.
+# Build time: the alpha's gu_rocketsoldiersquad (13 s).
 [[unit]]
 id = "gla_rpg"
 name = "GLA RPG Squad"
@@ -308,7 +320,7 @@ faction = "gla"
 hp = 150
 armour = "infantry"
 cost = 250
-build_time = 14
+build_time = 13
 radius = 2
 speed = 9
 stealth = true
@@ -323,7 +335,8 @@ targets = "both"
 air_range = 26
 structure_percent = 50
 
-# src: Armored Personnel Carrier hp 390, Light, $435, 14.66 s, EU war factory; machine gun
+# src: Armored Personnel Carrier hp 390, Light, $435, EU war factory; build time the alpha's
+# eu_apc (12 s; the card's 14.66 s); machine gun
 # 46, cooldown 2.25, range 45; land speed 19. Carries two infantry squads who can't fire
 # from inside (the alpha's `RtsGarrisonComponentData`: capacity 2, no attack from garrison).
 # The repair turret is not modelled.
@@ -334,7 +347,7 @@ faction = "eu"
 hp = 390
 armour = "light"
 cost = 435
-build_time = 14.66
+build_time = 12
 radius = 2
 speed = 19
 ranks = { health = 54, cooldown_percent = 93 }
@@ -345,7 +358,8 @@ damage = 46
 range = 45
 cooldown = 2.3
 
-# src: Gatling Tank hp 490, $660, 23.3 s, APA war factory, light armour, anti-infantry
+# src: Gatling Tank hp 490, $660, APA war factory, light armour, anti-infantry; build time
+# the alpha's au_mediumguntank (16 s; the card's 23.3 s)
 # (anti-air too). src: speed and guns from the alpha's au_mediumguntank: `MovementRate` 11;
 # GatlingGun_Ground 14 (+8 vs. infantry) every 0.5 s, and GatlingGun_Air 14 (+8 vs. light),
 # reaching 50. A unit has one weapon here, so it is one gun with both bonuses. Placeholder:
@@ -361,7 +375,7 @@ faction = "apa"
 hp = 490
 armour = "light"
 cost = 660
-build_time = 23.3
+build_time = 16
 radius = 3.5
 speed = 11
 ranks = { health = 60, cooldown_percent = 90 }
@@ -375,7 +389,8 @@ targets = "both"
 air_range = 50
 
 # src: Technical, GLA light utility vehicle with a 12.7 mm machine gun; the card has no
-# numbers. Placeholder: the cheapest, fastest vehicle in the game, fragile.
+# numbers. Build time the alpha's gu_lightreconvehicle (12 s). Placeholder otherwise: the
+# cheapest, fastest vehicle in the game, fragile.
 [[unit]]
 id = "gla_technical"
 name = "GLA Technical"
@@ -383,7 +398,7 @@ faction = "gla"
 hp = 280
 armour = "light"
 cost = 400
-build_time = 10
+build_time = 12
 radius = 2
 speed = 17
 ranks = { health = 23, cooldown_percent = 93 }
@@ -396,7 +411,7 @@ cooldown = 0.6
 
 # ---- Aircraft ----------------------------------------------------------------------------
 # src: the alpha's helicopters, `RtsMovementComponentData` and weapon specs. EU heavy rocket
-# helo (the Valkyrie; card hp 621, $1250, 32.58 s): speed 12, rockets 120 every 6 s at 60,
+# helo (the Valkyrie; card hp 621, $1250; the alpha's 24 s build): speed 12, rockets 120 every 6 s at 60,
 # ground only. APA light gun helo (the Mantis; card hp 322): speed 16, machine gun 42 (+28
 # anti-armour) every 1.125 s at 35, ground only, $950, 24 s. GLA light chemical helo (the
 # Toxin Chopper): speed 19, toxin missiles 26 (+12 vs infantry) every 1.125 s at 30, ground
@@ -410,7 +425,7 @@ faction = "eu"
 hp = 621
 armour = "light"
 cost = 1250
-build_time = 32.58
+build_time = 24
 radius = 4
 speed = 12
 flies = true

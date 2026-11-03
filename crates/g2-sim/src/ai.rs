@@ -95,6 +95,18 @@ fn best_against(w: Weapon) -> usize {
     (0..3).filter(|&a| w.bonus[a] > 0).max_by_key(|&a| (w.bonus[a], std::cmp::Reverse(a))).unwrap_or(usize::MAX)
 }
 
+/// Whether the player can still earn: a derrick of theirs, or a supply pile with credits left
+/// anywhere. Without income an army can't grow to a wave any more, so it goes as it is, or a
+/// match between two spent bases never ends (Easy APA against EU on Crater Ridge, once the EU
+/// harvester carried the alpha's 190 a trip: three EU units waited at home from 7:00 on; a
+/// Hard 2v2 on Tournament Tundra, once units trained at the alpha's pace: five EU and eight
+/// APA units waited from 20:00 on).
+fn has_income(world: &World, mine: &[&Entity]) -> bool {
+    let rules = world.rules;
+    mine.iter().any(|e| matches!(rules.def(e.def).role(), Some(BuildingRole::OilDerrick { .. })))
+        || world.entities().any(|e| matches!(rules.def(e.def).class, Class::SupplyPile) && e.resource > 0)
+}
+
 /// The fighting strength (`strength`, at full health, undeployed) of `faction`'s strongest
 /// standard unit: the bar a strike's target must clear. Fixed by the rules, not the general:
 /// an elite general's unit (a railgun tank) would set the bar out of reach of its own
@@ -874,14 +886,8 @@ impl Ai {
             }
         }
         let idle: Vec<EntityId> = army.iter().filter(|e| e.order == Order::Idle).map(|e| e.id).collect();
-        // With every pile spent and no derrick of ours, the army can't grow to a wave any more:
-        // it goes as it is, or a match between two spent bases never ends (Easy APA against EU on
-        // Crater Ridge, once the EU harvester carried the alpha's 190 a trip: three EU units
-        // waited at home from 7:00 on).
-        let income = mine.iter().any(|e| matches!(rules.def(e.def).role(), Some(BuildingRole::OilDerrick { .. })))
-            || world.entities().any(|e| matches!(rules.def(e.def).class, Class::SupplyPile) && e.resource > 0);
         if world.tick() >= self.pace.first_attack
-            && (idle.len() >= WAVE || (!income && !idle.is_empty()))
+            && (idle.len() >= WAVE || (!has_income(world, mine) && !idle.is_empty()))
             && let Some(home) = home
             && let Some(target) = self.enemy_base(world, home)
         {
@@ -1064,14 +1070,14 @@ impl Ai {
 
         // New wave: every idle armed unit, at home or left in the field by an earlier wave,
         // once it outweighs the enemy army seen lately by half, the army isn't regrouping and
-        // its pace lets it attack.
+        // its pace lets it attack; or, with no income left, whatever is idle (`has_income`).
         if world.tick() < self.regroup_until.max(self.pace.first_attack) {
             return;
         }
         let idle: Vec<&&Entity> = army.iter().filter(|e| e.order == Order::Idle).collect();
         let ready = sum(&mut idle.iter().copied());
-        if idle.len() >= NORMAL_WAVE
-            && ready * 2 >= self.enemy_seen * 3
+        let strong = idle.len() >= NORMAL_WAVE && ready * 2 >= self.enemy_seen * 3;
+        if (strong || (!has_income(world, mine) && !idle.is_empty()))
             && let Some(target) = self.enemy_base(world, home)
         {
             out.push(CommandKind::AttackMove { units: idle.iter().map(|e| e.id).collect(), target });

@@ -275,14 +275,15 @@ pub static MISSIONS: [Mission; 8] = [
                    building around it. If our command center falls, the operation is over.",
         sides: &[
             Side { faction: Eu, credits: 5_000, ai: Some(Easy), general: None, builds: None },
-            // Measured with the `Normal` AI in the player's seat and units steering around each
-            // other: 3,000 credits and the six Gatlings below is the hardest of the settings tried
-            // (2,750 to 3,750 credits, two to six Gatlings) that it still wins with 4,500, 5,000
-            // and 5,500 credits of its own (at 7:35 with 5,000). Results don't grow with the
-            // enemy's strength: 3,750 credits win only with two Gatlings, 3,250 lose with six, and
-            // four Gatlings lose with 5,000 at any credit level from 3,000 up. Before steering,
-            // 3,750 credits and five Gatlings was the hardest it won (now lost at 10:25).
-            Side { faction: Apa, credits: 3_000, ai: Some(Normal), general: None, builds: None },
+            // Measured with the `Normal` AI in the player's seat: the hardest of the settings tried
+            // (two to six Gatlings, 2,000 to 3,000 credits) that it still wins on Easy and Normal with
+            // 4,500, 5,000 and 5,500 credits of its own is five Gatlings and 2,000 credits (four and
+            // 2,500 also; won at 4:42 on Normal with 5,000). Results don't grow with the enemy's
+            // strength: six Gatlings lose on Normal at every credit level tried, three lose with
+            // 4,500. With the alpha's faster build times the APA's war factory outbuilt the old
+            // setting (six Gatlings, 3,000 credits: lost at 1:52); with the cards' slower ones it
+            // was the hardest won, and before units steered, 3,750 credits and five Gatlings.
+            Side { faction: Apa, credits: 2_000, ai: Some(Normal), general: None, builds: None },
         ],
         forces: &[
             f(0, EU_CC, 167, 352).tagged(1),
@@ -305,7 +306,7 @@ pub static MISSIONS: [Mission; 8] = [
             f(1, APA_RED_GUARD, 150, 160).times(4),
             f(1, APA_TANK_HUNTER, 130, 150).times(2),
             f(1, APA_WARLORD, 190, 165).times(2),
-            f(1, APA_GATLING, 215, 150).times(6),
+            f(1, APA_GATLING, 215, 150).times(5),
         ],
         objectives: &[
             Objective { text: "Destroy the APA headquarters.", goal: Goal::Destroy { tag: 2 } },

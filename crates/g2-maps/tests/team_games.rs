@@ -4,10 +4,12 @@ use g2_rules::rules;
 use g2_sim::world::Event;
 use g2_sim::{AiLevel, Faction, MatchSetup, PlayerId, PlayerSetup, World, verify_replay};
 
-/// A 2v2 of Normal AIs on Tournament Tundra (the west starts on team 1, the east on team 2),
-/// each faction in each seat once: every match ends within 20 minutes with one side standing
+/// A 2v2 of Hard AIs on Tournament Tundra (the west starts on team 1, the east on team 2),
+/// each faction in each seat once: every match ends within 25 minutes with one side standing
 /// and everyone on it winning, no one ever hits an ally (direct fire, shells or powers), and
-/// the replay plays back to the same state. Measured: the three end at 695, 563 and 426 s.
+/// the replay plays back to the same state. Measured: the three end at 1244, 626 and 819 s
+/// (695, 563 and 426 s before units trained at the alpha's pace; the first then outlasted 40
+/// minutes until an AI with no income left sent what it had instead of waiting for a wave).
 #[test]
 fn normal_ais_play_a_two_on_two_to_the_end() {
     let map = g2_maps::resolve("gen:Tournament Tundra").unwrap();
@@ -26,7 +28,7 @@ fn normal_ais_play_a_two_on_two_to_the_end() {
             .collect();
         let s = MatchSetup { map: map.clone(), seed: 1, players };
         let mut ally_hits = 0;
-        let (end, replay) = g2_sim::record(World::new(&s, rules()), &s, 30 * 60 * 20, |w| {
+        let (end, replay) = g2_sim::record(World::new(&s, rules()), &s, 30 * 60 * 25, |w| {
             if w.winner().is_some() {
                 return;
             }
@@ -36,7 +38,7 @@ fn normal_ais_play_a_two_on_two_to_the_end() {
                 .filter(|e| matches!(e, Event::Hit { by, victim: Some(v), .. } if by != v && w.allied(*by, *v)))
                 .count();
         });
-        let winner = end.winner().unwrap_or_else(|| panic!("rotation {rot}: no side won in 20 minutes"));
+        let winner = end.winner().unwrap_or_else(|| panic!("rotation {rot}: no side won in 25 minutes"));
         let side: Vec<bool> = (0..4).map(|i| end.won(PlayerId(i))).collect();
         assert!(side == [true, true, false, false] || side == [false, false, true, true], "{rot}: {side:?}");
         assert!(end.won(winner));
