@@ -164,7 +164,11 @@ fn aircraft_fly_straight_over_impassable_terrain() {
 #[test]
 fn only_weapons_that_target_the_air_hit_aircraft() {
     let mut w = world(Faction::Apa, Faction::Eu);
-    let factory = build(&mut w, P0, APA_FACTORY, Vec2::from_int(120, 80));
+    // The starting harvesters stay home: gathering by the field, they would draw the Valkyrie off.
+    let harvesters: Vec<_> =
+        w.entities().filter(|e| e.owner == Some(P0) && e.def == APA_HARVESTER).map(|e| e.id).collect();
+    w.submit(P0, CommandKind::Stop { units: harvesters });
+    let factory = build(&mut w, P0, APA_FACTORY, Vec2::from_int(110, 80));
     let apa_air = build(&mut w, P0, APA_AIRFIELD, Vec2::from_int(150, 45));
     let eu_air = build(&mut w, P1, EU_AIRFIELD, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
     let field = Vec2::from_int(200, 200);
@@ -195,7 +199,7 @@ fn only_weapons_that_target_the_air_hit_aircraft() {
 fn shells_burst_on_the_ground_only() {
     let mut w = world(Faction::Eu, Faction::Gla);
     let factory = build(&mut w, P0, EU_FACTORY, Vec2::from_int(110, 80));
-    let gla_factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
+    let gla_factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, -30));
     let spot = Vec2::from_int(220, 220);
     let tank = unit_at(&mut w, P1, gla_factory, GLA_TANK, spot);
     let chopper = unit_at(&mut w, P1, gla_factory, GLA_TOXIN_CHOPPER, spot);
@@ -216,7 +220,7 @@ fn shells_burst_on_the_ground_only() {
 #[test]
 fn aircraft_and_ground_units_share_a_spot() {
     let mut w = world(Faction::Gla, Faction::Eu);
-    let factory = build(&mut w, P0, GLA_FACTORY, Vec2::from_int(110, 80));
+    let factory = build(&mut w, P0, GLA_FACTORY, Vec2::from_int(110, 110));
     let spot = Vec2::from_int(200, 200);
     let tank = unit_at(&mut w, P0, factory, GLA_TANK, spot);
     let parked = w.entity(tank).unwrap().pos;

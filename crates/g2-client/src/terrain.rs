@@ -1341,7 +1341,9 @@ mod tests {
             .find(|e| e.owner == Some(sim.local) && sim.world.rules.def(e.def).is_constructor())
             .unwrap();
         let (home, dozer) = (to_world(dozer.pos).xz(), dozer.id);
-        let spot = home + Vec2::new(70.0, 0.0);
+        // Away from the starting supply center (east of the command center) and its
+        // collectors' trips to the pile, so nothing but the dozer explores it.
+        let spot = home + Vec2::new(0.0, 70.0);
         let mut app = App::new();
         app.insert_resource(sim).add_systems(Update, clear_under_buildings);
         // Beside the dozer, clear of the command center's footprint: seen from the start.

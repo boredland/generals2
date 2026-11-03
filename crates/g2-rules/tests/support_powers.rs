@@ -202,7 +202,12 @@ fn an_air_raid_bombs_the_point() {
 fn anti_air_shoots_the_bombers_down() {
     let s = setup(Faction::Eu, Faction::Gla);
     let mut w = World::new(&s, rules());
-    let at = s.map.spawns[0] + Vec2::from_int(110, 0);
+    // Far enough east that the sites' rockets don't reach the starting harvesters, which stay
+    // home by their depot: only the bomber is to be lost.
+    let at = s.map.spawns[0] + Vec2::from_int(140, 0);
+    let harvesters: Vec<_> =
+        w.entities().filter(|e| e.owner == Some(P0) && e.def == EU_HARVESTER).map(|e| e.id).collect();
+    w.submit(P0, CommandKind::Stop { units: harvesters });
     let dozer = w.entities().find(|e| e.owner == Some(P0) && e.def == EU_DOZER).unwrap().id;
     let home = w.entity(dozer).unwrap().pos;
     for target in [at - Vec2::from_int(10, 0), home] {
@@ -390,7 +395,7 @@ fn a_scud_storm_strikes_and_poisons() {
     // reach, beyond every missile's blast.
     build(&mut w, P1, EU_POWER, target - Vec2::from_int(120, 20));
     let dozer = w.entities().find(|e| e.owner == Some(P1) && e.def == EU_DOZER).unwrap().id;
-    let edge = target - Vec2::from_int(60, 0);
+    let edge = target - Vec2::from_int(0, 60);
     w.submit(P1, CommandKind::Move { units: vec![dozer], target: edge });
     run_until(&mut w, ready);
     assert!(w.entity(dozer).unwrap().pos.distance(edge) < Fx::from_int(3));
@@ -462,7 +467,7 @@ fn firing_ends_a_cloak() {
     let s = setup(Faction::Gla, Faction::Gla);
     let mut w = World::new(&s, rules());
     let power = *rules().support_powers(Faction::Gla).nth(1).unwrap();
-    let barracks = build(&mut w, P0, GLA_BARRACKS, s.map.spawns[0] + Vec2::from_int(30, 0));
+    let barracks = build(&mut w, P0, GLA_BARRACKS, s.map.spawns[0] + Vec2::from_int(30, 30));
     w.submit(P0, CommandKind::Train { producer: barracks, def: GLA_RABBLE });
     let mut rabble = None;
     for _ in 0..30 * 60 {

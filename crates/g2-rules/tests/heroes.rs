@@ -98,7 +98,7 @@ fn hero(w: &mut World, who: PlayerId, def: DefId) -> EntityId {
 /// A factory of `who`'s at its start, toward the map centre.
 fn factory(w: &mut World, who: PlayerId, def: DefId) -> EntityId {
     let home = w.map.spawns[who.0 as usize];
-    let off = if who == P0 { Vec2::from_int(30, 0) } else { Vec2::from_int(-30, 0) };
+    let off = if who == P0 { Vec2::from_int(30, 30) } else { Vec2::from_int(-30, -30) };
     build(w, who, def, home + off)
 }
 
@@ -328,8 +328,10 @@ fn the_incendiary_grenade_bursts_and_burns() {
     let tank = enemy_tank(&mut w, MEET);
     let c = hero(&mut w, P0, APA_COMMANDO);
     walk(&mut w, P0, c, MEET - Vec2::from_int(45, 0));
-    w.submit(P1, CommandKind::Stop { units: vec![tank] });
-    assert_eq!(order(&mut w, P0, ability(vec![c], 2, Aim::Point(MEET))), vec![]);
+    // The tank has driven at the commando by now; the grenade goes where it stops.
+    order(&mut w, P1, CommandKind::Stop { units: vec![tank] });
+    let at = w.entity(tank).unwrap().pos;
+    assert_eq!(order(&mut w, P0, ability(vec![c], 2, Aim::Point(at))), vec![]);
     w.submit(P0, CommandKind::Stop { units: vec![c] });
     let mut burned = Vec::new();
     for _ in 0..30 * 7 {

@@ -93,7 +93,7 @@ fn walk(w: &mut World, who: PlayerId, u: EntityId, to: Vec2) {
 /// A factory of `who`'s at its start, toward the map centre.
 fn factory(w: &mut World, who: PlayerId, def: g2_sim::DefId) -> EntityId {
     let home = w.map.spawns[who.0 as usize];
-    let off = if who == P0 { Vec2::from_int(30, 0) } else { Vec2::from_int(-30, 0) };
+    let off = if who == P0 { Vec2::from_int(30, 30) } else { Vec2::from_int(-30, -30) };
     build(w, who, def, home + off)
 }
 

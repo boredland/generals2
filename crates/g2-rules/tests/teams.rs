@@ -213,11 +213,14 @@ fn coop_waves_split_between_both_defenders() {
     while w.tick() <= wave_tick(1) + 30 * 2 {
         w.step();
     }
+    // A unit heads at the base its destination lies nearer to: it may aim at a supply center
+    // out by the pile rather than the command center.
     let toward = |p: PlayerId| {
+        let other = w.map.spawns[1 - p.0 as usize];
         w.entities()
             .filter(|e| e.owner == Some(P2))
             .filter(|e| match e.order {
-                Order::AttackMove { dest, .. } => dest.distance(w.map.spawns[p.0 as usize]) < g2_sim::Fx::from_int(60),
+                Order::AttackMove { dest, .. } => dest.distance(w.map.spawns[p.0 as usize]) < dest.distance(other),
                 _ => false,
             })
             .count()

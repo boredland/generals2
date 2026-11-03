@@ -84,7 +84,7 @@ fn walk(w: &mut World, who: PlayerId, u: EntityId, to: Vec2) {
 /// Junkyard's bus with two Rabble squads inside, at `at` out in the field.
 fn loaded_bus(w: &mut World, at: Vec2) -> (EntityId, [EntityId; 2]) {
     let home = w.map.spawns[0];
-    let factory = build(w, P0, GLA_FACTORY, home + Vec2::from_int(30, 0));
+    let factory = build(w, P0, GLA_FACTORY, home + Vec2::from_int(30, 30));
     let barracks = build(w, P0, GLA_BARRACKS, home + Vec2::from_int(0, 30));
     let bus = train(w, P0, factory, GLA_BATTLE_BUS);
     let squads = [train(w, P0, barracks, GLA_RABBLE), train(w, P0, barracks, GLA_RABBLE)];
@@ -176,6 +176,10 @@ fn a_bunker_does_not_keep_a_player_in_the_game() {
         base.iter().all(|&b| w.entity(b).is_none_or(|e| w.sees(P1, e)))
     });
     for &b in &base {
+        if w.entity(b).is_some() && !w.player(P0).defeated {
+            // The gathering workers come and go out of the tanks' sight.
+            step_until(&mut w, 30 * 60, "the target in sight", |w| w.entity(b).is_none_or(|e| w.sees(P1, e)));
+        }
         if w.entity(b).is_some() && !w.player(P0).defeated {
             assert_eq!(order(&mut w, P1, CommandKind::Attack { units: tanks.clone(), target: b }), vec![]);
             step_until(&mut w, 30 * 240, "a base building destroyed", |w| w.entity(b).is_none());

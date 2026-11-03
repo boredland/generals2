@@ -276,14 +276,15 @@ pub static MISSIONS: [Mission; 8] = [
         sides: &[
             Side { faction: Eu, credits: 5_000, ai: Some(Easy), general: None, builds: None },
             // Measured with the `Normal` AI in the player's seat: the hardest of the settings tried
-            // (two to six Gatlings, 2,000 to 3,000 credits) that it still wins on Easy and Normal with
-            // 4,500, 5,000 and 5,500 credits of its own is five Gatlings and 2,000 credits (four and
-            // 2,500 also; won at 4:42 on Normal with 5,000). Results don't grow with the enemy's
-            // strength: six Gatlings lose on Normal at every credit level tried, three lose with
-            // 4,500. With the alpha's faster build times the APA's war factory outbuilt the old
-            // setting (six Gatlings, 3,000 credits: lost at 1:52); with the cards' slower ones it
-            // was the hardest won, and before units steered, 3,750 credits and five Gatlings.
-            Side { faction: Apa, credits: 2_000, ai: Some(Normal), general: None, builds: None },
+            // (two to five Gatlings, 1,000 to 2,000 credits) that it still wins on Easy and Normal
+            // with 4,500, 5,000 and 5,500 credits of its own is five Gatlings and 1,500 credits
+            // (four and 2,000 also). Results don't grow with the enemy's strength: five Gatlings
+            // and 2,000 lose on Normal with 5,000 and 5,500, three lose with 4,500. With the
+            // alpha's building prices (a supply center at $1,990, a power plant at $250) the EU
+            // seat, whose base is placed, kept less of its credits' edge, and the previous setting
+            // (five Gatlings, 2,000 credits) lost at 7:09; with the cards' build times it was six
+            // Gatlings and 3,000, and before units steered, 3,750 credits and five Gatlings.
+            Side { faction: Apa, credits: 1_500, ai: Some(Normal), general: None, builds: None },
         ],
         forces: &[
             f(0, EU_CC, 167, 352).tagged(1),
@@ -606,10 +607,11 @@ pub static MISSIONS: [Mission; 8] = [
             f(1, EU_GUN_TURRET, 230, 160),
             f(1, EU_GUN_TURRET, 232, 104),
             f(1, EU_GUN_TURRET, 225, 200),
-            // Two squads: with three (the first setting) the AI lost on Normal once units steered
-            // around each other. Tried: 1,250 to 2,000 credits, one to three squads, one to
-            // three guarding tanks; this is the smallest change that wins on Easy and Normal.
-            f(1, EU_ROCKETS, 215, 132).times(2),
+            // One squad: with two the AI lost on Normal once buildings took the alpha's prices
+            // (at 9:56; and with 1,500 credits too), with three once units steered around each
+            // other. Swept: none to two squads, 1,000 to 2,000 credits, against 4,000 and 5,000
+            // of the player's; one squad wins on Easy and Normal at every level, none loses on Easy.
+            f(1, EU_ROCKETS, 215, 132),
             f(1, EU_RECON, 190, 60).times(4).tagged(4).patrol(&[(190, 60), (185, 190), (140, 250)]),
             f(1, EU_AEGIS, 250, 205).times(3).guard(area(250, 205, 30)),
         ],

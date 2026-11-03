@@ -107,7 +107,7 @@ fn order(w: &mut World, who: PlayerId, cmd: CommandKind) -> Vec<Reject> {
 #[test]
 fn a_stealth_unit_is_unseen_until_it_fires() {
     let mut w = World::new(&setup(Faction::Gla, Faction::Apa), rules());
-    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(110, 110));
     let factory = build(&mut w, P1, APA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
     let field = Vec2::from_int(200, 200);
     // The squad waits out of its own reach of the tank (its rocket reaches 26), in the tank's
@@ -141,7 +141,7 @@ fn a_stealth_unit_is_unseen_until_it_fires() {
 #[test]
 fn a_stealth_unit_hides_again_after_its_reveal() {
     let mut w = World::new(&setup(Faction::Gla, Faction::Eu), rules());
-    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(110, 110));
     let rpg = unit_at(&mut w, P0, barracks, GLA_RPG, Vec2::from_int(200, 200));
     let dozer = first(&w, P1, EU_DOZER);
     w.submit(P1, CommandKind::Move { units: vec![dozer], target: Vec2::from_int(222, 200) });
@@ -171,7 +171,7 @@ fn a_turret_detects_and_shoots_stealth_units() {
     assert!(w.entity(turret).unwrap().powered, "the turret has power");
     let at = w.entity(turret).unwrap().pos;
     let detect = rules().def(EU_GUN_TURRET).detection;
-    let barracks = build(&mut w, P1, GLA_BARRACKS, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
+    let barracks = build(&mut w, P1, GLA_BARRACKS, crater_ridge().spawns[1] + Vec2::from_int(-30, -30));
     let far =
         unit_at(&mut w, P1, barracks, GLA_RPG, at + Vec2::new(detect + g2_sim::Fx::from_int(20), g2_sim::Fx::ZERO));
     assert!(!w.sees(P0, w.entity(far).unwrap()), "beyond detection range, still hidden");
@@ -211,7 +211,7 @@ fn a_turret_needs_power() {
 fn matches_with_stealth_replay_exactly() {
     let s = setup(Faction::Gla, Faction::Eu);
     let mut live = World::new(&s, rules());
-    let barracks = build(&mut live, P0, GLA_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut live, P0, GLA_BARRACKS, Vec2::from_int(110, 110));
     let rpg = unit_at(&mut live, P0, barracks, GLA_RPG, Vec2::from_int(200, 200));
     let dozer = first(&live, P1, EU_DOZER);
     live.submit(P0, CommandKind::Attack { units: vec![rpg], target: dozer });

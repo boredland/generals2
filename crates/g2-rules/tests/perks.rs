@@ -164,7 +164,7 @@ fn leadership_doubles_experience() {
     s.players[1].faction = Faction::Eu;
     s.players[1].general = None;
     let mut w = World::new(&s, rules());
-    let factory = build(&mut w, P0, GLA_FACTORY, crater_ridge().spawns[0] + Vec2::from_int(30, 0));
+    let factory = build(&mut w, P0, GLA_FACTORY, crater_ridge().spawns[0] + Vec2::from_int(30, 30));
     let eu_barracks = build(&mut w, P1, EU_BARRACKS, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
     let tank = train(&mut w, P0, factory, GLA_SHRAPNEL_TANK);
     let field = Vec2::from_int(200, 200);
@@ -266,7 +266,8 @@ fn offshore_and_sortie_perks_strike_and_look() {
     assert!(landed[0] >= 3 * 30 && landed[1] - landed[0] == 12, "3 s, then 0.4 s apart: {landed:?}");
 
     let mut w = World::new(&setup(Faction::Apa, BLACKJACK, &[BJ_SORTIE]), rules());
-    let far = crater_ridge().spawns[0] + Vec2::from_int(60, 0);
+    // Beyond the sight of the starting supply center at (136, 80).
+    let far = crater_ridge().spawns[0] + Vec2::from_int(120, 0);
     // The sortie aims at explored ground only (`ShroudBlocksActivation`): the start's edge.
     let target = crater_ridge().spawns[0] + Vec2::from_int(20, 0);
     assert!(!w.vision(P0).is_explored(far));

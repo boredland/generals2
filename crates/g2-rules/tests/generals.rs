@@ -60,7 +60,7 @@ fn build(w: &mut World, who: PlayerId, def: g2_sim::DefId, pos: Vec2) -> EntityI
 fn a_generals_factory_trains_its_units() {
     let s = setup(Faction::Gla, Some(JUNKYARD), 1);
     let mut w = World::new(&s, rules());
-    let factory = build(&mut w, P0, GLA_FACTORY, s.map.spawns[0] + Vec2::from_int(30, 0));
+    let factory = build(&mut w, P0, GLA_FACTORY, s.map.spawns[0] + Vec2::from_int(30, 30));
     assert_eq!(
         w.offers_of(P0, GLA_FACTORY),
         vec![

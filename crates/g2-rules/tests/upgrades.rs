@@ -72,7 +72,11 @@ fn step_until(w: &mut World, limit: u32, what: &str, mut done: impl FnMut(&World
 
 /// Builds `def` with `who`'s starting constructor at `pos` (near its base) and runs until done.
 fn build(w: &mut World, who: PlayerId, def: g2_sim::DefId, pos: Vec2) -> EntityId {
-    let builder = w.entities().find(|e| e.owner == Some(who) && w.rules.def(e.def).is_constructor()).unwrap().id;
+    // An idle one: the GLA's starting collectors are workers too.
+    let idle = |e: &&g2_sim::Entity| {
+        e.owner == Some(who) && w.rules.def(e.def).is_constructor() && e.order == g2_sim::Order::Idle
+    };
+    let builder = w.entities().find(idle).unwrap().id;
     assert_eq!(order(w, who, CommandKind::Build { builder, def, pos }), vec![]);
     let site = w.entities().find(|e| e.owner == Some(who) && e.def == def && e.construction.is_some()).unwrap().id;
     step_until(w, 30 * 120, "construction", |w| w.entity(site).is_some_and(|s| s.is_complete()));
@@ -139,7 +143,10 @@ fn bring(w: &mut World, target: EntityId, near: Vec2, viewer: PlayerId) {
 #[test]
 fn research_costs_queues_and_completes_once() {
     let mut w = world(Faction::Eu, Faction::Gla);
-    let lab = build(&mut w, P0, EU_TECH_LAB, Vec2::from_int(110, 80));
+    // Only the research may move P0's credits: park the starting harvesters.
+    let harvesters = w.entities().filter(|e| e.owner == Some(P0) && e.def == EU_HARVESTER).map(|e| e.id).collect();
+    assert_eq!(order(&mut w, P0, CommandKind::Stop { units: harvesters }), vec![]);
+    let lab = build(&mut w, P0, EU_TECH_LAB, Vec2::from_int(110, 110));
     let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(60, 110));
     let price = rules().upgrade(HIGHTECH_ALLOYS).cost.credits;
     assert_eq!(price, 750, "the alpha's price");
@@ -181,13 +188,17 @@ fn research_costs_queues_and_completes_once() {
 #[test]
 fn a_damage_upgrade_applies_against_its_armour_only() {
     let mut w = world(Faction::Eu, Faction::Gla);
+    // Harvesters out at the map's middle pile would spot the workers half way and `bring` would
+    // stop them out of rifle range: park them at home.
+    let harvesters = w.entities().filter(|e| e.owner == Some(P0) && e.def == EU_HARVESTER).map(|e| e.id).collect();
+    assert_eq!(order(&mut w, P0, CommandKind::Stop { units: harvesters }), vec![]);
     let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(110, 80));
     let recon = train(&mut w, P0, barracks, EU_RECON);
     let rifle = rules().def(EU_RECON).weapon().unwrap();
     assert_eq!(rules().def(GLA_WORKER).armour, Armour::Infantry);
     // The GLA side first, at home and out of the fight: two workers and a Technical.
     let gla_cc = first(&w, P1, GLA_CC).unwrap();
-    let factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
+    let factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(0, -40));
     let tech = train(&mut w, P1, factory, GLA_TECHNICAL);
     let w1 = train(&mut w, P1, gla_cc, GLA_WORKER);
     let w2 = train(&mut w, P1, gla_cc, GLA_WORKER);
@@ -284,7 +295,7 @@ fn a_health_upgrade_reaches_fielded_and_new_squads() {
 #[test]
 fn repair_waits_for_a_quiet_spell_and_stops_at_full() {
     let mut w = world(Faction::Gla, Faction::Apa);
-    let bay = build(&mut w, P0, GLA_SALVAGE_BAY, Vec2::from_int(110, 80));
+    let bay = build(&mut w, P0, GLA_SALVAGE_BAY, Vec2::from_int(110, 110));
     let factory = build(&mut w, P0, GLA_FACTORY, Vec2::from_int(60, 120));
     let scorpion = train(&mut w, P0, factory, GLA_TANK);
     research(&mut w, P0, bay, SCRAP_REPAIR);

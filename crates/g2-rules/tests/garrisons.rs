@@ -126,7 +126,7 @@ fn infantry_take_a_civilian_building_up_to_its_capacity() {
     let mut w = World::new(&setup(Faction::Eu, Faction::Gla), rules());
     let house = first(&w, None, TOWN_HOUSE);
     assert_eq!(rules().def(TOWN_HOUSE).garrison.unwrap().capacity, 3);
-    let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(110, 110));
     let factory = build(&mut w, P0, EU_FACTORY, Vec2::from_int(80, 130));
     let near = Vec2::from_int(185, 185);
     let squads: Vec<EntityId> = (0..4).map(|_| unit_at(&mut w, P0, barracks, EU_RECON, near)).collect();
@@ -162,7 +162,7 @@ fn a_garrison_fires_further_and_cannot_be_targeted() {
     let mut w = World::new(&setup(Faction::Eu, Faction::Gla), rules());
     let house = first(&w, None, TOWN_HOUSE);
     let hpos = w.entity(house).unwrap().pos;
-    let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(110, 110));
     let squad = unit_at(&mut w, P0, barracks, EU_RECON, hpos - Vec2::from_int(15, 15));
     garrison(&mut w, P0, &[squad], house);
     assert_eq!(w.entity(squad).unwrap().inside, Some(house));
@@ -181,7 +181,7 @@ fn a_garrison_fires_further_and_cannot_be_targeted() {
             .any(|e| matches!(e, Event::Hit { shooter, target, .. } if *shooter == squad && *target == worker))
     });
     // The enemy can't order an attack on the squad inside, only on the house.
-    let gla_barracks = build(&mut w, P1, GLA_BARRACKS, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
+    let gla_barracks = build(&mut w, P1, GLA_BARRACKS, crater_ridge().spawns[1] + Vec2::from_int(-30, -30));
     let rebels = unit_at(&mut w, P1, gla_barracks, GLA_RABBLE, hpos + Vec2::from_int(30, 0));
     assert_eq!(
         order(&mut w, P1, CommandKind::Attack { units: vec![rebels], target: squad }),
@@ -199,7 +199,7 @@ fn a_garrison_dies_with_its_building() {
     let mut w = World::new(&setup(Faction::Gla, Faction::Apa), rules());
     let house = first(&w, None, TOWN_HOUSE);
     let hpos = w.entity(house).unwrap().pos;
-    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(110, 110));
     let squads: Vec<_> =
         (0..2).map(|_| unit_at(&mut w, P0, barracks, GLA_RABBLE, hpos - Vec2::from_int(15, 15))).collect();
     garrison(&mut w, P0, &squads, house);
@@ -249,7 +249,7 @@ fn the_howitzer_bonus_needs_a_garrison() {
 #[test]
 fn an_apc_carries_infantry() {
     let mut w = World::new(&setup(Faction::Eu, Faction::Gla), rules());
-    let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut w, P0, EU_BARRACKS, Vec2::from_int(110, 110));
     let factory = build(&mut w, P0, EU_FACTORY, Vec2::from_int(80, 130));
     let apc = unit_at(&mut w, P0, factory, EU_APC, Vec2::from_int(150, 120));
     let squads: Vec<_> = (0..2).map(|_| unit_at(&mut w, P0, barracks, EU_ROCKETS, Vec2::from_int(140, 110))).collect();
@@ -275,7 +275,7 @@ fn a_defeated_players_building_turns_neutral() {
     let mut w = World::new(&setup(Faction::Gla, Faction::Eu), rules());
     let house = first(&w, None, TOWN_HOUSE);
     let hpos = w.entity(house).unwrap().pos;
-    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut w, P0, GLA_BARRACKS, Vec2::from_int(110, 110));
     let s = unit_at(&mut w, P0, barracks, GLA_RABBLE, hpos - Vec2::from_int(15, 15));
     garrison(&mut w, P0, &[s], house);
     assert_eq!(order(&mut w, P0, CommandKind::Surrender), vec![]);
@@ -292,7 +292,7 @@ fn matches_with_garrisons_replay_exactly() {
     let s = setup(Faction::Eu, Faction::Gla);
     let mut live = World::new(&s, rules());
     let house = first(&live, None, TOWN_HOUSE);
-    let barracks = build(&mut live, P0, EU_BARRACKS, Vec2::from_int(120, 80));
+    let barracks = build(&mut live, P0, EU_BARRACKS, Vec2::from_int(110, 110));
     let squad = unit_at(&mut live, P0, barracks, EU_RECON, Vec2::from_int(185, 185));
     garrison(&mut live, P0, &[squad], house);
     steps(&mut live, 30 * 5);

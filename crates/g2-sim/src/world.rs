@@ -15,6 +15,9 @@ pub const INPUT_DELAY: u32 = 2;
 pub const MAX_QUEUE: usize = 5;
 /// Distance tolerance for "has reached" checks, so units pushed apart by separation still arrive.
 pub(crate) const SLACK: Fx = Fx::from_int(1);
+/// Collectors a skirmish start's supply center comes with (`World::spawn_start_economy`): the
+/// alpha's footage shows two working four seconds into a match.
+const START_COLLECTORS: u32 = 2;
 /// Armed units notice enemies this far beyond their weapon range (idle guard, attack-move).
 const ACQUIRE: Fx = Fx::from_int(15);
 /// A unit keeps its planned route while its target moves less than this from where the route
@@ -478,6 +481,7 @@ impl World {
             let offset = offset * world.toward_centre(spawn);
             world.spawn_owned(dozer, owner, world.map.clamp(spawn + Vec2::new(Fx::ZERO, offset)));
             debug_assert!(world.entities.get(cc_id).is_some());
+            world.spawn_start_economy(owner, p.faction, spawn);
         }
         if let Some((id, difficulty)) = mission {
             world.start_mission(id, difficulty);
@@ -486,6 +490,31 @@ impl World {
         world.update_power_sites();
         world.update_vision();
         world
+    }
+
+    /// A skirmish start's economy, as the alpha's: its matches open with a supply center
+    /// standing beside the command center and `START_COLLECTORS` collectors already working
+    /// (the archived footage shows "Harvesters: 2/5" four seconds into an APA match, 2/8 for
+    /// the GLA), which its supply center's 70 s and $1,990 make the only workable opening.
+    /// Placed toward the nearest pile, as the AI places its first one.
+    fn spawn_start_economy(&mut self, owner: PlayerId, faction: Faction, home: Vec2) {
+        let depot = self.rules.supply_center(faction);
+        let toward = self.nearest_pile(home).and_then(|p| self.entity(p)).map_or(home, |p| p.pos);
+        let Some(pos) = crate::ai::find_spot_toward(self, depot, home, toward) else { return };
+        let id = self.spawn_owned(depot, owner, pos);
+        let d = self.rules.def(depot);
+        let Some(&collector) = d.produces.iter().find(|&&u| self.rules.def(u).collector().is_some()) else { return };
+        let cr = self.rules.def(collector).radius;
+        let out = (d.radius + cr + SLACK) * self.toward_centre(pos);
+        for k in 0..START_COLLECTORS as i64 {
+            let across = (cr + Fx::ONE) * Fx::from_int(2 * k - 1);
+            let unit = self.spawn_owned(collector, owner, self.map.clamp(pos + Vec2::new(across, out)));
+            if let Some(pile) = self.nearest_pile(pos) {
+                let u = self.entities.get_mut(unit).unwrap();
+                u.home = Some(id);
+                u.order = Order::Gather { pile, phase: GatherPhase::ToPile };
+            }
+        }
     }
 
     fn blank_entity(id: EntityId, def: DefId, hp: i32, pos: Vec2) -> Entity {
@@ -3457,6 +3486,14 @@ impl Rules {
 
     pub fn command_center(&self, faction: Faction) -> DefId {
         self.single(|d| d.faction == Some(faction) && d.role() == Some(BuildingRole::CommandCenter), "command center")
+    }
+
+    /// A faction's supply center (the GLA's supply stash).
+    pub fn supply_center(&self, faction: Faction) -> DefId {
+        self.single(
+            |d| d.faction == Some(faction) && matches!(d.role(), Some(BuildingRole::SupplyCenter { .. })),
+            "supply center",
+        )
     }
 
     /// The constructor a faction starts with: the first unit its command center produces.

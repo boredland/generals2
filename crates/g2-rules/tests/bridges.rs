@@ -106,7 +106,7 @@ fn walk(w: &mut World, u: EntityId, to: Vec2) -> Fx {
 fn a_bridge_falls_to_fire_routes_go_round_and_a_constructor_repairs_it() {
     let mut w = World::new(&setup(), rules());
     let factory = build(&mut w, EU_FACTORY, Vec2::from_int(120, 140));
-    let barracks = build(&mut w, EU_BARRACKS, Vec2::from_int(140, 90));
+    let barracks = build(&mut w, EU_BARRACKS, Vec2::from_int(100, 110));
     let tank = unit_at(&mut w, factory, EU_AEGIS, Vec2::from_int(150, 200));
     // Over the near bridge and back while it stands: the short way.
     assert!(walk(&mut w, tank, Vec2::from_int(250, 200)) < Fx::from_int(230));

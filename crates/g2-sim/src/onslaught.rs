@@ -18,16 +18,19 @@ pub const FIRST_WAVE: u32 = 150 * TICKS_PER_SECOND;
 pub const WAVE_EVERY: u32 = 75 * TICKS_PER_SECOND;
 pub const WAVES: u32 = 10;
 
-/// Units in wave `k` (0-based), eleven more every six waves: 2, 3, 5, 7, 9, 11, 13, 14, 16, 18.
+/// Units in wave `k` (0-based), nine more every six waves: 2, 3, 5, 6, 8, 9, 11, 12, 14, 15.
 /// One more each wave (2 to 11) stopped being a threat once the Normal AI's factories and
 /// collectors were fixed: it held 716 of 768 decided matches on all 86 skirmish maps. Five
 /// more every three waves (2 to 17) held 563 of 764 and won most matches on 75 of the 86
-/// maps once units steered around each other and heroes came in; eleven every six hold 507
-/// of 765 and 64 maps (515 of 766 and 67 before the last placeholder changes of that pass).
-/// Six every three (2 to 20) held 413 of 765 and 50 maps, one more to start (3 to 18) 454 of
-/// 761 and 58.
+/// maps once units steered around each other and heroes came in; eleven every six held 507
+/// of 765 and 64 maps then (515 of 766 and 67 before the last placeholder changes of that
+/// pass), and 395 of 771 and 54 maps once units trained at the alpha's pace. Six every three
+/// (2 to 20) held 413 of 765 and 50 maps, one more to start (3 to 18) 454 of 761 and 58.
+/// With the alpha's building prices and times (a 70 s, $1,800-1,990 supply center) and the
+/// alpha's start economy, eleven every six held 312 of 769 and 34 maps; ten 359 and 40,
+/// nine 409 of 771 and 55, eight 459 and 66, seven 500 and 78. Nine keeps the mode where it was.
 pub fn wave_size(k: u32) -> u32 {
-    2 + 11 * k / 6
+    2 + 9 * k / 6
 }
 
 /// Experience every unit of wave `k` arrives with: none for the first three, then enough for

@@ -4,7 +4,8 @@
 #
 # Values marked `src:` come from archived reference material, documented in notes kept
 # outside this repository. Everything else is a placeholder chosen for playability and will
-# be tuned.
+# be tuned. Every faction building's build time and price is its alpha blueprint's
+# (`BuildTime`, `Cost`); hit points stay the cards' or placeholders.
 #
 # A power plant's `power_radius` is 60; a building with no `armour` is `structure`. Civilian
 # buildings: infantry garrison them, firing out with the alpha's 8-unit range bonus.
@@ -24,7 +25,8 @@ hp = 1
 radius = 5
 
 # ---- European Union ------------------------------------------------------------------
-# src: Command center: hp 1751, cost 1000, 28 s, power +110 (0 for GLA).
+# src: Command center: hp 1751, cost 1000, 28 s (the alpha's es/as/gs_commandcenter too),
+# power +110 (0 for GLA).
 [[building]]
 id = "eu_cc"
 name = "EU Command Center"
@@ -38,7 +40,7 @@ build_time = 28
 radius = 12
 produces = ["eu_dozer", "eu_commando"]
 
-# src: Supply center collector cap EU 3.
+# src: Supply center collector cap EU 3; the alpha's es_supplycenter: $1990, 70 s.
 [[building]]
 id = "eu_supply"
 name = "EU Supply Center"
@@ -47,11 +49,12 @@ role = "supply_center"
 collector_cap = 3
 power = -20
 hp = 1200
-cost = 800
-build_time = 20
+cost = 1990
+build_time = 70
 radius = 12
 produces = ["eu_harvester", "eu_dozer"]
 
+# src: the alpha's es_powerplant: $250, 10 s.
 [[building]]
 id = "eu_power"
 name = "EU Power Plant"
@@ -60,10 +63,11 @@ role = "power_plant"
 power = 100
 power_radius = 60
 hp = 800
-cost = 600
-build_time = 15
+cost = 250
+build_time = 10
 radius = 6
 
+# src: the alpha's es_oilderrick: $600, 22 s (the same for every faction).
 [[building]]
 id = "eu_derrick"
 name = "EU Oil Derrick"
@@ -72,8 +76,8 @@ role = "oil_derrick"
 credits_per_second = 5
 power = -10
 hp = 600
-cost = 500
-build_time = 15
+cost = 600
+build_time = 22
 radius = 6
 
 # ---- Asia-Pacific Alliance -----------------------------------------------------------
@@ -90,7 +94,7 @@ build_time = 28
 radius = 12
 produces = ["apa_crane", "apa_commando"]
 
-# src: Supply center collector cap APA 5.
+# src: Supply center collector cap APA 5; the alpha's as_supplycenter: $1890, 70 s.
 [[building]]
 id = "apa_supply"
 name = "APA Supply Center"
@@ -99,11 +103,12 @@ role = "supply_center"
 collector_cap = 5
 power = -20
 hp = 1200
-cost = 800
-build_time = 20
+cost = 1890
+build_time = 70
 radius = 12
 produces = ["apa_harvester", "apa_crane"]
 
+# src: the alpha's as_powerplant: $250, 15 s.
 [[building]]
 id = "apa_power"
 name = "APA Power Plant"
@@ -112,7 +117,7 @@ role = "power_plant"
 power = 100
 power_radius = 60
 hp = 800
-cost = 600
+cost = 250
 build_time = 15
 radius = 8
 
@@ -124,8 +129,8 @@ role = "oil_derrick"
 credits_per_second = 5
 power = -10
 hp = 600
-cost = 500
-build_time = 15
+cost = 600
+build_time = 22
 radius = 6
 
 # ---- Global Liberation Army ----------------------------------------------------------
@@ -141,7 +146,7 @@ build_time = 28
 radius = 12
 produces = ["gla_worker", "gla_agent"]
 
-# src: Supply center collector cap GLA 8.
+# src: Supply center collector cap GLA 8; the alpha's gs_supplycenter: $1800, 70 s.
 [[building]]
 id = "gla_stash"
 name = "GLA Supply Stash"
@@ -149,8 +154,8 @@ faction = "gla"
 role = "supply_center"
 collector_cap = 8
 hp = 1000
-cost = 600
-build_time = 18
+cost = 1800
+build_time = 70
 radius = 10
 produces = ["gla_worker"]
 
@@ -161,12 +166,14 @@ faction = "gla"
 role = "oil_derrick"
 credits_per_second = 5
 hp = 500
-cost = 400
-build_time = 12
+cost = 600
+build_time = 22
 radius = 6
 
 # ---- Combat ----------------------------------------------------------------------------
-# Barracks numbers are placeholders. War factories copy the GLA war factory card.
+# Barracks: the alpha's es_barracks ($500, 18 s), as_barracks ($400, 18 s), gs_barracks
+# ($400, 22 s); hit points placeholders. War factories copy the GLA war factory card, which
+# the alpha's es/as/gs_warfactory match ($900, 25 s).
 # Researches: where the alpha's production data offers each upgrade.
 [[building]]
 id = "eu_barracks"
@@ -176,7 +183,7 @@ role = "factory"
 power = -10
 hp = 800
 cost = 500
-build_time = 15
+build_time = 18
 radius = 6
 produces = ["eu_recon", "eu_rockets"]
 researches = ["hollow_point"]
@@ -200,8 +207,8 @@ faction = "apa"
 role = "factory"
 power = -10
 hp = 800
-cost = 500
-build_time = 15
+cost = 400
+build_time = 18
 radius = 8
 produces = ["apa_red_guard", "apa_tank_hunter"]
 researches = ["population_control"]
@@ -226,8 +233,8 @@ name = "GLA Barracks"
 faction = "gla"
 role = "factory"
 hp = 800
-cost = 500
-build_time = 15
+cost = 400
+build_time = 22
 radius = 10
 produces = ["gla_rabble", "gla_rpg"]
 researches = ["shortened_fuses"]

@@ -74,7 +74,9 @@ fn order(w: &mut World, kind: CommandKind) -> Vec<Reject> {
 
 /// Builds `def` with the starting constructor at `pos` and runs until it completes.
 fn build(w: &mut World, ctor: g2_sim::DefId, def: g2_sim::DefId, pos: Vec2) -> EntityId {
-    let builder = first(w, P0, ctor).expect("constructor");
+    // An idle one: the GLA's starting collectors are workers too.
+    let builder =
+        w.entities().find(|e| e.owner == Some(P0) && e.def == ctor && e.order == Order::Idle).expect("constructor").id;
     assert_eq!(order(w, CommandKind::Build { builder, def, pos }), vec![]);
     let site = w
         .entities()
@@ -90,10 +92,77 @@ fn build(w: &mut World, ctor: g2_sim::DefId, def: g2_sim::DefId, pos: Vec2) -> E
     panic!("construction never finished");
 }
 
+/// Stops both players' starting collectors, so that only what a test trains delivers.
+fn stop_collectors(w: &mut World) {
+    let gathering = |w: &World, p| {
+        w.entities().filter(|e| e.owner == Some(p) && matches!(e.order, Order::Gather { .. })).map(|e| e.id).collect()
+    };
+    w.submit(PlayerId(1), CommandKind::Stop { units: gathering(w, PlayerId(1)) });
+    assert_eq!(order(w, CommandKind::Stop { units: gathering(w, P0) }), vec![]);
+}
+
+/// The P0 units of `def` that are not in `old`.
+fn new_ones(w: &World, def: g2_sim::DefId, old: &[EntityId]) -> Vec<EntityId> {
+    all(w, P0, def).into_iter().filter(|u| !old.contains(u)).collect()
+}
+
+/// A skirmish start comes with the alpha's opening: each faction's supply center beside the
+/// command center and two of its collectors already gathering from the nearest pile, at no
+/// cost, and they deliver to that center within the first minute. A mission's sides start
+/// with only what the mission places.
+#[test]
+fn a_skirmish_start_has_a_supply_center_and_two_working_collectors() {
+    for (f, depot, collector) in [
+        (Faction::Eu, EU_SUPPLY, EU_HARVESTER),
+        (Faction::Apa, APA_SUPPLY, APA_HARVESTER),
+        (Faction::Gla, GLA_STASH, GLA_WORKER),
+    ] {
+        let mut w = world(f, 5_000);
+        assert_eq!(w.player(P0).credits, 5_000, "{f:?}: the start economy is free");
+        let center = first(&w, P0, depot).unwrap_or_else(|| panic!("{f:?}: a starting supply center"));
+        assert!(w.entity(center).unwrap().is_complete(), "{f:?}: standing, not a foundation");
+        let cc = w
+            .entities()
+            .find(|e| e.owner == Some(P0) && rules().def(e.def).role() == Some(BuildingRole::CommandCenter))
+            .unwrap()
+            .pos;
+        assert!(w.entity(center).unwrap().pos.distance(cc) < Fx::from_int(80), "{f:?}: beside the command center");
+        let gathering: Vec<EntityId> = all(&w, P0, collector)
+            .into_iter()
+            .filter(|&id| matches!(w.entity(id).unwrap().order, Order::Gather { .. }))
+            .collect();
+        assert_eq!(gathering.len(), 2, "{f:?}: two collectors at work");
+        assert!(gathering.iter().all(|&id| w.entity(id).unwrap().home == Some(center)), "{f:?}");
+        let mut delivered = 0;
+        for _ in 0..30 * 60 {
+            w.step();
+            delivered += w
+                .events()
+                .iter()
+                .filter(|e| matches!(e, Event::Delivered { player: P0, depot, .. } if *depot == center))
+                .count();
+        }
+        assert!(delivered >= 2, "{f:?}: {delivered} deliveries in the first minute");
+    }
+    // First Light is played on Crater Ridge, the map these skirmishes ran on.
+    let r = rules();
+    let id = r.find_mission("first-light").unwrap();
+    let m = r.mission(id);
+    assert_eq!(m.map, "Crater Ridge");
+    let s = m.setup(r, crater_ridge(), 1, None);
+    let w = World::with_mission(&s, r, id, g2_sim::mission::Difficulty::Normal);
+    let placed: usize =
+        m.forces.iter().filter(|f| f.owner == 0 && r.def(f.def).collector().is_some()).map(|f| f.count as usize).sum();
+    let collectors = w.entities().filter(|e| e.owner == Some(P0) && r.def(e.def).collector().is_some()).count();
+    assert_eq!(collectors, placed, "a mission places its own forces");
+}
+
 #[test]
 fn harvesters_carry_supplies_from_pile_to_center() {
     let mut w = world(Faction::Eu, 10_000);
-    let depot = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(110, 80));
+    stop_collectors(&mut w);
+    let depot = first(&w, P0, EU_SUPPLY).unwrap();
+    let parked = all(&w, P0, EU_HARVESTER);
     // The depot sits next to the 6000-credit pile at (130, 60); start with a known balance.
     let before = w.player(P0).credits;
     assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: EU_HARVESTER }), vec![]);
@@ -109,7 +178,7 @@ fn harvesters_carry_supplies_from_pile_to_center() {
             }
         }
     }
-    let harvester = first(&w, P0, EU_HARVESTER).expect("harvester trained");
+    let harvester = new_ones(&w, EU_HARVESTER, &parked)[0];
     assert!(matches!(w.entity(harvester).unwrap().order, Order::Gather { .. }));
     let earned = w.player(P0).credits - (before - cost);
     let load = rules().def(EU_HARVESTER).collector().unwrap().capacity;
@@ -123,7 +192,32 @@ fn harvesters_carry_supplies_from_pile_to_center() {
 /// passed over, but a collector's own home always has room for it.
 #[test]
 fn collectors_deliver_to_the_nearest_center_with_room() {
-    let mut w = world(Faction::Eu, 100_000);
+    let player = PlayerSetup {
+        faction: Faction::Eu,
+        starting_credits: 100_000,
+        ai: None,
+        general: None,
+        perks: Vec::new(),
+        rank: 1,
+        team: 0,
+    };
+    let mut setup = MatchSetup { map: crater_ridge(), seed: 1, players: vec![player.clone(), player] };
+    // Deep enough that the starting center's harvesters never run dry and come north.
+    let south = Vec2::from_int(200, 260);
+    setup.map.supply_piles.iter_mut().filter(|p| p.0 == south).for_each(|p| p.1 = 1_000_000);
+    let mut w = World::new(&setup, rules());
+    // The starting center is filled to its cap by its own harvesters, so it is passed over and
+    // the far and near centers compete. Those three work the pile at (200, 260), out of the way
+    // and with the starting center the nearest one; their loads are left out below.
+    let start = first(&w, P0, EU_SUPPLY).unwrap();
+    assert_eq!(order(&mut w, CommandKind::Train { producer: start, def: EU_HARVESTER }), vec![]);
+    while all(&w, P0, EU_HARVESTER).len() < 3 {
+        w.step();
+    }
+    let parked = all(&w, P0, EU_HARVESTER);
+    let south = w.nearest_pile(south).unwrap();
+    assert_eq!(order(&mut w, CommandKind::Gather { units: parked.clone(), pile: south }), vec![]);
+    assert_eq!(w.depot_load(start), 3);
     // Well away from the pile at (130, 60): the trips are long.
     let far = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(40, 140));
     assert_eq!(order(&mut w, CommandKind::Train { producer: far, def: EU_HARVESTER }), vec![]);
@@ -132,7 +226,7 @@ fn collectors_deliver_to_the_nearest_center_with_room() {
         for _ in 0..ticks {
             w.step();
             at.extend(w.events().iter().filter_map(|e| match *e {
-                Event::Delivered { depot, .. } => Some(depot),
+                Event::Delivered { player: P0, depot, .. } if depot != start => Some(depot),
                 _ => None,
             }));
         }
@@ -144,7 +238,7 @@ fn collectors_deliver_to_the_nearest_center_with_room() {
     let after = deliveries(&mut w, 30 * 60);
     assert!(after.iter().filter(|&&d| d == near).count() >= 2, "loads go to the new center: {after:?}");
     assert_eq!(after.last(), Some(&near));
-    let harvester = first(&w, P0, EU_HARVESTER).unwrap();
+    let harvester = new_ones(&w, EU_HARVESTER, &parked)[0];
     assert_eq!(w.entity(harvester).unwrap().home, Some(near));
     // Fill the near center to its cap: a harvester trained at the far one stays there.
     for _ in 0..2 {
@@ -264,16 +358,16 @@ fn a_move_to_an_unreachable_point_stops_at_the_closest_reachable_one() {
 
 #[test]
 fn collector_cap_is_per_faction_and_enforced() {
-    for (faction, ctor, depot_def, harvester, cap) in [
-        (Faction::Eu, EU_DOZER, EU_SUPPLY, EU_HARVESTER, 3),
-        (Faction::Apa, APA_CRANE, APA_SUPPLY, APA_HARVESTER, 5),
-        (Faction::Gla, GLA_WORKER, GLA_STASH, GLA_WORKER, 8),
+    for (faction, depot_def, harvester, cap) in [
+        (Faction::Eu, EU_SUPPLY, EU_HARVESTER, 3),
+        (Faction::Apa, APA_SUPPLY, APA_HARVESTER, 5),
+        (Faction::Gla, GLA_STASH, GLA_WORKER, 8),
     ] {
         let Some(BuildingRole::SupplyCenter { collector_cap }) = rules().def(depot_def).role() else { panic!() };
         assert_eq!(collector_cap, cap);
         let mut w = world(faction, 100_000);
-        let depot = build(&mut w, ctor, depot_def, Vec2::from_int(110, 80));
-        for _ in 0..cap {
+        let depot = first(&w, P0, depot_def).unwrap();
+        for _ in w.depot_load(depot)..cap {
             assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: harvester }), vec![], "{faction:?}");
             run(&mut w, rules().def(harvester).build_ticks + 1);
         }
@@ -327,7 +421,10 @@ fn piles_deplete_and_vanish() {
         ],
     };
     let mut w = World::new(&setup, rules());
-    let depot = build(&mut w, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 80));
+    // The only pile is the EU's nearest too: its harvesters stay home so P0 gets all 250.
+    let theirs = all(&w, PlayerId(1), EU_HARVESTER);
+    w.submit(PlayerId(1), CommandKind::Stop { units: theirs });
+    let depot = first(&w, P0, GLA_STASH).unwrap();
     let before = w.player(P0).credits;
     for _ in 0..3 {
         order(&mut w, CommandKind::Train { producer: depot, def: GLA_WORKER });
@@ -372,6 +469,7 @@ fn derricks_only_go_on_free_wells_and_stop_when_dry() {
         ],
     };
     let mut w = World::new(&setup, rules());
+    stop_collectors(&mut w);
     let worker = first(&w, P0, GLA_WORKER).unwrap();
     let off_well =
         order(&mut w, CommandKind::Build { builder: worker, def: GLA_DERRICK, pos: Vec2::from_int(100, 150) });
@@ -396,9 +494,10 @@ fn consumers_outside_power_radius_produce_at_half_speed() {
         let mut w = world(Faction::Eu, 100_000);
         let depot = build(&mut w, EU_DOZER, EU_SUPPLY, pos);
         assert_eq!(w.entity(depot).unwrap().powered, pos == near);
+        let old = all(&w, P0, EU_HARVESTER);
         order(&mut w, CommandKind::Train { producer: depot, def: EU_HARVESTER });
         let mut n = 0;
-        while first(&w, P0, EU_HARVESTER).is_none() {
+        while new_ones(&w, EU_HARVESTER, &old).is_empty() {
             w.step();
             n += 1;
         }
@@ -414,23 +513,24 @@ fn power_drain_and_supply_are_reported_per_player() {
     let mut w = world(Faction::Apa, 100_000);
     assert_eq!(w.player(P0).power_supply, 110);
     build(&mut w, APA_CRANE, APA_SUPPLY, Vec2::from_int(110, 80));
-    assert_eq!(w.player(P0).power_drain, 20);
+    // The starting supply center and this one, 20 each.
+    assert_eq!(w.player(P0).power_drain, 40);
     let mut gla = world(Faction::Gla, 100_000);
-    build(&mut gla, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 80));
+    build(&mut gla, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 110));
     assert_eq!((gla.player(P0).power_supply, gla.player(P0).power_drain), (0, 0));
     assert!(gla.entities().filter(|e| e.owner == Some(P0) && rules().def(e.def).is_building()).all(|e| e.powered));
 }
 
 #[test]
 fn foundations_cost_up_front_and_need_a_constructor_on_site() {
-    let mut w = world(Faction::Eu, 1_000);
+    let mut w = world(Faction::Eu, 3_000);
     let dozer = first(&w, P0, EU_DOZER).unwrap();
     assert_eq!(
         order(&mut w, CommandKind::Build { builder: dozer, def: EU_SUPPLY, pos: Vec2::from_int(150, 100) }),
         vec![]
     );
-    assert_eq!(w.player(P0).credits, 1_000 - rules().def(EU_SUPPLY).cost.credits);
-    let site = first(&w, P0, EU_SUPPLY).unwrap();
+    assert_eq!(w.player(P0).credits, 3_000 - rules().def(EU_SUPPLY).cost.credits);
+    let site = w.entities().find(|e| e.owner == Some(P0) && e.construction.is_some()).unwrap().id;
     order(&mut w, CommandKind::Stop { units: vec![dozer] });
     let frozen = w.entity(site).unwrap().construction;
     run(&mut w, 90);
@@ -448,7 +548,7 @@ fn unaffordable_and_foreign_commands_are_rejected_without_side_effects() {
     let r = order(&mut w, CommandKind::Build { builder: dozer, def: EU_SUPPLY, pos: Vec2::from_int(150, 100) });
     assert_eq!(r, vec![Reject::InsufficientFunds]);
     assert_eq!(w.player(P0).credits, 100);
-    assert!(first(&w, P0, EU_SUPPLY).is_none(), "no foundation placed");
+    assert!(!w.entities().any(|e| e.owner == Some(P0) && e.construction.is_some()), "no foundation placed");
     assert_eq!(w.entity(dozer).unwrap().order, Order::Idle);
     let enemy_dozer = first(&w, PlayerId(1), EU_DOZER).unwrap();
     let r = order(&mut w, CommandKind::Move { units: vec![enemy_dozer], target: Vec2::from_int(0, 0) });
@@ -544,12 +644,14 @@ fn a_general_discounts_and_speeds_up_its_units() {
             };
             w = World::new(&setup, rules());
         }
-        let depot = build(&mut w, EU_DOZER, EU_SUPPLY, Vec2::from_int(110, 80));
+        stop_collectors(&mut w);
+        let depot = first(&w, P0, EU_SUPPLY).unwrap();
+        let old = all(&w, P0, EU_HARVESTER);
         let before = w.player(P0).credits;
         assert_eq!(order(&mut w, CommandKind::Train { producer: depot, def: EU_HARVESTER }), vec![]);
         let paid = before - w.player(P0).credits;
         let mut ticks = 0;
-        while first(&w, P0, EU_HARVESTER).is_none() {
+        while new_ones(&w, EU_HARVESTER, &old).is_empty() {
             w.step();
             ticks += 1;
         }
@@ -737,7 +839,7 @@ fn surrender_defeats_the_player_and_the_last_one_standing_wins() {
 #[test]
 fn group_moves_spread_units_instead_of_stacking() {
     let mut w = world(Faction::Gla, 100_000);
-    let depot = build(&mut w, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 80));
+    let depot = build(&mut w, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 110));
     for _ in 0..4 {
         order(&mut w, CommandKind::Train { producer: depot, def: GLA_WORKER });
     }
@@ -793,7 +895,9 @@ fn a_group_moves_at_its_slowest_members_pace() {
 #[test]
 fn formation_slots_do_not_cross() {
     let mut w = world(Faction::Gla, 100_000);
-    let depot = build(&mut w, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 80));
+    // Ten workers crowding one pile stack up; the starting two stay home as before the free start.
+    stop_collectors(&mut w);
+    let depot = build(&mut w, GLA_WORKER, GLA_STASH, Vec2::from_int(110, 110));
     for _ in 0..8 {
         order(&mut w, CommandKind::Train { producer: depot, def: GLA_WORKER });
     }
@@ -1089,6 +1193,9 @@ fn destroying_every_base_building_defeats_a_player() {
             && let Some(t) = known
         {
             w.submit(P0, CommandKind::Attack { units: vec![tank], target: t });
+        } else if w.entity(tank).unwrap().order == Order::Idle {
+            // Chasing the starting harvesters can leave it out of sight of the base: go back.
+            w.submit(P0, CommandKind::Move { units: vec![tank], target: enemy_start - Vec2::from_int(25, 25) });
         }
         w.step();
     }
@@ -1123,14 +1230,16 @@ fn destroying_every_base_building_defeats_a_player() {
 }
 
 /// The last base building decides, as in a Zero Hour skirmish: the enemy drives its dozer off
-/// to a far corner, a tank destroys only its command center, and the match ends on that tick,
-/// the dozer gone with it (fails if a constructor still keeps a player in the game).
+/// to a far corner, a tank destroys its supply center and then its command center, and the
+/// match ends on that tick, the dozer gone with it (fails if a constructor still keeps a player
+/// in the game).
 #[test]
 fn a_constructor_left_alive_does_not_keep_a_player_in() {
     let mut w = world(Faction::Apa, 100_000);
     let tank = train_one(&mut w, APA_CRANE, APA_FACTORY, APA_WARLORD);
     let (enemy, dozer, cc) =
         (PlayerId(1), first(&w, PlayerId(1), EU_DOZER).unwrap(), first(&w, PlayerId(1), EU_CC).unwrap());
+    let depot = first(&w, enemy, EU_SUPPLY).unwrap();
     w.submit(enemy, CommandKind::Move { units: vec![dozer], target: Vec2::from_int(390, 10) });
     order(&mut w, CommandKind::Move { units: vec![tank], target: crater_ridge().spawns[1] - Vec2::from_int(25, 25) });
     let mut fell = None;
@@ -1138,10 +1247,17 @@ fn a_constructor_left_alive_does_not_keep_a_player_in() {
         if w.winner().is_some() {
             break;
         }
+        let target = if w.entity(depot).is_some() { depot } else { cc };
         if matches!(w.entity(tank).unwrap().order, Order::Idle | Order::Move { .. })
-            && w.vision(P0).memory.contains_key(&cc)
+            && w.vision(P0).memory.contains_key(&target)
         {
-            w.submit(P0, CommandKind::Attack { units: vec![tank], target: cc });
+            w.submit(P0, CommandKind::Attack { units: vec![tank], target });
+        } else if w.entity(tank).unwrap().order == Order::Idle {
+            // The supply center falls before the command center comes into sight.
+            w.submit(
+                P0,
+                CommandKind::Move { units: vec![tank], target: crater_ridge().spawns[1] - Vec2::from_int(25, 25) },
+            );
         }
         let tick = w.tick();
         w.step();

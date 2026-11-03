@@ -597,16 +597,16 @@ impl Ai {
                 } else if matches!(rules.def(def).role(), Some(BuildingRole::SupplyCenter { .. })) {
                     match expand_to.filter(|_| !depots.is_empty()) {
                         // Beside the new pile, toward home.
-                        Some(pile) => self.find_spot_toward(world, def, pile, base),
+                        Some(pile) => find_spot_toward(world, def, pile, base),
                         // Toward the nearest pile: shorter trips, and the same layout from every
                         // start (the spiral's fixed ring order favours one corner of the map).
                         None => {
                             let toward = world.nearest_pile(base).and_then(|p| world.entity(p)).map_or(base, |p| p.pos);
-                            self.find_spot_toward(world, def, base, toward)
+                            find_spot_toward(world, def, base, toward)
                         }
                     }
                 } else {
-                    self.find_spot(world, def, base)
+                    find_spot(world, def, base)
                 };
                 if let Some(pos) = pos {
                     out.push(CommandKind::Build { builder, def, pos });
@@ -1157,39 +1157,6 @@ impl Ai {
         }
     }
 
-    /// Spiral search outward from `around` for the first valid foundation spot.
-    fn find_spot(&self, world: &World, def: crate::defs::DefId, around: Vec2) -> Option<Vec2> {
-        let step = world.rules.def(def).radius * Fx::from_int(2) + Fx::from_int(4);
-        for ring in 1..12i64 {
-            for k in 0..8 * ring {
-                let pos = spiral_cell(world, around, step, ring, k);
-                if world.check_placement(def, pos).is_ok() && !blocks_exit(world, def, pos) {
-                    return Some(pos);
-                }
-            }
-        }
-        None
-    }
-
-    /// The valid foundation spot nearest `toward` among the spiral's first rings around
-    /// `around`; ties go to the earlier ring cell.
-    fn find_spot_toward(&self, world: &World, def: crate::defs::DefId, around: Vec2, toward: Vec2) -> Option<Vec2> {
-        let step = world.rules.def(def).radius * Fx::from_int(2) + Fx::from_int(4);
-        let mut best: Option<(Fx, Vec2)> = None;
-        for ring in 1..4i64 {
-            for k in 0..8 * ring {
-                let pos = spiral_cell(world, around, step, ring, k);
-                if world.check_placement(def, pos).is_ok()
-                    && !blocks_exit(world, def, pos)
-                    && best.is_none_or(|(d, _)| pos.distance(toward) < d)
-                {
-                    best = Some((pos.distance(toward), pos));
-                }
-            }
-        }
-        best.map(|(_, p)| p).or_else(|| self.find_spot(world, def, around))
-    }
-
     /// Where an attack wave heads: just outside the nearest enemy building this AI remembers,
     /// on the side facing home (not its centre, a blocked cell no route can end on). With none
     /// remembered, it scouts the nearest place it can't see: start positions, oil wells and
@@ -1502,6 +1469,39 @@ fn blocks_exit(world: &World, def: crate::defs::DefId, pos: Vec2) -> bool {
             let od = rules.def(e.def);
             od.is_building() && trains(od) && exit_of(world, e.pos, od.radius).distance(pos) < d.radius + EXIT_ROOM
         })
+}
+
+/// Spiral search outward from `around` for the first valid foundation spot.
+pub(crate) fn find_spot(world: &World, def: crate::defs::DefId, around: Vec2) -> Option<Vec2> {
+    let step = world.rules.def(def).radius * Fx::from_int(2) + Fx::from_int(4);
+    for ring in 1..12i64 {
+        for k in 0..8 * ring {
+            let pos = spiral_cell(world, around, step, ring, k);
+            if world.check_placement(def, pos).is_ok() && !blocks_exit(world, def, pos) {
+                return Some(pos);
+            }
+        }
+    }
+    None
+}
+
+/// The valid foundation spot nearest `toward` among the spiral's first rings around
+/// `around`; ties go to the earlier ring cell.
+pub(crate) fn find_spot_toward(world: &World, def: crate::defs::DefId, around: Vec2, toward: Vec2) -> Option<Vec2> {
+    let step = world.rules.def(def).radius * Fx::from_int(2) + Fx::from_int(4);
+    let mut best: Option<(Fx, Vec2)> = None;
+    for ring in 1..4i64 {
+        for k in 0..8 * ring {
+            let pos = spiral_cell(world, around, step, ring, k);
+            if world.check_placement(def, pos).is_ok()
+                && !blocks_exit(world, def, pos)
+                && best.is_none_or(|(d, _)| pos.distance(toward) < d)
+            {
+                best = Some((pos.distance(toward), pos));
+            }
+        }
+    }
+    best.map(|(_, p)| p).or_else(|| find_spot(world, def, around))
 }
 
 /// The `k`-th spiral cell around `around`, `step` apart, with both axes flipped to point at the

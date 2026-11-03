@@ -86,7 +86,7 @@ fn unit_at(w: &mut World, who: PlayerId, producer: EntityId, def: g2_sim::DefId,
 fn kills_earn_ranks_and_each_rank_its_gain() {
     let mut w = world(Faction::Eu, Faction::Gla);
     let factory = build(&mut w, P0, EU_FACTORY, Vec2::from_int(110, 80));
-    let gla_factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
+    let gla_factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, -30));
     let field = Vec2::from_int(200, 200);
     let aegis = unit_at(&mut w, P0, factory, EU_AEGIS, field);
     let v = rules().def(EU_AEGIS).veterancy.unwrap();
@@ -140,7 +140,7 @@ fn kills_earn_ranks_and_each_rank_its_gain() {
 fn promotion_health_and_idle_regeneration() {
     let mut w = world(Faction::Eu, Faction::Gla);
     let factory = build(&mut w, P0, EU_FACTORY, Vec2::from_int(110, 80));
-    let gla_factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, 0));
+    let gla_factory = build(&mut w, P1, GLA_FACTORY, crater_ridge().spawns[1] + Vec2::from_int(-30, -30));
     let field = Vec2::from_int(200, 200);
     let aegis = unit_at(&mut w, P0, factory, EU_AEGIS, field);
     let v = rules().def(EU_AEGIS).veterancy.unwrap();
